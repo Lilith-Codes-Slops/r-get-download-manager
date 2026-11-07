@@ -55,6 +55,42 @@ impl Persistence {
         tokio::task::spawn_blocking(move || save_recovery(&path, &task, &record)).await?
     }
 
+    /// Store the split checkpoint and its owning task in one SQLite transaction.
+    #[cfg(target_os = "linux")]
+    pub async fn save_split_recovery(&self, tasks: &Tasks, record: &super::split::checkpoint::SplitRecord) -> StoreResult<()> {
+        let _gate = self.gate.lock().await;
+        let mut task = tasks.lock().await.get(&record.task_url)
+            .filter(|task| task.partial_name.as_deref() == Some(record.partial_name.as_str()))
+            .cloned().ok_or("split checkpoint no longer belongs to the task")?;
+        task.downloaded = record.segments.iter().try_fold(0u64, |sum, segment| sum.checked_add(segment.downloaded))
+            .ok_or("split checkpoint progress overflow")?;
+        task.total = Some(record.total);
+        let path = self.path.clone();
+        let record = record.clone();
+        tokio::task::spawn_blocking(move || -> StoreResult<()> {
+            let mut conn = open(&path)?;
+            let tx = conn.transaction()?;
+            tx.execute("INSERT OR REPLACE INTO rget_queue_v1 (url, info) VALUES (?1, ?2)", params![task.url, serde_json::to_string(&task)?])?;
+            tx.execute("INSERT OR REPLACE INTO rget_split_checkpoints_v2 (url, info) VALUES (?1, ?2)", params![task.url, serde_json::to_string(&record)?])?;
+            tx.execute("DELETE FROM rget_checkpoints_v1 WHERE url = ?1", [&task.url])?;
+            tx.commit()?;
+            Ok(())
+        }).await?
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn load_split_recovery(&self, id: &str) -> StoreResult<Option<super::split::checkpoint::SplitRecord>> {
+        use rusqlite::OptionalExtension;
+        let _gate = self.gate.lock().await;
+        let path = self.path.clone();
+        let id = id.to_owned();
+        tokio::task::spawn_blocking(move || -> StoreResult<Option<super::split::checkpoint::SplitRecord>> {
+            let conn = open(&path)?;
+            let json: Option<String> = conn.query_row("SELECT info FROM rget_split_checkpoints_v2 WHERE url = ?1", [&id], |row| row.get(0)).optional()?;
+            match json { Some(value) => Ok(Some(serde_json::from_str(&value)?)), None => Ok(None) }
+        }).await?
+    }
+
     pub async fn save(&self, tasks: &Tasks, limiter: &BandwidthLimiter) -> StoreResult<()> {
         let _gate = self.gate.lock().await;
         let guard = tasks.lock().await;
@@ -80,7 +116,8 @@ fn open(path: &Path) -> StoreResult<Connection> {
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
         CREATE TABLE IF NOT EXISTS rget_queue_v1 (url TEXT PRIMARY KEY NOT NULL, info TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS rget_rates_v1 (id TEXT PRIMARY KEY NOT NULL, kbps TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS rget_checkpoints_v1 (url TEXT PRIMARY KEY NOT NULL, info TEXT NOT NULL);")?;
+        CREATE TABLE IF NOT EXISTS rget_checkpoints_v1 (url TEXT PRIMARY KEY NOT NULL, info TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS rget_split_checkpoints_v2 (url TEXT PRIMARY KEY NOT NULL, info TEXT NOT NULL);")?;
     Ok(conn)
 }
 
@@ -100,9 +137,11 @@ fn save(path: &Path, state: &SavedState) -> StoreResult<()> {
         }
     }
     tx.execute("DELETE FROM rget_checkpoints_v1 WHERE url NOT IN (SELECT url FROM rget_queue_v1)", [])?;
+    tx.execute("DELETE FROM rget_split_checkpoints_v2 WHERE url NOT IN (SELECT url FROM rget_queue_v1)", [])?;
     for (id, info) in &state.tasks {
         if info.state == "completed" || info.state == "canceled" || info.state.starts_with("failed:") {
             tx.execute("DELETE FROM rget_checkpoints_v1 WHERE url = ?1", [id])?;
+            tx.execute("DELETE FROM rget_split_checkpoints_v2 WHERE url = ?1", [id])?;
         }
     }
     tx.commit()?;
@@ -114,6 +153,7 @@ fn save_recovery(path: &Path, task: &DownloadInfo, record: &RecoveryRecord) -> S
     let tx = conn.transaction()?;
     tx.execute("INSERT OR REPLACE INTO rget_queue_v1 (url, info) VALUES (?1, ?2)", params![task.url, serde_json::to_string(task)?])?;
     tx.execute("INSERT OR REPLACE INTO rget_checkpoints_v1 (url, info) VALUES (?1, ?2)", params![task.url, serde_json::to_string(record)?])?;
+    tx.execute("DELETE FROM rget_split_checkpoints_v2 WHERE url = ?1", [&task.url])?;
     tx.commit()?;
     Ok(())
 }

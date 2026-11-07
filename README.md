@@ -82,8 +82,9 @@ systemctl --user is-active rget.service
 
 The daemon currently supports single-connection HTTP/HTTPS downloads and an
 SQLite-backed task list on Linux. An internal fixed-range split prototype is
-being developed, but is not wired into the daemon or GUI; it does not yet have
-multi-range crash recovery, pause/cancel controls, or production publication. Queue entries and rate-limit settings are
+being developed, but is not wired into the daemon or GUI. The prototype includes
+versioned per-range checkpoints and recovery; these are not yet connected to
+daemon startup or production pause/cancel and publication. Queue entries and rate-limit settings are
 stored in `$XDG_STATE_HOME/rget/queue.sqlite3` (or `~/.local/state/rget/queue.sqlite3`).
 For eligible single-stream downloads, the daemon writes a synced `.part.meta`
 checkpoint beside the partial file and records it in SQLite. On startup it

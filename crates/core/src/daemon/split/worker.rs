@@ -44,15 +44,18 @@ pub(super) async fn run(mut ctx: Context) -> Result<(), String> {
         if *ctx.stop.borrow() { return Err("split stopped".into()); }
         // A positional write doesn't change the shared file cursor. Await it to
         // completion even if another worker fails, before releasing ownership.
+        // This lock is also the checkpoint barrier: snapshot+sync cannot race
+        // a write or observe progress before its corresponding bytes exist.
+        let mut map = ctx.map.lock().await;
         let file = ctx.file.clone();
-        let length = chunk.len() as u64;
+        let write_chunk = chunk.clone();
         let write_offset = offset;
         tokio::task::spawn_blocking(move || {
             use std::os::unix::fs::FileExt;
-            file.write_all_at(&chunk, write_offset)
+            file.write_all_at(&write_chunk, write_offset)
         }).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
-        ctx.map.lock().await.advance(segment, ctx.owner, offset, length)?;
-        offset += length;
+        map.advance(segment, ctx.owner, offset, &chunk)?;
+        offset += chunk.len() as u64;
     }
     if offset != end { return Err("split body ended before the requested range was complete".into()); }
     ctx.map.lock().await.finish(segment, ctx.owner)?;

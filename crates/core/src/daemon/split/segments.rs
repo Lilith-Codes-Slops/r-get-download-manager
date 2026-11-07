@@ -6,7 +6,7 @@ const MAX_CONNECTIONS: u8 = 32;
 enum Status { Pending, Active(usize), Done }
 
 #[derive(Clone, Debug)]
-struct Segment { start: u64, end: u64, downloaded: u64, status: Status }
+struct Segment { start: u64, end: u64, downloaded: u64, status: Status, hash: blake3::Hasher }
 
 pub(super) struct SegmentMap { segments: Vec<Segment> }
 
@@ -22,7 +22,7 @@ impl SegmentMap {
         for index in 0..count {
             let length = base + if (index as u64) < extra { 1 } else { 0 };
             let end = start + length;
-            segments.push(Segment { start, end, downloaded: 0, status: Status::Pending });
+            segments.push(Segment { start, end, downloaded: 0, status: Status::Pending, hash: blake3::Hasher::new() });
             start = end;
         }
         Ok(Self { segments })
@@ -35,13 +35,14 @@ impl SegmentMap {
         segment.status = Status::Active(owner);
         Some((index, segment.start + segment.downloaded, segment.end))
     }
-    pub fn advance(&mut self, index: usize, owner: usize, offset: u64, bytes: u64) -> Result<(), String> {
+    pub fn advance(&mut self, index: usize, owner: usize, offset: u64, bytes: &[u8]) -> Result<(), String> {
         let segment = self.segments.get_mut(index).ok_or("unknown split segment")?;
         if segment.status != Status::Active(owner) || offset != segment.start + segment.downloaded
-            || bytes > segment.end - offset {
+            || bytes.len() as u64 > segment.end - offset {
             return Err("split ownership or write boundary violation".into());
         }
-        segment.downloaded += bytes;
+        segment.hash.update(bytes);
+        segment.downloaded += bytes.len() as u64;
         Ok(())
     }
     pub fn finish(&mut self, index: usize, owner: usize) -> Result<(), String> {
@@ -52,6 +53,21 @@ impl SegmentMap {
         segment.status = Status::Done;
         Ok(())
     }
+    pub fn records(&self) -> Vec<super::checkpoint::SegmentRecord> {
+        self.segments.iter().map(|segment| super::checkpoint::SegmentRecord {
+            start: segment.start, end: segment.end, downloaded: segment.downloaded,
+            hash: segment.hash.finalize().to_hex().to_string(),
+        }).collect()
+    }
+    pub fn restore(records: &[super::checkpoint::SegmentRecord], hashes: Vec<blake3::Hasher>) -> Result<Self, String> {
+        if records.len() != hashes.len() { return Err("segment hash count mismatch".into()); }
+        let segments = records.iter().zip(hashes).map(|(record, hash)| Segment {
+            start: record.start, end: record.end, downloaded: record.downloaded,
+            status: if record.downloaded == record.end - record.start { Status::Done } else { Status::Pending }, hash,
+        }).collect();
+        Ok(Self { segments })
+    }
+    pub fn pending_count(&self) -> usize { self.segments.iter().filter(|segment| segment.status == Status::Pending).count() }
     pub fn is_complete(&self) -> bool { self.segments.iter().all(|segment| segment.status == Status::Done) }
 }
 
@@ -81,11 +97,11 @@ mod tests {
         let mut map = SegmentMap::new(2 * MIN_SEGMENT, 2).unwrap();
         let (index, start, end) = map.claim(7).unwrap();
         assert!(map.claim(7).is_none());
-        assert!(map.advance(index, 8, start, 1).is_err());
-        assert!(map.advance(index, 7, start + 1, 1).is_err());
-        assert!(map.advance(index, 7, start, end - start + 1).is_err());
+        assert!(map.advance(index, 8, start, b"a").is_err());
+        assert!(map.advance(index, 7, start + 1, b"a").is_err());
+        assert!(map.advance(index, 7, start, &vec![0; (end - start + 1) as usize]).is_err());
         assert!(map.finish(index, 7).is_err());
-        map.advance(index, 7, start, end - start).unwrap();
+        map.advance(index, 7, start, &vec![0; (end - start) as usize]).unwrap();
         map.finish(index, 7).unwrap();
         assert!(!map.is_complete());
     }

@@ -1,9 +1,14 @@
 //! Internal fixed-range split prototype. Not connected to the daemon yet:
-//! it has no durable multi-range recovery, user controls or publication path.
+//! it is not wired to daemon startup, user controls or publication.
+pub(super) mod checkpoint;
+pub(super) mod recovery;
+mod runner;
 mod segments;
 mod worker;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod checkpoint_tests;
 
 use super::bandwidth::BandwidthLimiter;
 use super::range::ResumeInfo;
@@ -28,18 +33,30 @@ pub(super) async fn download_fixed(
     if file.metadata().map_err(|e| e.to_string())?.len() != 0 {
         return Err("fixed split requires a new empty partial file".into());
     }
+    let (stop, _) = watch::channel(false);
+    run_map(client, url, info, file, map, limiter, stop).await
+}
+
+async fn run_map(
+    client: reqwest::Client, url: String, info: ResumeInfo, file: Arc<std::fs::File>,
+    map: Arc<Mutex<SegmentMap>>, limiter: Arc<BandwidthLimiter>, stop: watch::Sender<bool>,
+) -> Result<(), String> {
+    if *stop.borrow() { return Err("split stopped".into()); }
     // Verify a bounded range before starting workers; unsupported servers can
     // fall back without having written anything to the partial.
-    let probe = client.get(&url)
+    let request = client.get(&url)
         .header(reqwest::header::ACCEPT_ENCODING, "identity")
         .header(reqwest::header::RANGE, "bytes=0-0")
-        .header(reqwest::header::IF_RANGE, info.etag.as_str())
-        .send().await.map_err(|e| e.to_string())?;
+        .header(reqwest::header::IF_RANGE, info.etag.as_str());
+    let mut stop_rx = stop.subscribe();
+    let probe = tokio::select! {
+        result = request.send() => result.map_err(|e| e.to_string())?,
+        _ = stop_rx.changed() => return Err("split stopped".into()),
+    };
     super::range::validate_bounded(&probe, &info, 0, 1)?;
     drop(probe);
 
-    let count = map.lock().await.len();
-    let (stop, _) = watch::channel(false);
+    let count = map.lock().await.pending_count();
     let mut workers = tokio::task::JoinSet::new();
     for owner in 0..count {
         let context = worker::Context {

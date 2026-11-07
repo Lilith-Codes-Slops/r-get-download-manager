@@ -3,12 +3,12 @@ use crate::daemon::{bandwidth::BandwidthLimiter, range::ResumeInfo};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-const TOTAL: u64 = 2 * 1024 * 1024;
+pub(super) const TOTAL: u64 = 2 * 1024 * 1024;
 
 // mode 0 = valid, 1 = ignored probe, 2 = wrong worker ETag,
 // 3 = wrong worker Content-Range, 4 = wrong length, 5 = encoded response,
 // 6 = wait for both workers (proves parallel requests), 7 = truncated body.
-async fn server(mode: u8) -> (String, tokio::task::JoinHandle<()>) {
+pub(super) async fn server(mode: u8) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/file", listener.local_addr().unwrap());
     let handle = tokio::spawn(async move {

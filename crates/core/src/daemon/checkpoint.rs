@@ -82,7 +82,7 @@ impl Checkpoint {
     }
 }
 
-pub(super) fn write_atomic(path: &Path, record: &RecoveryRecord) -> std::io::Result<()> {
+pub(super) fn write_atomic(path: &Path, record: &impl serde::Serialize) -> std::io::Result<()> {
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
