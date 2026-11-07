@@ -67,7 +67,7 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
         if let Some(task) = guard.get_mut(url) {
             task.filename = Some(filename.to_string());
             task.total = total;
-            task.resume_supported = resume.is_some() && !split;
+            task.resume_supported = resume.is_some();
         }
     }
     let dest = dirs_home()

@@ -1,4 +1,4 @@
-//! Split engine with work-stealing and adaptive concurrency. User-directed resizing and pause remain future work.
+//! Split engine with work-stealing and adaptive concurrency. User-directed resizing remains future work.
 pub(super) mod checkpoint;
 pub(super) mod recovery;
 pub(super) mod startup;

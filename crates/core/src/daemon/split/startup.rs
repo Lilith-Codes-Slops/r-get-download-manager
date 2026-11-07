@@ -55,11 +55,7 @@ pub(in crate::daemon) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<P
         if database.is_none() && sidecar_version(&sidecar) != Some(2) { continue; }
         saved.prior_states.remove(&id);
         if already_published(saved, root, &id, &partial) { continue; }
-        let prepared = if matches!(prior.as_str(), "paused" | "pausing") {
-            Err("paused split recovery is not supported yet".into())
-        } else {
-            recovery::prepare(&sidecar, &partial, &id, saved.split_checkpoints.get(&id).filter(|record| record.partial_name == name))
-        };
+        let prepared = recovery::prepare(&sidecar, &partial, &id, saved.split_checkpoints.get(&id).filter(|record| record.partial_name == name));
         match prepared {
             Ok(item) => {
                 let dest = root.join(&item.record.filename);
@@ -70,10 +66,10 @@ pub(in crate::daemon) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<P
                 };
                 if let Some(task) = saved.tasks.get_mut(&id) {
                     if let Some(error) = collision { task.state = format!("failed: recovery unavailable: {error}"); continue; }
-                    task.state = "downloading".into();
+                    task.state = if matches!(prior.as_str(), "paused" | "pausing") { "paused" } else { "downloading" }.into();
                     task.downloaded = item.record.segments.iter().map(|s| s.downloaded).sum();
                     task.total = Some(item.record.total); task.filename = Some(item.record.filename.clone());
-                    task.speed_bps = 0; task.resume_supported = false;
+                    task.speed_bps = 0; task.resume_supported = true;
                 }
                 result.push(item);
             }

@@ -95,8 +95,10 @@ heuristic may mistake throttling or server stalls for congestion, and it does
 not yet honor Retry-After or adapt segment sizes to worker speeds. Unsupported
 range probes can fall back to a single stream. Split checkpoints use a v2 sidecar with a hash
 for each segment and SQLite metadata; startup attempts to validate and resume
-the recorded ranges. Split pause and mid-download connection changes are not yet
-supported. Cancel stops and joins the split workers before cleaning up.
+the recorded ranges. Split pause requests stop and join workers and checkpoint
+before the task reports paused; paused split downloads can be resumed after a
+restart. Mid-download connection changes are not yet supported. Cancel stops and
+joins split workers before cleaning up.
 These changes require local build and integration testing before production use.
 Queue entries and rate-limit settings are
 stored in `$XDG_STATE_HOME/rget/queue.sqlite3` (or `~/.local/state/rget/queue.sqlite3`).

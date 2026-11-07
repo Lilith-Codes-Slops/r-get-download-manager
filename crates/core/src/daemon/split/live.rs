@@ -1,4 +1,4 @@
-//! Live split transfers. Pause and user-directed resizing remain disabled.
+//! Live split transfers. User-directed resizing remains disabled.
 use super::{checkpoint::{SplitCheckpoint, SplitRecord}, recovery::PreparedSplit, runner, segments::SegmentMap};
 use crate::daemon::{bandwidth::BandwidthLimiter, control::{Controls, Tasks, TransferControl}, persistence::Persistence, range::ResumeInfo};
 use std::{path::{Path, PathBuf}, sync::Arc};
@@ -45,19 +45,24 @@ pub(in crate::daemon) async fn run(prepared: PreparedSplit, partial: PathBuf, cl
         }
         return Err(error.into());
     }
-    if !crate::daemon::control::wait_running(&tasks, &id, &mut control).await {
-        let _ = tokio::fs::remove_file(&partial).await;
-        let _ = tokio::fs::remove_file(&sidecar).await;
-        return Err("download canceled".into());
-    }
-    let mut guard = tasks.lock().await;
-    let canceled = *control.borrow() == TransferControl::Canceled;
-    if canceled || !guard.contains_key(&id) {
-        drop(guard);
-        let _ = tokio::fs::remove_file(&partial).await;
-        let _ = tokio::fs::remove_file(&sidecar).await;
-        return Err("download canceled".into());
-    }
+    // Serialize the last pause/cancel check with publication and task removal.
+    let mut guard = loop {
+        if !crate::daemon::control::wait_running(&tasks, &id, &mut control).await {
+            let _ = tokio::fs::remove_file(&partial).await;
+            let _ = tokio::fs::remove_file(&sidecar).await;
+            return Err("download canceled".into());
+        }
+        let guard = tasks.lock().await;
+        let state = *control.borrow();
+        if state == TransferControl::Canceled || !guard.contains_key(&id) {
+            drop(guard);
+            let _ = tokio::fs::remove_file(&partial).await;
+            let _ = tokio::fs::remove_file(&sidecar).await;
+            return Err("download canceled".into());
+        }
+        if state == TransferControl::Paused { drop(guard); continue; }
+        break guard;
+    };
     if let Some(task) = guard.get_mut(&id) { task.state = "finalizing".into(); task.downloaded = task.total.unwrap_or(task.downloaded); }
     crate::daemon::transfer::publish_no_clobber(&partial, &dest).await?;
     // Persist the published directory entry before discarding recovery files.
@@ -73,7 +78,8 @@ pub(in crate::daemon) async fn spawn(prepared: PreparedSplit, root: &Path, tasks
     limiter: Arc<BandwidthLimiter>, store: Arc<Persistence>) {
     let id = prepared.record.task_url.clone();
     let partial = root.join(&prepared.record.partial_name);
-    let (sender, receiver) = watch::channel(TransferControl::Running);
+    let paused = tasks.lock().await.get(&id).is_some_and(|task| task.state == "paused");
+    let (sender, receiver) = watch::channel(if paused { TransferControl::Paused } else { TransferControl::Running });
     controls.lock().await.insert(id.clone(), sender);
     tokio::spawn(async move {
         let client = match reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(30))

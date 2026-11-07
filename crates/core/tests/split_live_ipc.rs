@@ -155,9 +155,6 @@ fn fixed_splits_survive_daemon_kill_and_resume_verified_ranges() {
     let server = HttpServer::new();
     let mut f = Fixture::new(); f.start(); f.add(&server.url, 2);
     let checkpoint = f.wait_checkpoint(&server.url);
-    let task = f.task(&server.url);
-    assert!(!task.resume_supported, "split pause must remain disabled in phase 1");
-    assert!(matches!(f.request(ClientRequest::Pause { task_id: server.url.clone() }), DaemonEvent::TaskFailed { .. }));
     f.stop();
     server.release.store(true, Ordering::SeqCst);
     f.start(); f.wait(&server.url, "completed");
@@ -244,4 +241,45 @@ fn rejects_connection_counts_outside_the_supported_bounds() {
         let event = f.request(ClientRequest::AddTask { url: "https://example.test/file".into(), mirrors: vec![], connections, extract: false, category: None, not_before: None });
         assert!(matches!(event, DaemonEvent::TaskFailed { .. }), "{event:?}");
     }
+}
+
+#[test]
+fn paused_split_survives_restart_and_resumes_verified_ranges() {
+    let server = HttpServer::new();
+    let mut f = Fixture::new(); f.start(); f.add(&server.url, 2);
+    f.wait_checkpoint(&server.url);
+    assert!(f.task(&server.url).resume_supported);
+    assert!(matches!(f.request(ClientRequest::Pause { task_id: server.url.clone() }), DaemonEvent::TaskStateChanged { .. }));
+    let paused = f.wait(&server.url, "paused");
+    let partial = f.root.join("Downloads").join(paused.partial_name.as_ref().unwrap());
+    let before = std::fs::read(&partial).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(std::fs::read(&partial).unwrap(), before, "bytes changed after pause barrier");
+    f.stop();
+    server.release.store(true, Ordering::SeqCst);
+    f.start();
+    let restored = f.wait(&server.url, "paused");
+    assert_eq!(restored.downloaded, paused.downloaded);
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(std::fs::read(&partial).unwrap(), before, "paused recovery wrote bytes");
+    assert!(matches!(f.request(ClientRequest::Resume { task_id: server.url.clone() }), DaemonEvent::TaskStateChanged { .. }));
+    f.wait(&server.url, "completed");
+    let file = std::fs::read(f.root.join("Downloads/split.bin")).unwrap();
+    assert_eq!(file.len() as u64, TOTAL);
+    assert!(file.iter().enumerate().all(|(i, byte)| *byte == (i as u64 % 251) as u8));
+}
+
+#[test]
+fn cancel_paused_split_joins_before_removing_files() {
+    let server = HttpServer::new();
+    let mut f = Fixture::new(); f.start(); f.add(&server.url, 2);
+    f.wait_checkpoint(&server.url);
+    assert!(matches!(f.request(ClientRequest::Pause { task_id: server.url.clone() }), DaemonEvent::TaskStateChanged { .. }));
+    let paused = f.wait(&server.url, "paused");
+    let partial = paused.partial_name.unwrap();
+    assert!(matches!(f.request(ClientRequest::Cancel { task_id: server.url.clone() }), DaemonEvent::TaskStateChanged { .. }));
+    f.wait(&server.url, "canceled");
+    assert!(!f.root.join("Downloads").join(&partial).exists());
+    assert!(!f.root.join("Downloads").join(format!("{partial}.meta")).exists());
+    assert!(!f.root.join("Downloads/split.bin").exists());
 }
