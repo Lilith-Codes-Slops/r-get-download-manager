@@ -6,10 +6,10 @@ use std::path::{Component, Path};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub(super) struct PreparedSplit {
-    pub record: SplitRecord,
-    pub file: Arc<std::fs::File>,
-    pub map: Arc<Mutex<SegmentMap>>,
+pub(in crate::daemon) struct PreparedSplit {
+    pub(in crate::daemon) record: SplitRecord,
+    pub(super) file: Arc<std::fs::File>,
+    pub(super) map: Arc<Mutex<SegmentMap>>,
 }
 
 fn safe_name(name: &str) -> bool {
@@ -65,7 +65,7 @@ fn choose(sidecar: &SplitRecord, database: Option<&SplitRecord>) -> Result<Split
     Ok(newer.clone())
 }
 
-fn verify(file: &std::fs::File, record: &SplitRecord) -> Result<Vec<blake3::Hasher>, String> {
+pub(super) fn verify(file: &std::fs::File, record: &SplitRecord) -> Result<Vec<blake3::Hasher>, String> {
     let length = file.metadata().map_err(|e| e.to_string())?.len();
     if length > record.total { return Err("partial file exceeds the expected size".into()); }
     let mut hashes = Vec::with_capacity(record.segments.len());

@@ -17,6 +17,8 @@ pub(super) struct SavedState {
     pub task_kbps: HashMap<String, u64>,
     pub prior_states: HashMap<String, String>,
     pub checkpoints: HashMap<String, RecoveryRecord>,
+    #[cfg(target_os = "linux")]
+    pub split_checkpoints: HashMap<String, super::split::checkpoint::SplitRecord>,
 }
 
 pub(super) struct Persistence {
@@ -192,6 +194,8 @@ fn load(path: &Path) -> StoreResult<SavedState> {
             if record.task_url == url { result.checkpoints.insert(url, record); }
         }
     }
+    #[cfg(target_os = "linux")]
+    { result.split_checkpoints = super::split::startup::load_records(&conn)?; }
     let mut statement = conn.prepare("SELECT id, kbps FROM rget_rates_v1")?;
     let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
     for row in rows {

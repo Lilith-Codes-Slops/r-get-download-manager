@@ -98,7 +98,7 @@ async fn recovered_ranges_resume_and_commit_to_sqlite() {
     let store = Arc::new(Persistence::new(f.dir.join("state/queue.sqlite3")));
     let checkpoint = SplitCheckpoint { sidecar: f.sidecar.clone(), record: prepared.record.clone() };
     tokio::time::timeout(std::time::Duration::from_secs(15), runner::run_checkpointed(
-        prepared, checkpoint, reqwest::Client::new(), Arc::new(BandwidthLimiter::new()), store.clone(), tasks,
+        prepared, checkpoint, reqwest::Client::new(), Arc::new(BandwidthLimiter::new()), store.clone(), tasks, None,
     )).await.unwrap().unwrap();
     let bytes = std::fs::read(&f.partial).unwrap();
     assert_eq!(bytes.len() as u64, f.record.total);

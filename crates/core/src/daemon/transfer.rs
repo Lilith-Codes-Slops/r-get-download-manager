@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use tokio::io::AsyncWriteExt;
 
 /// Minimal single-stream HTTP download into ~/Downloads with live progress.
-pub(super) async fn download_file(url: &str, tasks: Arc<Mutex<BTreeMap<String, DownloadInfo>>>, limiter: Arc<super::bandwidth::BandwidthLimiter>, store: Arc<super::persistence::Persistence>, mut control: tokio::sync::watch::Receiver<super::control::TransferControl>) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<BTreeMap<String, DownloadInfo>>>, limiter: Arc<super::bandwidth::BandwidthLimiter>, store: Arc<super::persistence::Persistence>, mut control: tokio::sync::watch::Receiver<super::control::TransferControl>) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(30))
         .read_timeout(std::time::Duration::from_secs(60))
@@ -22,7 +22,7 @@ pub(super) async fn download_file(url: &str, tasks: Arc<Mutex<BTreeMap<String, D
     }
 
     let total = resp.content_length();
-    let resume = super::range::detect(&resp);
+    let mut resume = super::range::detect(&resp);
     let filename = resp
         .headers()
         .get(reqwest::header::CONTENT_DISPOSITION)
@@ -42,6 +42,23 @@ pub(super) async fn download_file(url: &str, tasks: Arc<Mutex<BTreeMap<String, D
         .unwrap_or_else(|| "download.bin".into());
 
     let filename = safe_filename(&filename)?;
+    // A split is attempted only when safe resume metadata and at least two
+    // minimum-size ranges are available. The original response remains unused
+    // so an unsupported probe can fall back to the normal single stream.
+    #[cfg(target_os = "linux")]
+    let split = if connections > 1 {
+        let candidate = resume.as_ref().filter(|info| info.total >= 2 * 1024 * 1024);
+        match candidate {
+            Some(info) => {
+                let supported = super::split::live::probe(&client, url, info, &mut control).await?;
+                if !supported { resume = None; }
+                supported
+            }
+            None => false,
+        }
+    } else { false };
+    #[cfg(not(target_os = "linux"))]
+    let split = false;
     {
         let mut guard = tasks.lock().await;
         if *control.borrow() == super::control::TransferControl::Canceled || !guard.contains_key(url) {
@@ -50,11 +67,11 @@ pub(super) async fn download_file(url: &str, tasks: Arc<Mutex<BTreeMap<String, D
         if let Some(task) = guard.get_mut(url) {
             task.filename = Some(filename.to_string());
             task.total = total;
-            task.resume_supported = resume.is_some();
+            task.resume_supported = resume.is_some() && !split;
         }
     }
     let dest = dirs_home()
-        .unwrap_or_else(|| PathBuf::from("."))
+        .ok_or("HOME is not set; cannot determine the Downloads directory")?
         .join("Downloads")
         .join(&filename);
 
@@ -86,6 +103,13 @@ pub(super) async fn download_file(url: &str, tasks: Arc<Mutex<BTreeMap<String, D
             drop(file); let _ = tokio::fs::remove_file(&temporary).await;
             return Err(e);
         }
+    }
+    #[cfg(target_os = "linux")]
+    if split {
+        let info = resume.as_ref().ok_or("split metadata unavailable")?;
+        drop(resp);
+        let prepared = super::split::live::create(&temporary, file.into_std().await, url, filename, info, connections)?;
+        return super::split::live::run(prepared, temporary, client, tasks, limiter, store, control).await;
     }
     let mut checkpoint = match resume.as_ref() {
         Some(info) => match super::checkpoint::Checkpoint::new(&temporary, url, filename, info) {
@@ -187,7 +211,7 @@ async fn create_temporary_file(dest: &std::path::Path) -> std::io::Result<(PathB
     let parent = dest.parent().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "destination has no parent"))?;
     for _ in 0..100 {
         let path = parent.join(format!(".rget-{}-{}.part", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
-        match tokio::fs::OpenOptions::new().write(true).create_new(true).open(&path).await {
+        match tokio::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&path).await {
             Ok(file) => return Ok((path, file)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e),

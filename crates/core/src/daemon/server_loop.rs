@@ -42,10 +42,12 @@ impl ServerLoop {
                 Err(e) => { eprintln!("failed to load persistent state: {e}"); return; }
             };
             let root = std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Downloads"));
-            let (saved, recovered) = match tokio::task::spawn_blocking(move || {
+            if root.is_none() { eprintln!("HOME is not set; cannot recover download files"); return; }
+            let (saved, recovered, split_recovered, root) = match tokio::task::spawn_blocking(move || {
                 let mut saved = saved;
-                let recovered = root.map(|root| super::recovery::reconcile(&mut saved, &root)).unwrap_or_default();
-                (saved, recovered)
+                let split_recovered = root.as_ref().map(|root| super::split::startup::reconcile(&mut saved, root)).unwrap_or_default();
+                let recovered = root.as_ref().map(|root| super::recovery::reconcile(&mut saved, root)).unwrap_or_default();
+                (saved, recovered, split_recovered, root)
             }).await {
                 Ok(value) => value,
                 Err(e) => { eprintln!("failed to prepare recovery: {e}"); return; }
@@ -63,6 +65,11 @@ impl ServerLoop {
             for item in &recovered {
                 if let Err(e) = store.save_recovery(&tasks, &item.record).await {
                     eprintln!("failed to reconcile recovered checkpoint: {e}"); return;
+                }
+            }
+            for item in &split_recovered {
+                if let Err(e) = store.save_split_recovery(&tasks, &item.record).await {
+                    eprintln!("failed to reconcile recovered split checkpoint: {e}"); return;
                 }
             }
             if let Err(e) = store.save(&tasks, &limiter).await {
@@ -97,6 +104,11 @@ impl ServerLoop {
             let controls = Arc::new(Mutex::new(BTreeMap::<String, tokio::sync::watch::Sender<super::control::TransferControl>>::new()));
             for item in recovered {
                 super::recovered_transfer::spawn(item, tasks.clone(), controls.clone(), limiter.clone(), store.clone()).await;
+            }
+            if let Some(root) = &root {
+                for item in split_recovered {
+                    super::split::live::spawn(item, root, tasks.clone(), controls.clone(), limiter.clone(), store.clone()).await;
+                }
             }
             eprintln!("daemon listening on {endpoint}");
             let checkpoint = {
@@ -143,8 +155,8 @@ impl ServerLoop {
                                             let should_save = matches!(&req, ClientRequest::AddTask { .. } | ClientRequest::Pause { .. } | ClientRequest::Resume { .. } | ClientRequest::Cancel { .. } | ClientRequest::RemoveTask { .. } | ClientRequest::SetLimit { .. });
                                             let reply = match req {
                                                 ClientRequest::AddTask { url, mirrors, connections, extract, category, not_before } => {
-                                                    if connections != 1 || !mirrors.is_empty() || extract || category.is_some() || not_before.is_some() {
-                                                        DaemonEvent::TaskFailed { task_id: url, error: "only one connection is supported; mirrors, extraction, categories and scheduling are not yet supported".into() }
+                                                    if !(1..=32).contains(&connections) || !mirrors.is_empty() || extract || category.is_some() || not_before.is_some() {
+                                                        DaemonEvent::TaskFailed { task_id: url, error: "connections must be 1–32; mirrors, extraction, categories and scheduling are not yet supported".into() }
                                                     } else if !matches!(reqwest::Url::parse(&url), Ok(ref u) if matches!(u.scheme(), "http" | "https")) {
                                                         DaemonEvent::TaskFailed { task_id: url, error: "only valid HTTP and HTTPS URLs are supported".into() }
                                                     } else {
@@ -163,7 +175,7 @@ impl ServerLoop {
                                                             let task_store = store.clone();
                                                             let transfer_store = store.clone();
                                                             tokio::spawn(async move {
-                                                                let result = super::transfer::download_file(&task_id, task_states.clone(), task_limiter, transfer_store, cancel_rx.clone()).await;
+                                                                let result = super::transfer::download_file(&task_id, connections, task_states.clone(), task_limiter, transfer_store, cancel_rx.clone()).await;
                                                                 let mut guard = task_states.lock().await;
                                                                 if let Some(task) = guard.get_mut(&task_id) {
                                                                     task.speed_bps = 0;

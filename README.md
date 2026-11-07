@@ -80,11 +80,17 @@ systemctl --user is-active rget.service
 ```
 ## Current limitations
 
-The daemon currently supports single-connection HTTP/HTTPS downloads and an
-SQLite-backed task list on Linux. An internal fixed-range split prototype is
-being developed, but is not wired into the daemon or GUI. The prototype includes
-versioned per-range checkpoints and recovery; these are not yet connected to
-daemon startup or production pause/cancel and publication. Queue entries and rate-limit settings are
+The Linux daemon supports single-stream and experimental fixed-split HTTP/HTTPS
+downloads. The CLI can request 1–32 connections using
+`dl add <URL> --connections 2`; the GUI still requests one. When a known-length
+resource advertises byte ranges and a strong ETag, the daemon probes an exact
+range and uses fixed segments of at least 1 MiB; unsupported range responses
+fall back to a single stream. Split checkpoints use a v2 sidecar with a hash
+for each segment and SQLite metadata; startup attempts to validate and resume
+the recorded ranges. Split pause and mid-download connection changes are not yet
+supported. Cancel stops and joins the split workers before cleaning up.
+These changes require local build and integration testing before production use.
+Queue entries and rate-limit settings are
 stored in `$XDG_STATE_HOME/rget/queue.sqlite3` (or `~/.local/state/rget/queue.sqlite3`).
 For eligible single-stream downloads, the daemon writes a synced `.part.meta`
 checkpoint beside the partial file and records it in SQLite. On startup it
@@ -92,8 +98,8 @@ attempts to reconcile task-owned checkpoints, verify the partial-file hash, and
 resume with a validated HTTP range. Paused tasks remain paused. Tasks without a
 valid checkpoint are marked failed; a retry starts from the beginning. Orphaned
 partial files are not adopted automatically. Pause and resume commands require
-the daemon to be running and are available only for servers that advertise
-byte ranges, a known length and a strong ETag. Resume validates
+the daemon to be running; for now they apply only to single-stream downloads
+from servers that advertise byte ranges, a known length and a strong ETag. Resume validates
 the ETag, destination URL and exact Content-Range before appending. To pause or
 resume, use `dl pause <URL>` and `dl resume <URL>`; wait until the queue shows
 `paused` before resuming. Mirrors, extraction and scheduling are not yet
@@ -130,8 +136,8 @@ described above. The GUI exposes pause and resume for eligible tasks; Cancel
 stops an active transfer and keeps its history, while Delete asks for confirmation
 and permanently removes the task's recorded files and history. Failed or canceled
 tasks can be retried. GUI rate limiting and other disabled controls remain
-unavailable. Multiple connections, torrent/Metalink
-support, file mutations and post-download automation require engine or platform work. The GUI uses the
+unavailable. Dynamic split resizing and work-stealing, torrent/Metalink support,
+file mutations and post-download automation require engine or platform work. The GUI uses the
 existing local IPC transport, not an HTTP/WebSocket service. Linux is the only
 currently supported daemon platform.
 

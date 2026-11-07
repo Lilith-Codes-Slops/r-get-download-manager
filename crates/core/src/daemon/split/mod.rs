@@ -1,7 +1,8 @@
-//! Internal fixed-range split prototype. Not connected to the daemon yet:
-//! it is not wired to daemon startup, user controls or publication.
+//! Fixed-range split engine. Dynamic resizing and pause remain future work.
 pub(super) mod checkpoint;
 pub(super) mod recovery;
+pub(super) mod startup;
+pub(super) mod live;
 mod runner;
 mod segments;
 mod worker;
@@ -11,6 +12,8 @@ mod tests;
 mod checkpoint_tests;
 #[cfg(test)]
 mod range_validation_tests;
+#[cfg(test)]
+mod startup_tests;
 
 use super::bandwidth::BandwidthLimiter;
 use super::range::ResumeInfo;

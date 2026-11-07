@@ -102,9 +102,9 @@ impl AppState {
             }
             Detail::Network => {
                 ui.heading("Network & splits");
-                ui.label("The engine currently uses one connection per download.");
+                ui.label("The GUI currently adds downloads with one connection; experimental fixed splits are CLI-only.");
                 unavailable(ui, "Configure speed limit", "Not yet supported in the GUI.");
-                unavailable(ui, "Configure connections", "Segmented downloads are not implemented.");
+                unavailable(ui, "Configure connections", "Connection selection is not yet available in the GUI.");
             }
             Detail::Actions => {
                 ui.heading("Post-download actions");
@@ -205,7 +205,7 @@ impl AppState {
                 }
                 ui.separator();
                 ui.heading("Download engine");
-                ui.label("Connections: 1 · Segmented downloads not implemented");
+                ui.label("Connections: 1 in the GUI · fixed splits are CLI-only");
                 ui.label("Theme selection lasts for this session.");
             });
             self.settings_open = open;
