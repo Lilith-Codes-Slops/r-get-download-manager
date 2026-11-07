@@ -78,3 +78,13 @@ source ~/.bashrc
 which dl
 systemctl --user is-active rget.service
 ```
+## Current limitations
+
+The daemon currently supports single-connection HTTP/HTTPS downloads and an
+in-memory task list on Linux. Tasks are not recovered after a restart. Pause,
+resume, removal, rate limits, mirrors, extraction and scheduling are not yet
+implemented; requests for them return an error. Existing files are never
+replaced. Downloads are written to a temporary `.part` file and published only
+after completion; a crash may leave a temporary file behind. Browser integration offers an explicit context-menu handoff, but does
+not cancel browser downloads automatically. Windows daemon support is not yet
+implemented.

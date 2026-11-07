@@ -24,7 +24,7 @@ pub struct AddArgs {
     pub url: String,
     #[arg(long)]
     pub mirrors: Vec<String>,
-    #[arg(long, default_value = "8")]
+    #[arg(long, default_value = "1")]
     pub connections: u8,
     #[arg(long)]
     pub extract: bool,
