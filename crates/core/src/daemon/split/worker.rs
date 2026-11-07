@@ -12,49 +12,74 @@ pub(super) struct Context {
     pub map: Arc<Mutex<SegmentMap>>,
     pub limiter: Arc<BandwidthLimiter>,
     pub stop: watch::Receiver<bool>,
+    pub retire: watch::Receiver<bool>,
     pub owner: usize,
 }
 
-pub(super) async fn run(mut ctx: Context) -> Result<(), String> {
+#[derive(Debug)]
+pub(super) enum Exit { Idle, Retired, Rejected }
+
+#[derive(Debug)]
+enum Failure { Retired, Rejected, Fatal(String) }
+impl From<String> for Failure { fn from(value: String) -> Self { Self::Fatal(value) } }
+
+pub(super) async fn run(mut ctx: Context) -> Result<Exit, String> {
     loop {
         if *ctx.stop.borrow() { return Err("split stopped".into()); }
+        if *ctx.retire.borrow() { return Ok(Exit::Retired); }
         let work = {
             let mut map = ctx.map.lock().await;
+            if *ctx.retire.borrow() { return Ok(Exit::Retired); }
             map.claim(ctx.owner).or_else(|| map.steal(ctx.owner))
         };
-        let Some((segment, start, end)) = work else { return Ok(()) };
+        let Some((segment, start, end)) = work else { return Ok(Exit::Idle) };
         if let Err(error) = receive_range(&mut ctx, segment, start, end).await {
-            let _ = ctx.map.lock().await.release(segment, ctx.owner);
-            return Err(error);
+            ctx.map.lock().await.release(segment, ctx.owner)?;
+            return match error {
+                Failure::Retired => Ok(Exit::Retired),
+                Failure::Rejected => Ok(Exit::Rejected),
+                Failure::Fatal(error) => Err(error),
+            };
         }
     }
 }
 
-async fn receive_range(ctx: &mut Context, segment: usize, mut offset: u64, requested_end: u64) -> Result<(), String> {
+async fn receive_range(ctx: &mut Context, segment: usize, mut offset: u64, requested_end: u64) -> Result<(), Failure> {
     let request = ctx.client.get(&ctx.url)
         .header(reqwest::header::ACCEPT_ENCODING, "identity")
         .header(reqwest::header::RANGE, format!("bytes={offset}-{}", requested_end - 1))
         .header(reqwest::header::IF_RANGE, ctx.info.etag.as_str());
     let response = tokio::select! {
         result = request.send() => result.map_err(|e| e.to_string())?,
-        _ = ctx.stop.changed() => return Err("split stopped".into()),
+        _ = ctx.stop.changed() => return Err(Failure::Fatal("split stopped".into())),
+        _ = ctx.retire.changed() => return Err(Failure::Retired),
     };
+    // Only explicit capacity signals are retryable. Other statuses and all
+    // identity/range mismatches retain the existing fail-closed behavior.
+    if response.url() != &ctx.info.url { return Err(Failure::Fatal("range redirected to a different resource".into())); }
+    if matches!(response.status(), reqwest::StatusCode::TOO_MANY_REQUESTS | reqwest::StatusCode::SERVICE_UNAVAILABLE) {
+        return Err(Failure::Rejected);
+    }
     crate::daemon::range::validate_bounded(&response, &ctx.info, offset, requested_end)?;
     let mut body = response.bytes_stream();
     loop {
-        if *ctx.stop.borrow() { return Err("split stopped".into()); }
+        if *ctx.stop.borrow() { return Err(Failure::Fatal("split stopped".into())); }
+        if *ctx.retire.borrow() { return Err(Failure::Retired); }
         let chunk = tokio::select! {
             item = body.next() => item,
-            _ = ctx.stop.changed() => return Err("split stopped".into()),
+            _ = ctx.stop.changed() => return Err(Failure::Fatal("split stopped".into())),
+            _ = ctx.retire.changed() => return Err(Failure::Retired),
         };
-        let Some(chunk) = chunk else { return Err("split body ended before the owned range was complete".into()) };
+        let Some(chunk) = chunk else { return Err(Failure::Fatal("split body ended before the owned range was complete".into())) };
         let chunk = chunk.map_err(|e| e.to_string())?;
-        if chunk.len() as u64 > requested_end - offset { return Err("split body exceeds its requested range".into()); }
+        if chunk.len() as u64 > requested_end - offset { return Err(Failure::Fatal("split body exceeds its requested range".into())); }
         tokio::select! {
             _ = ctx.limiter.acquire(&ctx.url, chunk.len()) => {},
-            _ = ctx.stop.changed() => return Err("split stopped".into()),
+            _ = ctx.stop.changed() => return Err(Failure::Fatal("split stopped".into())),
+            _ = ctx.retire.changed() => return Err(Failure::Retired),
         }
-        if *ctx.stop.borrow() { return Err("split stopped".into()); }
+        if *ctx.stop.borrow() { return Err(Failure::Fatal("split stopped".into())); }
+        if *ctx.retire.borrow() { return Err(Failure::Retired); }
         // Holding the map lock across the write is the ownership and checkpoint
         // barrier. A steal can only shrink the unwritten portion after this write.
         let mut map = ctx.map.lock().await;

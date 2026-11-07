@@ -1,4 +1,4 @@
-//! Live fixed-split transfers. Pause and resizing remain disabled in phase 1.
+//! Live split transfers. Pause and user-directed resizing remain disabled.
 use super::{checkpoint::{SplitCheckpoint, SplitRecord}, recovery::PreparedSplit, runner, segments::SegmentMap};
 use crate::daemon::{bandwidth::BandwidthLimiter, control::{Controls, Tasks, TransferControl}, persistence::Persistence, range::ResumeInfo};
 use std::{path::{Path, PathBuf}, sync::Arc};

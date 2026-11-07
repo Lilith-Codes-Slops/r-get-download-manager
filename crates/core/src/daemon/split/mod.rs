@@ -1,8 +1,9 @@
-//! Split engine with fixed initial ranges and work-stealing. Runtime resizing and pause remain future work.
+//! Split engine with work-stealing and adaptive concurrency. User-directed resizing and pause remain future work.
 pub(super) mod checkpoint;
 pub(super) mod recovery;
 pub(super) mod startup;
 pub(super) mod live;
+mod adaptive;
 mod runner;
 mod segments;
 mod worker;
@@ -16,6 +17,8 @@ mod range_validation_tests;
 mod startup_tests;
 #[cfg(test)]
 mod stealing_tests;
+#[cfg(test)]
+mod adaptive_tests;
 
 use super::bandwidth::BandwidthLimiter;
 use super::range::ResumeInfo;
@@ -63,39 +66,6 @@ async fn run_map(
     super::range::validate_bounded(&probe, &info, 0, 1)?;
     drop(probe);
 
-    let count = if map.lock().await.pending_count() == 0 { 0 } else {
-        max_workers.min((info.total / (1024 * 1024)).min(32) as usize)
-    };
-    let mut workers = tokio::task::JoinSet::new();
-    for owner in 0..count {
-        let context = worker::Context {
-            client: client.clone(), url: url.clone(), info: info.clone(),
-            file: file.clone(), map: map.clone(), limiter: limiter.clone(),
-            stop: stop.subscribe(), owner,
-        };
-        let stop = stop.clone();
-        workers.spawn(async move {
-            let result = worker::run(context).await;
-            if result.is_err() { stop.send_replace(true); }
-            result
-        });
-    }
-    let mut first_error: Option<String> = None;
-    while let Some(result) = workers.join_next().await {
-        match result {
-            Ok(Ok(())) => {},
-            Ok(Err(error)) => {
-                if first_error.is_none() || first_error.as_deref() == Some("split stopped") { first_error = Some(error); }
-            },
-            Err(error) => {
-                stop.send_replace(true);
-                if first_error.is_none() || first_error.as_deref() == Some("split stopped") {
-                    first_error = Some(format!("split worker failed: {error}"));
-                }
-            },
-        }
-    }
-    if let Some(error) = first_error { return Err(error); }
-    if !map.lock().await.is_complete() { return Err("split ranges are incomplete".into()); }
-    Ok(())
+    let max = max_workers.min((info.total / (1024 * 1024)).min(32) as usize);
+    adaptive::supervise(adaptive::Inputs { client, url, info, file, map, limiter, stop, max }).await
 }

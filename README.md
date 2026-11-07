@@ -80,13 +80,20 @@ systemctl --user is-active rget.service
 ```
 ## Current limitations
 
-The Linux daemon supports single-stream and experimental fixed-split HTTP/HTTPS
+The Linux daemon supports single-stream and experimental split HTTP/HTTPS
 downloads. The CLI can request 1–32 connections using
 `dl add <URL> --connections 2`; the GUI still requests one. When a known-length
 resource advertises byte ranges and a strong ETag, the daemon probes an exact
 range and starts with segments of at least 1 MiB; idle workers may steal half
 of a sufficiently large unfinished range. Each resulting remaining half is at
-least 1 MiB. Unsupported range responses fall back to a single stream. Split checkpoints use a v2 sidecar with a hash
+least 1 MiB. Adaptive concurrency starts with up to two workers, increases on
+healthy recent throughput up to the requested maximum, and reduces on a sharp
+slowdown or an HTTP 429/503 response. It may run with one worker when a server
+limits connections; repeated 429/503 responses at one worker eventually fail
+rather than retry forever. Other invalid responses still fail closed. This
+heuristic may mistake throttling or server stalls for congestion, and it does
+not yet honor Retry-After or adapt segment sizes to worker speeds. Unsupported
+range probes can fall back to a single stream. Split checkpoints use a v2 sidecar with a hash
 for each segment and SQLite metadata; startup attempts to validate and resume
 the recorded ranges. Split pause and mid-download connection changes are not yet
 supported. Cancel stops and joins the split workers before cleaning up.
@@ -137,7 +144,7 @@ described above. The GUI exposes pause and resume for eligible tasks; Cancel
 stops an active transfer and keeps its history, while Delete asks for confirmation
 and permanently removes the task's recorded files and history. Failed or canceled
 tasks can be retried. GUI rate limiting and other disabled controls remain
-unavailable. User-directed split resizing, adaptive concurrency, torrent/Metalink
+unavailable. User-directed split resizing, torrent/Metalink
 support, file mutations and post-download automation require engine or platform work. The GUI uses the
 existing local IPC transport, not an HTTP/WebSocket service. Linux is the only
 currently supported daemon platform.
