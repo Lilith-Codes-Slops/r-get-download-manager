@@ -1,0 +1,40 @@
+[package]
+name = "downloader-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless background daemon for the rget download manager"
+
+[[bin]]
+name = "downloader-core"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+downloader-ipc = { path = "../ipc" }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+hickory-resolver = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+fs4 = { workspace = true }
+sysinfo = { workspace = true }
+blake3 = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+async-trait = { workspace = true }
+librqbit = { workspace = true, optional = true }
+nix = { version = "0.31.3", features = ["fs"] }
+libc = "0.2.191"
+futures-util = "0.3"
+
+[features]
+default = []
+torrent = ["librqbit"]
+http3 = []

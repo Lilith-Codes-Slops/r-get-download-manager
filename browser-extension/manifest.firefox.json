@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "rget",
+  "version": "0.1.0",
+  "description": "High-performance download manager integration",
+  "permissions": ["nativeMessaging", "downloads", "contextMenus"],
+  "background": {
+    "scripts": ["src/background_service_worker.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "rget@example.com"
+    }
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html"
+  }
+}

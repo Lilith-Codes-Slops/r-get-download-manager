@@ -1,0 +1,18 @@
+[package]
+name = "downloader-nmhost"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native Messaging host bridge for browser extensions"
+
+[[bin]]
+name = "downloader-nmhost"
+path = "src/main.rs"
+
+[dependencies]
+downloader-ipc = { path = "../ipc" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

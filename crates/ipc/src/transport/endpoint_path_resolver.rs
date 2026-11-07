@@ -1,0 +1,43 @@
+use crate::IpcResult;
+use std::env;
+use std::path::PathBuf;
+
+/// Resolves the platform-native IPC endpoint path.
+pub struct EndpointPathResolver;
+
+impl EndpointPathResolver {
+    /// Resolve the socket or named-pipe path for the current platform.
+    pub fn resolve() -> IpcResult<String> {
+        #[cfg(target_os = "linux")]
+        {
+            Self::resolve_linux()
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Ok(r"\\.\pipe\rget-daemon".to_string())
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        {
+            Err(IpcError::EndpointResolution(
+                "unsupported platform".into(),
+            ))
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn resolve_linux() -> IpcResult<String> {
+        if let Ok(xdg) = env::var("XDG_RUNTIME_DIR") {
+            if !xdg.is_empty() {
+                let path = PathBuf::from(xdg).join("rget.sock");
+                return Ok(path.to_string_lossy().into_owned());
+            }
+        }
+        Ok("/tmp/rget.sock".to_string())
+    }
+
+    /// Return the path as a PathBuf (Linux) or raw string (Windows).
+    pub fn resolve_path() -> IpcResult<PathBuf> {
+        let s = Self::resolve()?;
+        Ok(PathBuf::from(s))
+    }
+}

@@ -1,0 +1,11 @@
+[network]
+max_connections = 16
+buffer_min_kib = 64
+buffer_max_kib = 2048
+
+[storage]
+safety_buffer_gib = 1
+min_segment_mib = 2
+
+[rate]
+global_kbps = 0

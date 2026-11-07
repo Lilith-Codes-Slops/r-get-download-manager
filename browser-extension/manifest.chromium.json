@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "rget",
+  "version": "0.1.0",
+  "description": "High-performance download manager integration",
+  "permissions": ["nativeMessaging", "downloads", "contextMenus"],
+  "background": {
+    "service_worker": "src/background_service_worker.js"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html"
+  }
+}

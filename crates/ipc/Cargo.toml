@@ -1,0 +1,14 @@
+[package]
+name = "downloader-ipc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared wire protocol, length-prefixed framing, and OS-native local IPC transport for the rget download manager"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }

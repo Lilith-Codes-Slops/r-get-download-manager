@@ -1,0 +1,7 @@
+[routes]
+iso = "~/Downloads/ISOs"
+mp4 = "~/Videos"
+mkv = "~/Videos"
+zip = "~/Downloads/Archives"
+tar = "~/Downloads/Archives"
+zst = "~/Downloads/Archives"

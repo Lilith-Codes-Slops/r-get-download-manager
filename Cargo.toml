@@ -1,0 +1,34 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/ipc",
+    "crates/cli",
+    "crates/gui",
+    "crates/nmhost",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+version = "0.1.0"
+
+[workspace.dependencies]
+tokio = { version = "*", features = ["full"] }
+reqwest = { version = "*", default-features = false, features = ["rustls-tls", "stream", "http2", "socks"] }
+hickory-resolver = { version = "*", features = ["dns-over-rustls", "tokio-runtime"] }
+rusqlite = { version = "*", features = ["bundled"] }
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+bytes = "*"
+fs4 = { version = "*", features = ["tokio"] }
+sysinfo = "*"
+blake3 = "*"
+sha2 = "*"
+eframe = "*"
+clap = { version = "*", features = ["derive"] }
+thiserror = "*"
+tracing = "*"
+tracing-subscriber = "*"
+librqbit = "*"
+async-trait = "*"
