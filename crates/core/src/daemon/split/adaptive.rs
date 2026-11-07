@@ -37,6 +37,8 @@ pub(super) struct Inputs {
     pub client: reqwest::Client, pub url: String, pub info: ResumeInfo,
     pub file: Arc<std::fs::File>, pub map: Arc<Mutex<SegmentMap>>,
     pub limiter: Arc<BandwidthLimiter>, pub stop: watch::Sender<bool>, pub max: usize,
+    #[cfg(test)]
+    pub peak_workers: Option<Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 fn spawn_worker(inputs: &Inputs, workers: &mut JoinSet<(usize, Result<worker::Exit, String>)>,
@@ -46,6 +48,10 @@ fn spawn_worker(inputs: &Inputs, workers: &mut JoinSet<(usize, Result<worker::Ex
         file: inputs.file.clone(), map: inputs.map.clone(), limiter: inputs.limiter.clone(),
         stop: inputs.stop.subscribe(), retire: receiver, owner };
     running.insert(owner, retire);
+    #[cfg(test)]
+    if let Some(peak) = &inputs.peak_workers {
+        peak.fetch_max(running.len(), std::sync::atomic::Ordering::SeqCst);
+    }
     workers.spawn(async move { (owner, worker::run(context).await) });
 }
 

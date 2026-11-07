@@ -67,5 +67,7 @@ async fn run_map(
     drop(probe);
 
     let max = max_workers.min((info.total / (1024 * 1024)).min(32) as usize);
-    adaptive::supervise(adaptive::Inputs { client, url, info, file, map, limiter, stop, max }).await
+    adaptive::supervise(adaptive::Inputs { client, url, info, file, map, limiter, stop, max,
+        #[cfg(test)] peak_workers: None,
+    }).await
 }

@@ -1,5 +1,5 @@
 //! Exercise actual worker scaling and explicit server capacity rejection.
-use super::download_fixed;
+use super::{adaptive, segments::SegmentMap};
 use crate::daemon::{bandwidth::BandwidthLimiter, range::ResumeInfo};
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, sync::watch};
@@ -48,12 +48,12 @@ async fn serve(mut stream: tokio::net::TcpStream, total: u64, limit: usize,
         let bytes: Vec<u8> = (offset..next).map(|n| (n % 251) as u8).collect();
         if stream.write_all(&bytes).await.is_err() { return; }
         offset = next;
-        if !probe && limit > 1 { tokio::time::sleep(std::time::Duration::from_millis(30)).await; }
+        if !probe && limit > 1 && offset < end { tokio::time::sleep(std::time::Duration::from_millis(30)).await; }
     }
     drop(guard);
 }
 
-async fn run(limit: usize, total: u64) -> (usize, bool) {
+async fn run(limit: usize, total: u64) -> (usize, bool, usize) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/file", listener.local_addr().unwrap());
     let active = Arc::new(AtomicUsize::new(0));
@@ -69,9 +69,13 @@ async fn run(limit: usize, total: u64) -> (usize, bool) {
     let path = std::env::temp_dir().join(format!("rget-adaptive-{}-{nonce}.part", std::process::id()));
     let file = Arc::new(std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&path).unwrap());
     let info = ResumeInfo { etag: "\"v1\"".into(), total, url: reqwest::Url::parse(&url).unwrap() };
-    tokio::time::timeout(std::time::Duration::from_secs(30), download_fixed(
-        reqwest::Client::new(), url, info, 4, file.clone(), Arc::new(BandwidthLimiter::new()),
-    )).await.expect("adaptive transfer timed out").unwrap();
+    let worker_peak = Arc::new(AtomicUsize::new(0));
+    let (stop, _) = watch::channel(false);
+    let inputs = adaptive::Inputs { client: reqwest::Client::new(), url, info,
+        file: file.clone(), map: Arc::new(tokio::sync::Mutex::new(SegmentMap::new(total, 4).unwrap())),
+        limiter: Arc::new(BandwidthLimiter::new()), stop, max: 4, peak_workers: Some(worker_peak.clone()) };
+    tokio::time::timeout(std::time::Duration::from_secs(30), adaptive::supervise(inputs))
+        .await.expect("adaptive transfer timed out").unwrap();
     drop(file);
     let bytes = std::fs::read(&path).unwrap();
     assert_eq!(bytes.len() as u64, total);
@@ -79,20 +83,22 @@ async fn run(limit: usize, total: u64) -> (usize, bool) {
     std::fs::remove_file(path).unwrap();
     server.abort();
     let was_rejected = *rejected.borrow();
-    (peak.load(Ordering::SeqCst), was_rejected)
+    (peak.load(Ordering::SeqCst), was_rejected, worker_peak.load(Ordering::SeqCst))
 }
 
 #[tokio::test]
 async fn scales_up_when_throughput_is_healthy() {
-    let (peak, rejected) = run(8, 32 * 1024 * 1024).await;
+    // A server handler can linger after the client drops a stolen response, so
+    // its handler count is not a reliable count of active client workers.
+    let (_server_peak, rejected, worker_peak) = run(usize::MAX, 32 * 1024 * 1024).await;
     assert!(!rejected);
-    assert!(peak >= 3, "never increased above two active connections: {peak}");
-    assert!(peak <= 4);
+    assert!((3..=4).contains(&worker_peak), "worker count did not scale within the configured maximum: {worker_peak}");
 }
 
 #[tokio::test]
 async fn continues_after_server_rejects_extra_connections() {
-    let (peak, rejected) = run(1, 8 * 1024 * 1024).await;
+    let (peak, rejected, worker_peak) = run(1, 8 * 1024 * 1024).await;
+    assert!(worker_peak <= 4);
     assert!(rejected);
     assert_eq!(peak, 1);
 }
