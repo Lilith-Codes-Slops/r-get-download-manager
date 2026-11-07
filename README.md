@@ -88,9 +88,9 @@ checkpoint beside the partial file and records it in SQLite. On startup it
 attempts to reconcile task-owned checkpoints, verify the partial-file hash, and
 resume with a validated HTTP range. Paused tasks remain paused. Tasks without a
 valid checkpoint are marked failed; a retry starts from the beginning. Orphaned
-partial files are not adopted automatically. Pause
-and resume are available only while the daemon is running and only for servers
-that advertise byte ranges, a known length and a strong ETag. Resume validates
+partial files are not adopted automatically. Pause and resume commands require
+the daemon to be running and are available only for servers that advertise
+byte ranges, a known length and a strong ETag. Resume validates
 the ETag, destination URL and exact Content-Range before appending. To pause or
 resume, use `dl pause <URL>` and `dl resume <URL>`; wait until the queue shows
 `paused` before resuming. Mirrors, extraction and scheduling are not yet
@@ -100,7 +100,10 @@ transfer without deleting a completed file (`--delete-file` is not supported).
 per second; use `0` for unlimited. Limits persist across daemon restarts and
 throttle download body processing, so network buffers can briefly exceed the requested rate. Existing files are never
 replaced. Downloads are written to a temporary `.part` file and published only
-after completion; a crash may leave a temporary file behind. Browser integration offers an explicit context-menu handoff, but does
+after completion; a crash may leave a temporary file behind. If the destination
+already exists, the daemon reports it before downloading rather than overwriting
+it. If a file appears at that path during the transfer, the completed partial is
+preserved at the path shown in the error for manual recovery. Browser integration offers an explicit context-menu handoff, but does
 not cancel browser downloads automatically. Windows daemon support is not yet
 implemented.
 
@@ -116,10 +119,10 @@ transfer; upload/seeding is not supported. Theme overrides are session-only.
 
 The Downloads view lists regular files from `~/Downloads`, not a persistent
 history. Opening files uses the system file association. The daemon's queue is
-saved in SQLite, but incomplete downloads do not yet resume after restart. The
-disabled controls are deliberately
-unavailable: the GUI does not yet expose task removal or rate limiting;
-pause/resume are currently CLI-only. Multiple connections, torrent/Metalink
+saved in SQLite. Eligible incomplete downloads can recover after restart as
+described above. The GUI exposes pause and resume for eligible tasks, but does
+not yet expose task removal or rate limiting. Other disabled controls are
+deliberately unavailable. Multiple connections, torrent/Metalink
 support, file mutations and post-download automation require engine or platform work. The GUI uses the
 existing local IPC transport, not an HTTP/WebSocket service. Linux is the only
 currently supported daemon platform.

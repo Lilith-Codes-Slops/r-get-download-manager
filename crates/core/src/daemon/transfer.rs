@@ -62,6 +62,9 @@ pub(super) async fn download_file(url: &str, tasks: Arc<Mutex<BTreeMap<String, D
         tokio::fs::create_dir_all(parent).await?;
     }
 
+    // Detect common collisions before transferring potentially gigabytes of data.
+    check_destination(&dest).await?;
+
     // Stream into a uniquely-created side file. Publishing with hard_link is
     // atomic and fails if the final name already exists, unlike rename on Unix.
     let (temporary, mut file) = create_temporary_file(&dest).await?;
@@ -143,9 +146,13 @@ pub(super) async fn download_file(url: &str, tasks: Arc<Mutex<BTreeMap<String, D
         if let Some(task) = guard.get_mut(url) { task.state = "finalizing".into(); }
         break guard;
     };
-    if let Err(e) = tokio::fs::hard_link(&temporary, &dest).await {
-        let _ = tokio::fs::remove_file(&temporary).await;
-        if let Some(checkpoint) = &checkpoint { let _ = tokio::fs::remove_file(&checkpoint.sidecar).await; }
+    if let Err(e) = publish_no_clobber(&temporary, &dest).await {
+        // If the name was taken after the initial check, keep the downloaded
+        // data so it can be recovered manually rather than silently losing it.
+        if e.kind() != std::io::ErrorKind::AlreadyExists {
+            let _ = tokio::fs::remove_file(&temporary).await;
+            if let Some(checkpoint) = &checkpoint { let _ = tokio::fs::remove_file(&checkpoint.sidecar).await; }
+        }
         return Err(e.into());
     }
     drop(guard);
@@ -155,6 +162,23 @@ pub(super) async fn download_file(url: &str, tasks: Arc<Mutex<BTreeMap<String, D
     if let Some(checkpoint) = &checkpoint { let _ = tokio::fs::remove_file(&checkpoint.sidecar).await; }
     eprintln!("\nsaved {} bytes to {}", downloaded, dest.display());
     Ok(dest)
+}
+
+async fn check_destination(dest: &std::path::Path) -> std::io::Result<()> {
+    match tokio::fs::symlink_metadata(dest).await {
+        Ok(_) => Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists,
+            format!("destination already exists: {}. Rename or move it before retrying; it was not overwritten", dest.display()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+pub(super) async fn publish_no_clobber(partial: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    match tokio::fs::hard_link(partial, dest).await {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(std::io::Error::new(
+            e.kind(), format!("destination appeared during download: {}. Existing file was not overwritten; downloaded data is preserved at {}", dest.display(), partial.display()))),
+        result => result,
+    }
 }
 
 async fn create_temporary_file(dest: &std::path::Path) -> std::io::Result<(PathBuf, tokio::fs::File)> {
@@ -186,7 +210,7 @@ fn safe_filename(name: &str) -> Result<&str, std::io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_filename;
+    use super::{check_destination, publish_no_clobber, safe_filename};
 
     #[test]
     fn rejects_unsafe_names() {
@@ -195,4 +219,23 @@ mod tests {
         }
         assert_eq!(safe_filename("file.txt").unwrap(), "file.txt");
     }
+    #[tokio::test]
+    async fn collision_is_detected_and_late_collision_preserves_both_files() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("rget-collision-{}-{nonce}", std::process::id()));
+        tokio::fs::create_dir(&dir).await.unwrap();
+        let dest = dir.join("file.bin");
+        let partial = dir.join(".rget-test.part");
+        assert!(check_destination(&dest).await.is_ok());
+        tokio::fs::write(&partial, b"new data").await.unwrap();
+        tokio::fs::write(&dest, b"existing data").await.unwrap();
+        assert_eq!(check_destination(&dest).await.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+        let error = publish_no_clobber(&partial, &dest).await.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(error.to_string().contains("preserved at"));
+        assert_eq!(tokio::fs::read(&dest).await.unwrap(), b"existing data");
+        assert_eq!(tokio::fs::read(&partial).await.unwrap(), b"new data");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
 }

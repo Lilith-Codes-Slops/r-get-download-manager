@@ -70,11 +70,23 @@ impl AppState {
                     metric(ui, "Download rate", &format!("{}/s (average)", format_bytes(task.speed_bps)));
                     let eta = task.total.and_then(|total| if task.speed_bps > 0 { Some(total.saturating_sub(task.downloaded) / task.speed_bps) } else { None });
                     metric(ui, "Time remaining", &eta.map(format_duration).unwrap_or_else(|| "Unknown".into()));
-                    metric(ui, "Resume support", "Not available");
+                    let support = if task.resume_supported { "Available (strong ETag and byte ranges)" }
+                        else if task.filename.is_none() && task.state == "downloading" { "Checking server response" }
+                        else { "Unavailable under rGet's safe-resume requirements" };
+                    metric(ui, "Resume support", support);
                     if let Some(path) = &task.final_path { metric(ui, "Saved to", path); }
                 });
                 ui.horizontal(|ui| {
-                    unavailable(ui, "Pause", "Resume is not implemented by the daemon.");
+                    let can_pause = self.connected && task.state == "downloading" && task.resume_supported;
+                    if ui.add_enabled(can_pause, egui::Button::new("Pause"))
+                        .on_disabled_hover_text("Requires a downloading task with safe resume support.").clicked() {
+                        self.send(ClientRequest::Pause { task_id: task.url.clone() });
+                    }
+                    let can_resume = self.connected && task.state == "paused";
+                    if ui.add_enabled(can_resume, egui::Button::new("Resume"))
+                        .on_disabled_hover_text("Available when the task is paused.").clicked() {
+                        self.send(ClientRequest::Resume { task_id: task.url.clone() });
+                    }
                     unavailable(ui, "Cancel", "Cancellation is not implemented by the daemon.");
                     if task.state.starts_with("failed:") && ui.button("Retry").clicked() { self.send(add_request(task.url.clone())); }
                 });

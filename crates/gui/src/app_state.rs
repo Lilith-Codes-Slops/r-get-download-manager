@@ -56,8 +56,8 @@ impl AppState {
                     self.tasks = tasks;
                 }
                 BridgeMessage::Event(DaemonEvent::TaskFailed { error, .. }) => self.notice = Some(error),
-                BridgeMessage::Event(DaemonEvent::TaskStateChanged { .. }) => {
-                    self.notice = Some("Download added to the queue.".into());
+                BridgeMessage::Event(DaemonEvent::TaskStateChanged { state, .. }) => {
+                    self.notice = Some(format!("Task: {state}."));
                 }
                 BridgeMessage::Event(_) => {}
             }
