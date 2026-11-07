@@ -140,7 +140,7 @@ impl ServerLoop {
                                     match serde_json::from_slice::<ClientRequest>(&payload) {
                                         Ok(req) => {
                                             if !matches!(&req, ClientRequest::GetDetailedQueue) { eprintln!("received: {req:?}"); }
-                                            let should_save = matches!(&req, ClientRequest::AddTask { .. } | ClientRequest::Pause { .. } | ClientRequest::Resume { .. } | ClientRequest::RemoveTask { .. } | ClientRequest::SetLimit { .. });
+                                            let should_save = matches!(&req, ClientRequest::AddTask { .. } | ClientRequest::Pause { .. } | ClientRequest::Resume { .. } | ClientRequest::Cancel { .. } | ClientRequest::RemoveTask { .. } | ClientRequest::SetLimit { .. });
                                             let reply = match req {
                                                 ClientRequest::AddTask { url, mirrors, connections, extract, category, not_before } => {
                                                     if connections != 1 || !mirrors.is_empty() || extract || category.is_some() || not_before.is_some() {
@@ -149,7 +149,7 @@ impl ServerLoop {
                                                         DaemonEvent::TaskFailed { task_id: url, error: "only valid HTTP and HTTPS URLs are supported".into() }
                                                     } else {
                                                         let mut guard = tasks.lock().await;
-                                                        if guard.get(&url).is_some_and(|state| !state.state.starts_with("failed:")) {
+                                                        if guard.get(&url).is_some_and(|state| !state.state.starts_with("failed:") && state.state != "canceled") {
                                                             DaemonEvent::TaskFailed { task_id: url, error: "task already exists".into() }
                                                         } else {
                                                             guard.insert(url.clone(), DownloadInfo { url: url.clone(), state: "downloading".into(), filename: None, downloaded: 0, total: None, speed_bps: 0, final_path: None, resume_supported: false, partial_name: None });
@@ -165,15 +165,17 @@ impl ServerLoop {
                                                             tokio::spawn(async move {
                                                                 let result = super::transfer::download_file(&task_id, task_states.clone(), task_limiter, transfer_store, cancel_rx.clone()).await;
                                                                 let mut guard = task_states.lock().await;
-                                                                if *cancel_rx.borrow() != super::control::TransferControl::Canceled {
-                                                                  if let Some(task) = guard.get_mut(&task_id) {
+                                                                if let Some(task) = guard.get_mut(&task_id) {
                                                                     task.speed_bps = 0;
-                                                                    task.partial_name = None;
-                                                                    match result {
-                                                                        Ok(path) => { task.state = "completed".into(); task.final_path = Some(path.to_string_lossy().into_owned()); }
-                                                                        Err(e) => task.state = format!("failed: {e}"),
+                                                                    if *cancel_rx.borrow() == super::control::TransferControl::Canceled {
+                                                                        task.state = "canceled".into();
+                                                                        task.resume_supported = false;
+                                                                    } else {
+                                                                        match result {
+                                                                            Ok(path) => { task.state = "completed".into(); task.final_path = Some(path.to_string_lossy().into_owned()); task.partial_name = None; }
+                                                                            Err(e) => { task.state = format!("failed: {e}"); task.resume_supported = false; }
+                                                                        }
                                                                     }
-                                                                  }
                                                                 }
                                                                 drop(guard);
                                                                 if let Err(e) = task_store.save(&task_states, &limiter_for_task_save).await { eprintln!("queue checkpoint failed: {e}"); }
@@ -184,20 +186,9 @@ impl ServerLoop {
                                                 }
                                                 ClientRequest::Pause { task_id } => super::control::set_paused(&tasks, &controls, task_id, true).await,
                                                 ClientRequest::Resume { task_id } => super::control::set_paused(&tasks, &controls, task_id, false).await,
+                                                ClientRequest::Cancel { task_id } => super::task_removal::cancel(&tasks, &controls, task_id).await,
                                                 ClientRequest::RemoveTask { task_id, delete_file } => {
-                                                    if delete_file {
-                                                        DaemonEvent::TaskFailed { task_id, error: "deleting downloaded files is not supported".into() }
-                                                    } else {
-                                                        let mut guard = tasks.lock().await;
-                                                        if guard.remove(&task_id).is_none() {
-                                                            DaemonEvent::TaskFailed { task_id, error: "task not found".into() }
-                                                        } else {
-                                                            if let Some(sender) = controls.lock().await.remove(&task_id) { let _ = sender.send(super::control::TransferControl::Canceled); }
-                                                            limiter.remove(&task_id).await;
-                                                            drop(guard);
-                                                            DaemonEvent::TaskStateChanged { task_id, state: "removed".into() }
-                                                        }
-                                                    }
+                                                    super::task_removal::remove(&tasks, &controls, &limiter, task_id, delete_file).await
                                                 }
                                                 ClientRequest::SetLimit { task_id, kbps } => {
                                                     let exists = match task_id.as_deref() {

@@ -18,6 +18,10 @@ pub enum ClientRequest {
     Resume {
         task_id: String,
     },
+    /// Stop an active transfer while retaining its task history.
+    Cancel {
+        task_id: String,
+    },
     RefreshUrl {
         task_id: String,
         new_url: String,

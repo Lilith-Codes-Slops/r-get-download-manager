@@ -68,7 +68,8 @@ fn roundtrip(req: &ClientRequest) -> Result<DaemonEvent, String> {
     use std::os::unix::net::UnixStream;
     let endpoint = EndpointPathResolver::resolve().map_err(|e| e.to_string())?;
     let mut stream = UnixStream::connect(endpoint).map_err(|e| e.to_string())?;
-    stream.set_read_timeout(Some(Duration::from_secs(3))).map_err(|e| e.to_string())?;
+    let read_timeout = if matches!(req, ClientRequest::RemoveTask { .. }) { 25 } else { 3 };
+    stream.set_read_timeout(Some(Duration::from_secs(read_timeout))).map_err(|e| e.to_string())?;
     stream.set_write_timeout(Some(Duration::from_secs(3))).map_err(|e| e.to_string())?;
     FrameEncoder::write_frame(&mut stream, req).map_err(|e| e.to_string())?;
     stream.flush().map_err(|e| e.to_string())?;

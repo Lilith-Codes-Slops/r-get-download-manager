@@ -87,8 +87,17 @@ impl AppState {
                         .on_disabled_hover_text("Available when the task is paused.").clicked() {
                         self.send(ClientRequest::Resume { task_id: task.url.clone() });
                     }
-                    unavailable(ui, "Cancel", "Cancellation is not implemented by the daemon.");
-                    if task.state.starts_with("failed:") && ui.button("Retry").clicked() { self.send(add_request(task.url.clone())); }
+                    let can_cancel = self.connected && matches!(task.state.as_str(), "downloading" | "paused" | "pausing" | "resuming");
+                    if ui.add_enabled(can_cancel, egui::Button::new("Cancel"))
+                        .on_disabled_hover_text("Only active downloads can be canceled.").clicked() {
+                        self.send(ClientRequest::Cancel { task_id: task.url.clone() });
+                    }
+                    if ui.add_enabled(self.connected, egui::Button::new("Delete")).clicked() {
+                        self.pending_delete = Some(task.url.clone());
+                    }
+                    if (task.state.starts_with("failed:") || task.state == "canceled") && ui.button("Retry").clicked() {
+                        self.send(add_request(task.url.clone()));
+                    }
                 });
             }
             Detail::Network => {
@@ -159,6 +168,23 @@ impl AppState {
             });
             if submit { let url = self.url.trim().to_string(); self.send(add_request(url)); self.url.clear(); open = false; self.view = View::Tasks; }
             self.add_open = open;
+        }
+        if let Some(id) = self.pending_delete.clone() {
+            let mut confirm = false;
+            let mut dismiss = false;
+            egui::Window::new("Delete download?").collapsible(false).resizable(false).show(ctx, |ui| {
+                ui.label("This cancels the transfer and removes its history and its downloaded file and partial files from Downloads.");
+                ui.label("Existing files not recorded as this task's completed download are not removed.");
+                ui.label(RichText::new(&id).small());
+                ui.horizontal(|ui| {
+                    if ui.button("Delete download").clicked() { confirm = true; }
+                    if ui.button("Keep download").clicked() { dismiss = true; }
+                });
+            });
+            if confirm {
+                self.send(ClientRequest::RemoveTask { task_id: id, delete_file: true });
+                self.pending_delete = None;
+            } else if dismiss { self.pending_delete = None; }
         }
         if self.settings_open {
             let mut open = self.settings_open;

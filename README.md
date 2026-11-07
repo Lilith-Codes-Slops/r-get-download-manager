@@ -95,7 +95,10 @@ the ETag, destination URL and exact Content-Range before appending. To pause or
 resume, use `dl pause <URL>` and `dl resume <URL>`; wait until the queue shows
 `paused` before resuming. Mirrors, extraction and scheduling are not yet
 implemented. `dl rm <URL>` removes a task and cancels an active
-transfer without deleting a completed file (`--delete-file` is not supported).
+transfer without deleting a completed file. `dl rm <URL> --delete-file` also
+permanently removes the recorded completed file and any recorded partial/sidecar
+files; missing files are ignored. Files are not moved to Trash. Files whose
+ownership was not recorded (including older orphaned partials) are left alone.
 `dl limit <kbps> [URL]` sets a global or per-task limit in decimal kilobits
 per second; use `0` for unlimited. Limits persist across daemon restarts and
 throttle download body processing, so network buffers can briefly exceed the requested rate. Existing files are never
@@ -120,9 +123,11 @@ transfer; upload/seeding is not supported. Theme overrides are session-only.
 The Downloads view lists regular files from `~/Downloads`, not a persistent
 history. Opening files uses the system file association. The daemon's queue is
 saved in SQLite. Eligible incomplete downloads can recover after restart as
-described above. The GUI exposes pause and resume for eligible tasks, but does
-not yet expose task removal or rate limiting. Other disabled controls are
-deliberately unavailable. Multiple connections, torrent/Metalink
+described above. The GUI exposes pause and resume for eligible tasks; Cancel
+stops an active transfer and keeps its history, while Delete asks for confirmation
+and permanently removes the task's recorded files and history. Failed or canceled
+tasks can be retried. GUI rate limiting and other disabled controls remain
+unavailable. Multiple connections, torrent/Metalink
 support, file mutations and post-download automation require engine or platform work. The GUI uses the
 existing local IPC transport, not an HTTP/WebSocket service. Linux is the only
 currently supported daemon platform.

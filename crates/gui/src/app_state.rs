@@ -31,6 +31,7 @@ pub struct AppState {
     descending: bool,
     add_open: bool,
     settings_open: bool,
+    pending_delete: Option<String>,
     url: String,
     notice: Option<String>,
     connected: bool,
@@ -43,7 +44,7 @@ impl AppState {
             selected_file: None, files: Vec::new(), last_files_refresh: Instant::now() - Duration::from_secs(10),
             view: View::Tasks, detail: Detail::Status, theme: Theme::System,
             sort: Sort::Name, descending: false, add_open: false, settings_open: false,
-            url: String::new(), notice: None, connected: false,
+            pending_delete: None, url: String::new(), notice: None, connected: false,
         }
     }
 

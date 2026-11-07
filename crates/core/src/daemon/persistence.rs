@@ -101,7 +101,7 @@ fn save(path: &Path, state: &SavedState) -> StoreResult<()> {
     }
     tx.execute("DELETE FROM rget_checkpoints_v1 WHERE url NOT IN (SELECT url FROM rget_queue_v1)", [])?;
     for (id, info) in &state.tasks {
-        if info.state == "completed" || info.state.starts_with("failed:") {
+        if info.state == "completed" || info.state == "canceled" || info.state.starts_with("failed:") {
             tx.execute("DELETE FROM rget_checkpoints_v1 WHERE url = ?1", [id])?;
         }
     }
@@ -129,7 +129,10 @@ fn load(path: &Path) -> StoreResult<SavedState> {
         if info.url != url { return Err("stored task URL does not match its key".into()); }
         // Without a durable byte map and validator, never pretend an unfinished
         // file can resume. The user can retry safely from the beginning.
-        if !matches!(info.state.as_str(), "completed") && !info.state.starts_with("failed:") {
+        if info.state == "canceling" {
+            // Never restart a transfer that the user had asked to cancel.
+            info.state = "canceled".into();
+        } else if !matches!(info.state.as_str(), "completed" | "canceled") && !info.state.starts_with("failed:") {
             result.prior_states.insert(url.clone(), info.state.clone());
             info.state = "failed: interrupted by daemon restart; retry starts from the beginning".into();
             info.downloaded = 0;
@@ -223,6 +226,18 @@ mod tests {
         assert_eq!(loaded.prior_states.get(id).map(String::as_str), Some("paused"));
         assert_eq!(loaded.checkpoints.get(id).unwrap().sequence, 7);
         assert_eq!(loaded.tasks[id].partial_name.as_deref(), Some(".rget-1-1.part"));
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn interrupted_cancel_does_not_restart_the_transfer() {
+        let (path, mut state) = fixture();
+        let id = "https://example.test/live";
+        state.tasks.get_mut(id).unwrap().state = "canceling".into();
+        save(&path, &state).unwrap();
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.tasks[id].state, "canceled");
+        assert!(!loaded.prior_states.contains_key(id));
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 

@@ -102,12 +102,15 @@ pub(super) async fn spawn(item: PreparedRecovery, tasks: Tasks, controls: Contro
     tokio::spawn(async move {
         let result = run(item, tasks.clone(), limiter.clone(), store.clone(), receiver.clone()).await;
         let mut guard = tasks.lock().await;
-        if *receiver.borrow() != TransferControl::Canceled {
-            if let Some(task) = guard.get_mut(&task_id) {
-                task.speed_bps = 0;
+        if let Some(task) = guard.get_mut(&task_id) {
+            task.speed_bps = 0;
+            if *receiver.borrow() == TransferControl::Canceled {
+                task.state = "canceled".into();
+                task.resume_supported = false;
+            } else {
                 match result {
                     Ok(path) => { task.state = "completed".into(); task.final_path = Some(path.to_string_lossy().into_owned()); task.partial_name = None; }
-                    Err(e) => task.state = format!("failed: {e}"),
+                    Err(e) => { task.state = format!("failed: {e}"); task.resume_supported = false; }
                 }
             }
         }

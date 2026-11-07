@@ -8,6 +8,7 @@ impl CommandDispatcher {
             ClientRequest::AddTask { .. } => Ok(()),
             ClientRequest::Pause { .. } => Ok(()),
             ClientRequest::Resume { .. } => Ok(()),
+            ClientRequest::Cancel { .. } => Ok(()),
             ClientRequest::RefreshUrl { .. } => Ok(()),
             ClientRequest::SetLimit { .. } => Ok(()),
             ClientRequest::RemoveTask { .. } => Ok(()),

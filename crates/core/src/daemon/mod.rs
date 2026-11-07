@@ -13,6 +13,7 @@ pub use tray_service::TrayService;
 mod transfer;
 mod bandwidth;
 mod control;
+mod task_removal;
 mod range;
 mod transfer_body;
 #[cfg(test)]
