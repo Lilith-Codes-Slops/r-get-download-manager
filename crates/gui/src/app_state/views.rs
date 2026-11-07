@@ -158,7 +158,13 @@ impl AppState {
                     ui.selectable_value(&mut self.theme, Theme::Light, "Light");
                     ui.selectable_value(&mut self.theme, Theme::Dark, "Dark");
                 });
-                if self.theme != previous { ctx.set_visuals(match self.theme { Theme::System => self.system_visuals.clone(), Theme::Light => egui::Visuals::light(), Theme::Dark => egui::Visuals::dark() }); }
+                if self.theme != previous {
+                    ctx.set_theme(match self.theme {
+                        Theme::System => egui::ThemePreference::System,
+                        Theme::Light => egui::ThemePreference::Light,
+                        Theme::Dark => egui::ThemePreference::Dark,
+                    });
+                }
                 ui.separator();
                 ui.heading("Download engine");
                 ui.label("Connections: 1 · Segmented downloads not implemented");

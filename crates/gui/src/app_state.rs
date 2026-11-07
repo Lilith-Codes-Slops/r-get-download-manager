@@ -27,7 +27,6 @@ pub struct AppState {
     view: View,
     detail: Detail,
     theme: Theme,
-    system_visuals: egui::Visuals,
     sort: Sort,
     descending: bool,
     add_open: bool,
@@ -38,12 +37,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let system_visuals = cc.egui_ctx.style().visuals.clone();
+    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         Self {
             bridge: IpcBridgeWorker::start(), tasks: Vec::new(), selected_task: None,
             selected_file: None, files: Vec::new(), last_files_refresh: Instant::now() - Duration::from_secs(10),
-            view: View::Tasks, detail: Detail::Status, theme: Theme::System, system_visuals,
+            view: View::Tasks, detail: Detail::Status, theme: Theme::System,
             sort: Sort::Name, descending: false, add_open: false, settings_open: false,
             url: String::new(), notice: None, connected: false,
         }
