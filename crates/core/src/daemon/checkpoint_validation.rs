@@ -15,8 +15,7 @@ pub(super) fn validate(sidecar: &Path, partial: &Path) -> Result<RecoveryRecord,
     file.take(64 * 1024 + 1).read_to_end(&mut data)?;
     if data.len() > 64 * 1024 { return Err("oversized sidecar".into()); }
     let record: RecoveryRecord = serde_json::from_slice(&data)?;
-    if record.version != 1 || record.sequence == 0 || record.downloaded > record.total || record.etag.starts_with("W/")
-        || !record.etag.starts_with('"') || !record.etag.ends_with('"') || record.etag.len() < 2 {
+    if record.version != 1 || record.sequence == 0 || record.downloaded > record.total || !super::range::strong_etag(&record.etag) {
         return Err("invalid recovery metadata".into());
     }
     for url in [&record.task_url, &record.resolved_url] {

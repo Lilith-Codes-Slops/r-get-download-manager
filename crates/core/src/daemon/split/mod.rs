@@ -9,6 +9,8 @@ mod worker;
 mod tests;
 #[cfg(test)]
 mod checkpoint_tests;
+#[cfg(test)]
+mod range_validation_tests;
 
 use super::bandwidth::BandwidthLimiter;
 use super::range::ResumeInfo;

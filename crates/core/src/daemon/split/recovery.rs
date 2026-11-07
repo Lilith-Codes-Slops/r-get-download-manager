@@ -19,7 +19,7 @@ fn safe_name(name: &str) -> bool {
 
 pub(super) fn validate_record(record: &SplitRecord, partial: &Path) -> Result<(), String> {
     if record.version != 2 || record.sequence == 0 || !(2..=32).contains(&record.requested_connections)
-        || record.etag.starts_with("W/") || !record.etag.starts_with('"') || !record.etag.ends_with('"') || record.etag.len() < 2 {
+        || !crate::daemon::range::strong_etag(&record.etag) {
         return Err("invalid split checkpoint header".into());
     }
     for url in [&record.task_url, &record.resolved_url] {
