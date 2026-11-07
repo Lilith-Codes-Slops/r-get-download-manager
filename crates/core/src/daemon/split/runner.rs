@@ -24,6 +24,7 @@ pub(super) async fn run_checkpointed(
         etag: prepared.record.etag.clone(), total: prepared.record.total,
         url: reqwest::Url::parse(&prepared.record.resolved_url).map_err(|e| e.to_string())?,
     };
+    let workers = prepared.record.requested_connections as usize;
     let url = prepared.record.task_url.clone();
     let task_url = url.clone();
     let partial_name = prepared.record.partial_name.clone();
@@ -33,7 +34,7 @@ pub(super) async fn run_checkpointed(
     checkpoint.save(&map, &file, &store, &tasks).await?;
     let (stop, _) = watch::channel(false);
     let _stop_on_drop = StopOnDrop(stop.clone());
-    let mut transfer = tokio::spawn(run_map(client, url, info, file.clone(), map.clone(), limiter, stop.clone()));
+    let mut transfer = tokio::spawn(run_map(client, url, info, file.clone(), map.clone(), limiter, stop.clone(), workers));
     let mut timer = tokio::time::interval(Duration::from_millis(250));
     let mut last_time = Instant::now();
     let mut last_bytes: u64 = checkpoint.record.segments.iter().map(|s| s.downloaded).sum();

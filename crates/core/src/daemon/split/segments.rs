@@ -1,6 +1,7 @@
-//! Fixed non-overlapping ranges with exclusive worker ownership.
+//! Non-overlapping ranges and exclusive ownership under the segment-map lock.
 const MIN_SEGMENT: u64 = 1024 * 1024;
 const MAX_CONNECTIONS: u8 = 32;
+pub(super) const MAX_SEGMENTS: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Status { Pending, Active(usize), Done }
@@ -8,6 +9,7 @@ enum Status { Pending, Active(usize), Done }
 #[derive(Clone, Debug)]
 struct Segment { start: u64, end: u64, downloaded: u64, status: Status, hash: blake3::Hasher }
 
+// Indices are stable: stealing appends a segment, never inserts/removes one.
 pub(super) struct SegmentMap { segments: Vec<Segment> }
 
 impl SegmentMap {
@@ -28,19 +30,43 @@ impl SegmentMap {
         Ok(Self { segments })
     }
 
-    pub fn len(&self) -> usize { self.segments.len() }
     pub fn claim(&mut self, owner: usize) -> Option<(usize, u64, u64)> {
         if self.segments.iter().any(|segment| segment.status == Status::Active(owner)) { return None; }
         let (index, segment) = self.segments.iter_mut().enumerate().find(|(_, segment)| segment.status == Status::Pending)?;
         segment.status = Status::Active(owner);
         Some((index, segment.start + segment.downloaded, segment.end))
     }
-    pub fn advance(&mut self, index: usize, owner: usize, offset: u64, bytes: &[u8]) -> Result<(), String> {
-        let segment = self.segments.get_mut(index).ok_or("unknown split segment")?;
-        if segment.status != Status::Active(owner) || offset != segment.start + segment.downloaded
-            || bytes.len() as u64 > segment.end - offset {
+
+    /// Only steal unwritten work. Both halves must retain at least 1 MiB.
+    pub fn steal(&mut self, owner: usize) -> Option<(usize, u64, u64)> {
+        if self.segments.len() >= MAX_SEGMENTS || self.segments.iter().any(|s| s.status == Status::Active(owner)) { return None; }
+        let (index, _) = self.segments.iter().enumerate()
+            .filter(|(_, s)| matches!(s.status, Status::Active(_)))
+            .map(|(i, s)| (i, s.end - s.start - s.downloaded))
+            .filter(|(_, remaining)| *remaining >= 2 * MIN_SEGMENT)
+            .max_by_key(|(_, remaining)| *remaining)?;
+        let source = &mut self.segments[index];
+        let remaining_start = source.start + source.downloaded;
+        let old_end = source.end;
+        let midpoint = remaining_start + (old_end - remaining_start) / 2;
+        source.end = midpoint;
+        let new_index = self.segments.len();
+        self.segments.push(Segment { start: midpoint, end: old_end, downloaded: 0,
+            status: Status::Active(owner), hash: blake3::Hasher::new() });
+        Some((new_index, midpoint, old_end))
+    }
+
+    pub fn owned_end(&self, index: usize, owner: usize, offset: u64) -> Result<u64, String> {
+        let segment = self.segments.get(index).ok_or("unknown split segment")?;
+        if segment.status != Status::Active(owner) || offset != segment.start + segment.downloaded || offset > segment.end {
             return Err("split ownership or write boundary violation".into());
         }
+        Ok(segment.end)
+    }
+    pub fn advance(&mut self, index: usize, owner: usize, offset: u64, bytes: &[u8]) -> Result<(), String> {
+        let end = self.owned_end(index, owner, offset)?;
+        if bytes.len() as u64 > end - offset { return Err("split write exceeds owned range".into()); }
+        let segment = &mut self.segments[index];
         segment.hash.update(bytes);
         segment.downloaded += bytes.len() as u64;
         Ok(())
@@ -53,11 +79,19 @@ impl SegmentMap {
         segment.status = Status::Done;
         Ok(())
     }
+    pub fn release(&mut self, index: usize, owner: usize) -> Result<(), String> {
+        let segment = self.segments.get_mut(index).ok_or("unknown split segment")?;
+        if segment.status != Status::Active(owner) { return Err("cannot release an unowned segment".into()); }
+        segment.status = if segment.downloaded == segment.end - segment.start { Status::Done } else { Status::Pending };
+        Ok(())
+    }
     pub fn records(&self) -> Vec<super::checkpoint::SegmentRecord> {
-        self.segments.iter().map(|segment| super::checkpoint::SegmentRecord {
+        let mut records: Vec<_> = self.segments.iter().map(|segment| super::checkpoint::SegmentRecord {
             start: segment.start, end: segment.end, downloaded: segment.downloaded,
             hash: segment.hash.finalize().to_hex().to_string(),
-        }).collect()
+        }).collect();
+        records.sort_by_key(|record| record.start);
+        records
     }
     pub fn restore(records: &[super::checkpoint::SegmentRecord], hashes: Vec<blake3::Hasher>) -> Result<Self, String> {
         if records.len() != hashes.len() { return Err("segment hash count mismatch".into()); }
@@ -104,5 +138,39 @@ mod tests {
         map.advance(index, 7, start, &vec![0; (end - start) as usize]).unwrap();
         map.finish(index, 7).unwrap();
         assert!(!map.is_complete());
+    }
+    #[test]
+    fn steal_transfers_only_unwritten_bytes_and_release_preserves_progress() {
+        let mut map = SegmentMap::new(8 * MIN_SEGMENT, 2).unwrap();
+        let (first, first_start, _) = map.claim(0).unwrap();
+        let (second, second_start, second_end) = map.claim(1).unwrap();
+        map.advance(second, 1, second_start, b"abc").unwrap();
+        assert!(map.steal(0).is_none()); // an owner cannot hold two ranges
+        map.release(first, 0).unwrap();
+        let (stolen, midpoint, end) = map.steal(0).unwrap();
+        assert_eq!(end, second_end);
+        assert_eq!(map.owned_end(second, 1, second_start + 3).unwrap(), midpoint);
+        assert!(midpoint - (second_start + 3) >= MIN_SEGMENT);
+        assert!(end - midpoint >= MIN_SEGMENT);
+        assert!(map.advance(second, 1, midpoint, b"wrong owner").is_err());
+        let past_end = vec![0; (midpoint - (second_start + 3) + 1) as usize];
+        assert!(map.advance(second, 1, second_start + 3, &past_end).is_err());
+        map.advance(stolen, 0, midpoint, b"x").unwrap();
+        map.release(stolen, 0).unwrap();
+        let (reclaimed, resume, _) = map.claim(2).unwrap();
+        assert_eq!(reclaimed, first);
+        assert_eq!(resume, first_start);
+        map.release(reclaimed, 2).unwrap();
+        let records = map.records();
+        assert_eq!(records.first().unwrap().start, 0);
+        for pair in records.windows(2) { assert_eq!(pair[0].end, pair[1].start); }
+        assert_eq!(records.last().unwrap().end, 8 * MIN_SEGMENT);
+    }
+    #[test]
+    fn never_steals_below_minimum_floor() {
+        let mut map = SegmentMap::new(4 * MIN_SEGMENT, 2).unwrap();
+        let (idx, start, _) = map.claim(0).unwrap();
+        map.advance(idx, 0, start, b"x").unwrap();
+        assert!(map.steal(1).is_none());
     }
 }

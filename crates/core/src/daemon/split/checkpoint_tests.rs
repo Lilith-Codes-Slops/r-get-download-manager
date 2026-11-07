@@ -136,3 +136,23 @@ async fn checkpoint_waits_for_the_write_barrier() {
     let saved = store.load_split_recovery(url).await.unwrap().unwrap();
     assert_eq!(saved.sequence, 3);
 }
+
+#[test]
+fn reconciles_checkpoints_after_a_segment_layout_changes() {
+    let f = Fixture::new("https://example.test/file", 8);
+    let older = f.record.clone();
+    let mut newer = older.clone();
+    newer.sequence += 1;
+    newer.segments[1].end = 6;
+    newer.segments.push(SegmentRecord { start: 6, end: 8, downloaded: 0, hash: blake3::hash(&[]).to_hex().to_string() });
+    write_atomic(&f.sidecar, &newer).unwrap();
+    let prepared = recovery::prepare(&f.sidecar, &f.partial, &older.task_url, Some(&older)).unwrap();
+    assert_eq!(prepared.record, newer);
+    write_atomic(&f.sidecar, &older).unwrap();
+    let prepared = recovery::prepare(&f.sidecar, &f.partial, &older.task_url, Some(&newer)).unwrap();
+    assert_eq!(prepared.record, newer);
+    // A newer snapshot with a valid hash but less verified coverage is unsafe.
+    newer.segments[0].downloaded = 2;
+    newer.segments[0].hash = blake3::hash(&[0, 1]).to_hex().to_string();
+    assert!(recovery::prepare(&f.sidecar, &f.partial, &older.task_url, Some(&newer)).is_err());
+}

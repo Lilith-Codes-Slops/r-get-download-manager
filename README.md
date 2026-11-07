@@ -84,8 +84,9 @@ The Linux daemon supports single-stream and experimental fixed-split HTTP/HTTPS
 downloads. The CLI can request 1–32 connections using
 `dl add <URL> --connections 2`; the GUI still requests one. When a known-length
 resource advertises byte ranges and a strong ETag, the daemon probes an exact
-range and uses fixed segments of at least 1 MiB; unsupported range responses
-fall back to a single stream. Split checkpoints use a v2 sidecar with a hash
+range and starts with segments of at least 1 MiB; idle workers may steal half
+of a sufficiently large unfinished range. Each resulting remaining half is at
+least 1 MiB. Unsupported range responses fall back to a single stream. Split checkpoints use a v2 sidecar with a hash
 for each segment and SQLite metadata; startup attempts to validate and resume
 the recorded ranges. Split pause and mid-download connection changes are not yet
 supported. Cancel stops and joins the split workers before cleaning up.
@@ -136,8 +137,8 @@ described above. The GUI exposes pause and resume for eligible tasks; Cancel
 stops an active transfer and keeps its history, while Delete asks for confirmation
 and permanently removes the task's recorded files and history. Failed or canceled
 tasks can be retried. GUI rate limiting and other disabled controls remain
-unavailable. Dynamic split resizing and work-stealing, torrent/Metalink support,
-file mutations and post-download automation require engine or platform work. The GUI uses the
+unavailable. User-directed split resizing, adaptive concurrency, torrent/Metalink
+support, file mutations and post-download automation require engine or platform work. The GUI uses the
 existing local IPC transport, not an HTTP/WebSocket service. Linux is the only
 currently supported daemon platform.
 

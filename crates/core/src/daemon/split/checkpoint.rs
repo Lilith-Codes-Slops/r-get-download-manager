@@ -57,6 +57,11 @@ impl SplitCheckpoint {
         let owned = tasks.lock().await.get(&self.record.task_url)
             .is_some_and(|task| task.partial_name.as_deref() == Some(self.record.partial_name.as_str()));
         if !owned { return Err("split checkpoint no longer belongs to the task".into()); }
+        // Recovery deliberately bounds sidecar reads, so never publish an
+        // oversized checkpoint that a restart would be unable to load.
+        if serde_json::to_vec(&self.record).map_err(|e| e.to_string())?.len() + 1 > 64 * 1024 {
+            return Err("split checkpoint exceeds the sidecar size limit".into());
+        }
         let path = self.sidecar.clone();
         let record = self.record.clone();
         tokio::task::spawn_blocking(move || crate::daemon::checkpoint::write_atomic(&path, &record))

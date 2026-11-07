@@ -30,7 +30,7 @@ pub(super) fn validate_record(record: &SplitRecord, partial: &Path) -> Result<()
         || partial.file_name().and_then(|n| n.to_str()) != Some(record.partial_name.as_str()) {
         return Err("unsafe or mismatched checkpoint filename".into());
     }
-    if record.segments.is_empty() || record.segments.len() > 32 { return Err("invalid split segment count".into()); }
+    if record.segments.is_empty() || record.segments.len() > super::segments::MAX_SEGMENTS { return Err("invalid split segment count".into()); }
     let mut next = 0;
     for segment in &record.segments {
         if segment.start != next || segment.start >= segment.end || segment.end > record.total
@@ -48,19 +48,24 @@ fn choose(sidecar: &SplitRecord, database: Option<&SplitRecord>) -> Result<Split
     let Some(db) = database else { return Ok(sidecar.clone()) };
     if sidecar.version != db.version || sidecar.task_url != db.task_url || sidecar.resolved_url != db.resolved_url
         || sidecar.filename != db.filename || sidecar.partial_name != db.partial_name || sidecar.etag != db.etag
-        || sidecar.total != db.total || sidecar.requested_connections != db.requested_connections
-        || sidecar.segments.len() != db.segments.len() {
+        || sidecar.total != db.total || sidecar.requested_connections != db.requested_connections {
         return Err("split checkpoint identities differ".into());
     }
     if sidecar.sequence == db.sequence {
         return if sidecar == db { Ok(sidecar.clone()) } else { Err("equal split sequences differ".into()) };
     }
     let (newer, older) = if sidecar.sequence > db.sequence { (sidecar, db) } else { (db, sidecar) };
-    for (new, old) in newer.segments.iter().zip(&older.segments) {
-        if new.start != old.start || new.end != old.end || new.downloaded < old.downloaded
-            || (new.downloaded == old.downloaded && new.hash != old.hash) {
-            return Err("split sequence and progress disagree".into());
+    // A steal can change segment boundaries. Every byte claimed by the older
+    // checkpoint must still be covered by a verified prefix in the newer map.
+    for old in &older.segments {
+        let mut cursor = old.start;
+        let end = old.start + old.downloaded;
+        for new in &newer.segments {
+            let new_end = new.start + new.downloaded;
+            if new.start <= cursor && cursor < new_end { cursor = new_end.min(end); }
+            if cursor == end { break; }
         }
+        if cursor != end { return Err("split checkpoint lost previously verified bytes".into()); }
     }
     Ok(newer.clone())
 }
