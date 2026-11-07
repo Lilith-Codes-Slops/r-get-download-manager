@@ -11,10 +11,11 @@ impl CommandDispatcher {
             ClientRequest::RefreshUrl { .. } => Ok(()),
             ClientRequest::SetLimit { .. } => Ok(()),
             ClientRequest::RemoveTask { .. } => Ok(()),
-            ClientRequest::ListQueue => Ok(()),
+            ClientRequest::ListQueue | ClientRequest::GetDetailedQueue => Ok(()),
             ClientRequest::GetSnapshot { .. } => Ok(()),
             ClientRequest::AddMirror { .. } => Ok(()),
             ClientRequest::SelectMediaQuality { .. } => Ok(()),
+            ClientRequest::VerifyChecksum { .. } => Ok(()),
             ClientRequest::Shutdown => Ok(()),
         }
     }

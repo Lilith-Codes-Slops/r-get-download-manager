@@ -1,20 +1,157 @@
-use eframe::egui;
+mod views;
+use crate::ipc_bridge_worker::{BridgeMessage, IpcBridgeWorker};
+use downloader_ipc::{ClientRequest, DaemonEvent, DownloadInfo};
+use eframe::egui::{self, Color32, RichText};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
+
+#[derive(Clone, Copy, PartialEq)]
+enum View { Tasks, Downloads }
+#[derive(Clone, Copy, PartialEq)]
+enum Detail { Status, Network, Actions }
+#[derive(Clone, Copy, PartialEq)]
+enum Theme { System, Light, Dark }
+#[derive(Clone, Copy, PartialEq)]
+enum Sort { Name, Size, Date, Type }
+
+#[derive(Clone)]
+struct DownloadFile { path: PathBuf, size: u64, modified: Option<SystemTime> }
 
 pub struct AppState {
-    pub selected_task: Option<String>,
+    bridge: IpcBridgeWorker,
+    tasks: Vec<DownloadInfo>,
+    selected_task: Option<String>,
+    selected_file: Option<PathBuf>,
+    files: Vec<DownloadFile>,
+    last_files_refresh: Instant,
+    view: View,
+    detail: Detail,
+    theme: Theme,
+    system_visuals: egui::Visuals,
+    sort: Sort,
+    descending: bool,
+    add_open: bool,
+    settings_open: bool,
+    url: String,
+    notice: Option<String>,
+    connected: bool,
 }
 
-impl Default for AppState {
-    fn default() -> Self {
-        Self { selected_task: None }
+impl AppState {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let system_visuals = cc.egui_ctx.style().visuals.clone();
+        Self {
+            bridge: IpcBridgeWorker::start(), tasks: Vec::new(), selected_task: None,
+            selected_file: None, files: Vec::new(), last_files_refresh: Instant::now() - Duration::from_secs(10),
+            view: View::Tasks, detail: Detail::Status, theme: Theme::System, system_visuals,
+            sort: Sort::Name, descending: false, add_open: false, settings_open: false,
+            url: String::new(), notice: None, connected: false,
+        }
     }
+
+    fn poll(&mut self) {
+        while let Ok(message) = self.bridge.updates.try_recv() {
+            match message {
+                BridgeMessage::ConnectionError(error) => { self.connected = false; self.notice = Some(format!("Daemon disconnected: {error}")); }
+                BridgeMessage::Event(DaemonEvent::DetailedQueue { tasks }) => {
+                    self.connected = true;
+                    self.tasks = tasks;
+                }
+                BridgeMessage::Event(DaemonEvent::TaskFailed { error, .. }) => self.notice = Some(error),
+                BridgeMessage::Event(DaemonEvent::TaskStateChanged { .. }) => {
+                    self.notice = Some("Download added to the queue.".into());
+                }
+                BridgeMessage::Event(_) => {}
+            }
+        }
+    }
+
+    fn send(&mut self, req: ClientRequest) {
+        if self.bridge.requests.send(req).is_err() { self.notice = Some("The background connection worker stopped.".into()); }
+    }
+
+    fn refresh_files(&mut self) {
+        self.last_files_refresh = Instant::now();
+        let Some(dir) = download_dir() else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else { self.files.clear(); return };
+        self.files = entries.filter_map(Result::ok).filter_map(|entry| {
+            let meta = entry.metadata().ok()?;
+            if !meta.is_file() || entry.file_name().to_string_lossy().starts_with(".rget-") { return None; }
+            Some(DownloadFile { path: entry.path(), size: meta.len(), modified: meta.modified().ok() })
+        }).collect();
+        self.sort_files();
+    }
+
+    fn sort_files(&mut self) {
+        let sort = self.sort;
+        self.files.sort_by(|a, b| match sort {
+            Sort::Name => a.path.file_name().cmp(&b.path.file_name()),
+            Sort::Size => a.size.cmp(&b.size),
+            Sort::Date => a.modified.cmp(&b.modified),
+            Sort::Type => a.path.extension().cmp(&b.path.extension()),
+        });
+        if self.descending { self.files.reverse(); }
+    }
+
+
 }
 
 impl eframe::App for AppState {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll();
+        ui.ctx().request_repaint_after(Duration::from_millis(500));
+        egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
+        egui::Panel::left("sidebar").resizable(false).exact_size(172.0).show(ui, |ui| self.sidebar(ui));
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("rget");
-            ui.label("Downloads");
+            if let Some(notice) = self.notice.clone() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(notice);
+                    if ui.small_button("Dismiss").clicked() { self.notice = None; }
+                });
+                ui.separator();
+            }
+            match self.view { View::Tasks => self.tasks_view(ui), View::Downloads => self.downloads_view(ui) }
         });
+        self.dialogs(ui.ctx());
+    }
+}
+
+fn add_request(url: String) -> ClientRequest {
+    ClientRequest::AddTask { url, mirrors: vec![], connections: 1, extract: false, category: None, not_before: None }
+}
+fn unavailable(ui: &mut egui::Ui, label: &str, reason: &str) {
+    ui.add_enabled(false, egui::Button::new(label)).on_hover_text(reason);
+}
+fn metric(ui: &mut egui::Ui, name: &str, value: &str) { ui.label(RichText::new(name).weak()); ui.label(value); ui.end_row(); }
+fn format_bytes(bytes: u64) -> String {
+    if bytes < 1024 { return format!("{bytes} B"); }
+    let mut value = bytes as f64;
+    let units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut i = 0;
+    while value >= 1024.0 && i < units.len() - 1 { value /= 1024.0; i += 1; }
+    format!("{value:.1} {}", units[i])
+}
+fn format_duration(seconds: u64) -> String { format!("{:02}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60) }
+fn download_dir() -> Option<PathBuf> { std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(|home| PathBuf::from(home).join("Downloads")) }
+fn open_path(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    let result = std::process::Command::new("xdg-open").arg(path).spawn();
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("explorer").arg(path).spawn();
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(path).spawn();
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    return Err("Opening files is unsupported on this platform".into());
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    result.map(|_| ()).map_err(|e| format!("Could not open {}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn formats_transfer_values() {
+        assert_eq!(format_bytes(1024), "1.0 KiB");
+        assert_eq!(format_duration(3661), "01:01:01");
     }
 }

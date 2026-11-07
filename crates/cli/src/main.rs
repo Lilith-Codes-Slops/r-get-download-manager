@@ -41,6 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args_parser::Commands::Rm(cmd) => commands::cmd_remove_task::run(cmd).await?,
         args_parser::Commands::Limit(cmd) => commands::cmd_speed_limit::run(cmd).await?,
         args_parser::Commands::Mirror(cmd) => commands::cmd_mirror_manage::run(cmd).await?,
+        args_parser::Commands::Verify(cmd) => commands::cmd_verify::run(cmd).await?,
     }
     Ok(())
 }

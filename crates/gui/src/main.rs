@@ -1,19 +1,18 @@
 #![forbid(unsafe_code)]
 
-use eframe::egui;
-
 mod app_state;
-mod dialogs;
 mod ipc_bridge_worker;
-mod theme;
-mod views;
-mod widgets;
 
 fn main() -> Result<(), eframe::Error> {
-    let options = eframe::NativeOptions::default();
+    let options = eframe::NativeOptions {
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_inner_size([1200.0, 780.0])
+            .with_min_inner_size([800.0, 580.0]),
+        ..Default::default()
+    };
     eframe::run_native(
-        "rget",
+        "rGet",
         options,
-        Box::new(|_cc| Ok(Box::new(app_state::AppState::default()))),
+        Box::new(|cc| Ok(Box::new(app_state::AppState::new(cc)))),
     )
 }

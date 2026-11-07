@@ -31,6 +31,8 @@ pub enum ClientRequest {
         delete_file: bool,
     },
     ListQueue,
+    /// Structured queue with transfer telemetry for GUI clients.
+    GetDetailedQueue,
     GetSnapshot {
         task_id: Option<String>,
     },
@@ -42,6 +44,11 @@ pub enum ClientRequest {
         task_id: String,
         video_id: Option<String>,
         audio_id: Option<String>,
+    },
+    VerifyChecksum {
+        task_id: String,
+        algorithm: String,
+        expected: String,
     },
     Shutdown,
 }

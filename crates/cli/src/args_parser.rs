@@ -17,6 +17,7 @@ pub enum Commands {
     Rm(RmArgs),
     Limit(LimitArgs),
     Mirror(MirrorArgs),
+    Verify(VerifyArgs),
 }
 
 #[derive(Parser)]
@@ -58,4 +59,13 @@ pub struct LimitArgs {
 pub struct MirrorArgs {
     pub task_id: String,
     pub mirror_url: String,
+}
+
+#[derive(Parser)]
+pub struct VerifyArgs {
+    pub task_id: String,
+    /// sha256 or blake3
+    pub algorithm: String,
+    /// Expected 64-character hexadecimal digest
+    pub expected: String,
 }
