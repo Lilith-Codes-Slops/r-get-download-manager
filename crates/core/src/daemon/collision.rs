@@ -8,8 +8,30 @@ fn candidate(path: &Path, index: usize) -> io::Result<PathBuf> {
     if index == 0 { return Ok(path.to_owned()); }
     let stem = path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid destination name"))?;
     let extension = path.extension().and_then(|s| s.to_str());
-    let name = match extension { Some(ext) => format!("{stem} ({index}).{ext}"), None => format!("{stem} ({index})") };
+    // A prior advisory selection may already have a numeric suffix. Continue
+    // that sequence rather than nesting another suffix on a late collision.
+    let suffix = stem.strip_suffix(')').and_then(|s| s.rsplit_once(" ("))
+        .filter(|(_, digits)| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()));
+    let (base, number) = if let Some((base, digits)) = suffix {
+        (base, add_decimal(digits, index))
+    } else { (stem, index.to_string()) };
+    let name = match extension { Some(ext) => format!("{base} ({number}).{ext}"), None => format!("{base} ({number})") };
     Ok(path.with_file_name(name))
+}
+
+// The suffix can be longer than an integer type even when the filename itself
+// is valid. Add the bounded attempt count without parsing or overflowing.
+fn add_decimal(digits: &str, mut add: usize) -> String {
+    let mut out = Vec::with_capacity(digits.len() + 1);
+    for digit in digits.bytes().rev() {
+        let value = (digit - b'0') as usize + add;
+        out.push(b'0' + (value % 10) as u8);
+        add = value / 10;
+    }
+    while add > 0 { out.push(b'0' + (add % 10) as u8); add /= 10; }
+    while out.len() > 1 && out.last() == Some(&b'0') { out.pop(); }
+    out.reverse();
+    String::from_utf8(out).expect("decimal digits are UTF-8")
 }
 
 pub(super) async fn available(path: &Path) -> io::Result<PathBuf> { available_from(path, false).await }
@@ -69,9 +91,46 @@ mod tests {
         assert_eq!(tokio::fs::read(&published).await.unwrap(), b"new");
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }
+    #[tokio::test]
+    async fn selected_suffix_continues_after_a_late_collision() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("rget-late-name-{}-{nonce}", std::process::id()));
+        tokio::fs::create_dir(&dir).await.unwrap();
+        let original = dir.join("file.ext"); let partial = dir.join("partial");
+        tokio::fs::write(&original, b"original").await.unwrap();
+        tokio::fs::write(&partial, b"download").await.unwrap();
+        let selected = available(&original).await.unwrap();
+        assert_eq!(selected, dir.join("file (1).ext"));
+        tokio::fs::write(&selected, b"other").await.unwrap();
+        let final_path = publish(&partial, &selected).await.unwrap();
+        assert_eq!(final_path, dir.join("file (2).ext"));
+        assert_eq!(tokio::fs::read(&selected).await.unwrap(), b"other");
+        assert_eq!(tokio::fs::read(&final_path).await.unwrap(), b"download");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn simultaneous_publications_atomically_claim_distinct_names() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("rget-parallel-name-{}-{nonce}", std::process::id()));
+        tokio::fs::create_dir(&dir).await.unwrap();
+        let first = dir.join("partial-a"); let second = dir.join("partial-b"); let dest = dir.join("file.ext");
+        tokio::fs::write(&first, b"first").await.unwrap(); tokio::fs::write(&second, b"second").await.unwrap();
+        let (a, b) = tokio::join!(publish(&first, &dest), publish(&second, &dest));
+        let a = a.unwrap(); let b = b.unwrap();
+        assert_ne!(a, b);
+        assert!([&a, &b].contains(&&dest));
+        assert!([&a, &b].contains(&&dir.join("file (1).ext")));
+        assert_eq!(tokio::fs::read(&a).await.unwrap(), b"first");
+        assert_eq!(tokio::fs::read(&b).await.unwrap(), b"second");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
     #[test]
     fn names_without_extensions_and_dotfiles() {
         assert_eq!(candidate(Path::new("README"), 1).unwrap(), Path::new("README (1)"));
         assert_eq!(candidate(Path::new(".hidden"), 2).unwrap(), Path::new(".hidden (2)"));
+        assert_eq!(candidate(Path::new("report (009).txt"), 1).unwrap(), Path::new("report (10).txt"));
+        assert_eq!(candidate(Path::new("report (999999999999999999999).txt"), 1).unwrap(), Path::new("report (1000000000000000000000).txt"));
     }
 }

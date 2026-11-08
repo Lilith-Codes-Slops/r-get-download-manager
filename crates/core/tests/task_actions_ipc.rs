@@ -175,3 +175,69 @@ fn add_after_completed_starts_another_download_without_overwriting() {
     assert_eq!(std::fs::read(f.root.join("Downloads/again (1).bin")).unwrap(), b"two");
     server.join().unwrap();
 }
+
+fn serve_delayed_name(name: &'static str, body: &'static [u8]) -> (String, std::sync::Arc<std::sync::atomic::AtomicBool>, std::thread::JoinHandle<()>) {
+    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/file", listener.local_addr().unwrap());
+    let release = Arc::new(AtomicBool::new(false)); let ready = release.clone();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut data = [0u8; 4096]; let _ = stream.read(&mut data).unwrap();
+        let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Disposition: attachment; filename={name}\r\nConnection: close\r\n\r\n", body.len());
+        stream.write_all(header.as_bytes()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !ready.load(Ordering::SeqCst) && Instant::now() < deadline { std::thread::sleep(Duration::from_millis(10)); }
+        let _ = stream.write_all(body);
+    });
+    (url, release, server)
+}
+
+fn wait_for_filename(f: &Fixture, url: &str, name: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(task) = f.task(url) {
+            if task.filename.as_deref() == Some(name) { return; }
+            assert!(!task.state.starts_with("failed:"), "{}", task.state);
+        }
+        assert!(Instant::now() < deadline, "task did not select {name}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn concurrent_adds_with_same_name_publish_distinct_files() {
+    use std::sync::atomic::Ordering;
+    let mut f = Fixture::new(); f.start();
+    let (a, release_a, server_a) = serve_delayed_name("same.bin", b"first");
+    let (b, release_b, server_b) = serve_delayed_name("same.bin", b"second");
+    f.add(&a); f.add(&b);
+    wait_for_filename(&f, &a, "same.bin"); wait_for_filename(&f, &b, "same.bin");
+    release_a.store(true, Ordering::SeqCst); release_b.store(true, Ordering::SeqCst);
+    let ta = f.wait(&a, "completed"); let tb = f.wait(&b, "completed");
+    let pa = ta.final_path.unwrap(); let pb = tb.final_path.unwrap();
+    assert_ne!(pa, pb);
+    assert_eq!(std::fs::read(&pa).unwrap(), b"first"); assert_eq!(std::fs::read(&pb).unwrap(), b"second");
+    assert!(f.root.join("Downloads/same.bin").exists());
+    assert!(f.root.join("Downloads/same (1).bin").exists());
+    server_a.join().unwrap(); server_b.join().unwrap();
+}
+
+#[test]
+fn late_collision_on_first_suffix_advances_to_second_suffix() {
+    use std::sync::atomic::Ordering;
+    let mut f = Fixture::new(); f.start();
+    std::fs::create_dir_all(f.root.join("Downloads")).unwrap();
+    std::fs::write(f.root.join("Downloads/late.bin"), b"original").unwrap();
+    let (url, release, server) = serve_delayed_name("late.bin", b"download");
+    f.add(&url); wait_for_filename(&f, &url, "late (1).bin");
+    std::fs::write(f.root.join("Downloads/late (1).bin"), b"other").unwrap();
+    release.store(true, Ordering::SeqCst);
+    let task = f.wait(&url, "completed");
+    assert_eq!(task.filename.as_deref(), Some("late (2).bin"));
+    assert_eq!(std::fs::read(f.root.join("Downloads/late.bin")).unwrap(), b"original");
+    assert_eq!(std::fs::read(f.root.join("Downloads/late (1).bin")).unwrap(), b"other");
+    assert_eq!(std::fs::read(f.root.join("Downloads/late (2).bin")).unwrap(), b"download");
+    assert!(!f.root.join("Downloads/late (1) (1).bin").exists());
+    server.join().unwrap();
+}
