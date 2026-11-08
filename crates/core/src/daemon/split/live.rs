@@ -64,7 +64,8 @@ pub(in crate::daemon) async fn run(prepared: PreparedSplit, partial: PathBuf, cl
         break guard;
     };
     if let Some(task) = guard.get_mut(&id) { task.state = "finalizing".into(); task.downloaded = task.total.unwrap_or(task.downloaded); }
-    crate::daemon::publication::publish_no_clobber(&partial, &dest).await?;
+    let dest = crate::daemon::collision::publish(&partial, &dest).await?;
+    if let Some(task) = guard.get_mut(&id) { task.filename = dest.file_name().and_then(|n| n.to_str()).map(str::to_owned); }
     drop(guard);
     let _ = tokio::fs::remove_file(&partial).await;
     let _ = tokio::fs::remove_file(&sidecar).await;

@@ -58,14 +58,7 @@ pub(in crate::daemon) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<P
         let prepared = recovery::prepare(&sidecar, &partial, &id, saved.split_checkpoints.get(&id).filter(|record| record.partial_name == name));
         match prepared {
             Ok(item) => {
-                let dest = root.join(&item.record.filename);
-                let collision = match dest.symlink_metadata() {
-                    Ok(_) => Some("final filename already exists; verify it manually".to_owned()),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(e) => Some(format!("could not inspect final filename: {e}")),
-                };
                 if let Some(task) = saved.tasks.get_mut(&id) {
-                    if let Some(error) = collision { task.state = format!("failed: recovery unavailable: {error}"); continue; }
                     task.state = if matches!(prior.as_str(), "paused" | "pausing") { "paused" } else { "downloading" }.into();
                     task.downloaded = item.record.segments.iter().map(|s| s.downloaded).sum();
                     task.total = Some(item.record.total); task.filename = Some(item.record.filename.clone());

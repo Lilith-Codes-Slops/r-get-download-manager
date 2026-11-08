@@ -12,7 +12,9 @@ pub use tray_service::TrayService;
 
 mod transfer;
 mod progress;
+#[cfg(test)]
 mod publication;
+mod collision;
 #[cfg(target_os = "linux")]
 mod split;
 #[cfg(target_os = "linux")]

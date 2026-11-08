@@ -76,7 +76,6 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
             return Err("download canceled".into());
         }
         if let Some(task) = guard.get_mut(url) {
-            task.filename = Some(filename.to_string());
             task.total = total;
             task.resume_supported = resume.is_some();
             task.active_connections = Some(if split { 0 } else { 1 });
@@ -98,8 +97,10 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    // Detect common collisions before transferring potentially gigabytes of data.
-    check_destination(&dest).await?;
+    // The check is advisory; publication also handles races atomically.
+    let dest = super::collision::available(&dest).await?;
+    let filename = dest.file_name().and_then(|name| name.to_str()).ok_or("invalid destination filename")?;
+    if let Some(task) = tasks.lock().await.get_mut(url) { task.filename = Some(filename.to_owned()); }
 
     // Stream into a uniquely-created side file. Publishing with hard_link is
     // atomic and fails if the final name already exists, unlike rename on Unix.
@@ -117,11 +118,9 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
     }
     // Persist ownership of the partial name before the first sidecar rename, so
     // a sidecar newer than SQLite can still be associated after a crash.
-    if resume.is_some() {
-        if let Err(e) = store.save(&tasks, &limiter).await {
-            drop(file); let _ = tokio::fs::remove_file(&temporary).await;
-            return Err(e);
-        }
+    if let Err(e) = store.save(&tasks, &limiter).await {
+        drop(file); let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(e);
     }
     #[cfg(target_os = "linux")]
     if split {
@@ -173,7 +172,7 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
     drop(file);
     // Serialize publication with task removal. A removed/canceled transfer must
     // not publish even if a new task with the same URL has since been queued.
-    let guard = loop {
+    let mut guard = loop {
         if !super::control::wait_running(&tasks, url, &mut control).await {
             let _ = tokio::fs::remove_file(&temporary).await;
             if let Some(checkpoint) = &checkpoint { let _ = tokio::fs::remove_file(&checkpoint.sidecar).await; }
@@ -193,7 +192,8 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
     };
     // The link may exist even if directory syncing fails; preserve the partial
     // and checkpoint on every publication error instead of deleting evidence.
-    super::publication::publish_no_clobber(&temporary, &dest).await?;
+    let dest = super::collision::publish(&temporary, &dest).await?;
+    if let Some(task) = guard.get_mut(url) { task.filename = dest.file_name().and_then(|n| n.to_str()).map(str::to_owned); }
     drop(guard);
     // A cleanup failure leaves only a redundant .part file, not a corrupted
     // final file. Never delete the successfully published destination.
@@ -203,6 +203,7 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
     Ok(dest)
 }
 
+#[cfg(test)]
 async fn check_destination(dest: &std::path::Path) -> std::io::Result<()> {
     match tokio::fs::symlink_metadata(dest).await {
         Ok(_) => Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists,

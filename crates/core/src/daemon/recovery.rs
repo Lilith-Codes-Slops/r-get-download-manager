@@ -119,13 +119,7 @@ fn prepare_one(saved: &SavedState, root: &Path, id: &str, state: &str) -> Result
     let database = saved.checkpoints.get(id).filter(|record| record.partial_name == name);
     let record = choose(sidecar_record.clone(), database)?;
     if record.downloaded > record.total { return Err("checkpoint exceeds total length".into()); }
-    // Existing files must not be inferred to be correct from size alone.
-    let final_path = root.join(&record.filename);
-    match final_path.symlink_metadata() {
-        Ok(_) => return Err("final filename already exists; verify it manually".into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
-        Err(e) => return Err(format!("could not inspect final filename: {e}")),
-    }
+    // A destination collision is resolved atomically when the validated partial is published.
     let (mut file, hash) = verify_prefix(&record, &partial).map_err(|e| format!("partial validation failed: {e}"))?;
     file.set_len(record.downloaded).map_err(|e| e.to_string())?;
     file.sync_all().map_err(|e| e.to_string())?;

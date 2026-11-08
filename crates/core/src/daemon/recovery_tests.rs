@@ -55,9 +55,11 @@ fn missing_or_corrupt_sidecar_never_truncates_the_partial() {
 fn existing_final_file_is_not_assumed_complete_from_size_alone() {
     let mut f = Fixture::new();
     std::fs::write(f.dir.join("file.bin"), b"abcdefghijkl").unwrap();
-    assert!(reconcile(&mut f.state, &f.dir).is_empty());
-    assert!(f.state.tasks["https://example.test/file"].state.starts_with("failed:"));
-    assert_eq!(std::fs::read(&f.partial).unwrap(), b"abcdtail");
+    let prepared = reconcile(&mut f.state, &f.dir);
+    assert_eq!(prepared.len(), 1);
+    assert_eq!(f.state.tasks["https://example.test/file"].state, "paused");
+    assert_eq!(std::fs::read(&f.partial).unwrap(), b"abcd");
+    assert_eq!(std::fs::read(f.dir.join("file.bin")).unwrap(), b"abcdefghijkl");
 }
 
 #[test]

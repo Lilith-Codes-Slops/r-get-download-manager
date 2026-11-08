@@ -68,7 +68,7 @@ pub(super) async fn run(item: PreparedRecovery, tasks: Tasks, limiter: Arc<Bandw
         return Err(error.into());
     }
     drop(file);
-    let guard = loop {
+    let mut guard = loop {
         if !wait_running(&tasks, &url, &mut control).await {
             let _ = tokio::fs::remove_file(&item.partial).await;
             let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
@@ -86,7 +86,8 @@ pub(super) async fn run(item: PreparedRecovery, tasks: Tasks, limiter: Arc<Bandw
         if let Some(task) = guard.get_mut(&url) { task.state = "finalizing".into(); }
         break guard;
     };
-    super::publication::publish_no_clobber(&item.partial, &final_path).await?;
+    let final_path = super::collision::publish(&item.partial, &final_path).await?;
+    if let Some(task) = guard.get_mut(&url) { task.filename = final_path.file_name().and_then(|n| n.to_str()).map(str::to_owned); }
     drop(guard);
     let _ = tokio::fs::remove_file(&item.partial).await;
     let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;

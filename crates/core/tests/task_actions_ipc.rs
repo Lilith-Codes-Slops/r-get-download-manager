@@ -141,7 +141,11 @@ fn delete_completed_or_missing_file_and_failed_collision() {
 
     std::fs::write(f.root.join("Downloads/existing.bin"), b"other file").unwrap();
     let (url, release, server) = serve(false, "existing.bin");
-    f.add(&url); f.wait(&url, "failed:"); f.delete(&url);
+    f.add(&url); let task = f.wait(&url, "completed");
+    assert_eq!(task.filename.as_deref(), Some("existing (1).bin"));
+    assert_eq!(std::fs::read(f.root.join("Downloads/existing (1).bin")).unwrap(), b"abc");
+    f.delete(&url);
+    assert!(!f.root.join("Downloads/existing (1).bin").exists());
     assert_eq!(std::fs::read(f.root.join("Downloads/existing.bin")).unwrap(), b"other file");
     drop(release); server.join().unwrap();
 }
