@@ -7,11 +7,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
-
 pub struct ServerLoop {
     pool: IpcConnectionPool,
 }
-
 impl ServerLoop {
     pub fn new(pool: IpcConnectionPool) -> Self {
         Self { pool }
@@ -172,7 +170,7 @@ impl ServerLoop {
                                                         if guard.get(&url).is_some_and(|state| !state.state.starts_with("failed:") && state.state != "canceled") {
                                                             DaemonEvent::TaskFailed { task_id: url, error: "task already exists".into() }
                                                         } else {
-                                                            guard.insert(url.clone(), DownloadInfo { url: url.clone(), state: "downloading".into(), filename: None, downloaded: 0, total: None, speed_bps: 0, final_path: None, resume_supported: false, partial_name: None, requested_connections: Some(connections), active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false });
+                                                            guard.insert(url.clone(), DownloadInfo { url: url.clone(), state: "downloading".into(), filename: None, downloaded: 0, total: None, speed_bps: 0, final_path: None, destination_path: None, resume_supported: false, partial_name: None, requested_connections: Some(connections), active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false });
                                                             let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(super::control::TransferControl::Running);
                                                             controls.lock().await.insert(url.clone(), cancel_tx);
                                                             drop(guard);
@@ -200,7 +198,7 @@ impl ServerLoop {
                                                                 drop(guard);
                                                                 if let Err(e) = task_store.save(&task_states, &limiter_for_task_save).await { eprintln!("queue checkpoint failed: {e}"); }
                                                             });
-                                                            DaemonEvent::TaskStateChanged { task_id: url, state: "downloading".into() }
+                                                            DaemonEvent::TaskStateChanged { task_id: url, state: "downloading".into(), destination_path: None }
                                                         }
                                                     }
                                                 }
@@ -223,6 +221,7 @@ impl ServerLoop {
                                                             Ok(()) => DaemonEvent::TaskStateChanged {
                                                                 task_id: task_id.unwrap_or_default(),
                                                                 state: if kbps == 0 { "speed limit disabled".into() } else { format!("speed limit set to {kbps} kbps") },
+                                                                destination_path: None,
                                                             },
                                                             Err(error) => DaemonEvent::TaskFailed { task_id: task_id.unwrap_or_default(), error: error.into() },
                                                         }
@@ -245,6 +244,7 @@ impl ServerLoop {
                                                 ClientRequest::GetDetailedQueue => {
                                                     let mut snapshot: Vec<_> = tasks.lock().await.values().cloned().collect();
                                                     for task in &mut snapshot {
+                                                        task.destination_path = super::destination::path(task);
                                                         if let Some(active) = super::segment_events::active_count(&task.url, task.partial_name.as_deref()).await {
                                                             task.active_connections = Some(active);
                                                         }
@@ -258,7 +258,7 @@ impl ServerLoop {
                                                 ClientRequest::GetSnapshot { task_id: Some(id) } => {
                                                     let guard = tasks.lock().await;
                                                     match guard.get(&id) {
-                                                        Some(state) => DaemonEvent::TaskStateChanged { task_id: id, state: state.state.clone() },
+                                                        Some(state) => DaemonEvent::TaskStateChanged { task_id: id, state: state.state.clone(), destination_path: super::destination::path(state) },
                                                         None => DaemonEvent::TaskFailed { task_id: id, error: "task not found".into() },
                                                     }
                                                 }

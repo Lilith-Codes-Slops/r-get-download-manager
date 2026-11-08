@@ -85,6 +85,8 @@ impl AppState {
                         else { "Unavailable under rGet's safe-resume requirements" };
                     metric(ui, "Resume support", support);
                     if let Some(path) = &task.final_path { metric(ui, "Saved to", path); }
+                    else if let Some(path) = &task.destination_path { metric(ui, "Destination (may change)", path); }
+                    else if let Some(name) = &task.filename { metric(ui, "Destination name", name); }
                 });
                 ui.horizontal(|ui| {
                     let can_pause = self.connected && task.state == "downloading" && task.resume_supported;

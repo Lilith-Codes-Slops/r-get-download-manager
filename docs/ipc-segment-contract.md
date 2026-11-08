@@ -83,3 +83,17 @@ same `task_id` and `generation`. Values are per attempt, not persisted host
 history. Ignore an event whose generation does not match the current task's
 partial name. If this optional stream is unsupported or disconnects, clear the
 cached policy instead of displaying stale values.
+
+## Destination fields in queue and state responses
+
+`GetDetailedQueue` includes an optional `destination_path` alongside progress.
+For an unfinished task this is a **planned** destination, derived from its
+persisted filename; it can change if another file wins a publication race.
+`final_path` remains reserved for a file actually published by the task. A
+single-task `GetSnapshot` and task control state replies may also include
+`destination_path`; the initial Add reply can omit it while the server response
+is pending. The new fields are optional when reading older daemons. `SpeedTick`
+has an optional destination field for compatibility, but this daemon does not
+currently publish a general SpeedTick subscription; progress is polled via the
+structured queue. Planned destinations must never be treated as owned files
+for deletion.

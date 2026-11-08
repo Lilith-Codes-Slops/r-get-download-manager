@@ -26,7 +26,7 @@ pub(super) async fn set_paused(tasks: &Tasks, controls: &Controls, id: String, p
     task.state = state.into();
     task.speed_bps = 0;
     sender.send_replace(if pause { TransferControl::Paused } else { TransferControl::Running });
-    DaemonEvent::TaskStateChanged { task_id: id, state: state.into() }
+    DaemonEvent::TaskStateChanged { task_id: id, state: state.into(), destination_path: super::destination::path(task) }
 }
 
 /// Only split tasks can be resized today; a single-stream migration requires a

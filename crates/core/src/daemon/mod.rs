@@ -15,6 +15,7 @@ mod progress;
 #[cfg(test)]
 mod publication;
 mod collision;
+mod destination;
 #[cfg(target_os = "linux")]
 mod split;
 #[cfg(target_os = "linux")]

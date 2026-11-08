@@ -222,7 +222,7 @@ mod tests {
         for (url, status) in [("https://example.test/done", "completed"), ("https://example.test/live", "downloading")] {
             state.tasks.insert(url.into(), DownloadInfo {
                 url: url.into(), state: status.into(), filename: Some("test.bin".into()),
-                downloaded: 12, total: Some(100), speed_bps: 5, final_path: None, resume_supported: true, partial_name: None,
+                downloaded: 12, total: Some(100), speed_bps: 5, final_path: None, destination_path: None, resume_supported: true, partial_name: None,
              requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false });
         }
         state.global_kbps = 800;

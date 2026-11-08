@@ -14,7 +14,7 @@ pub(super) async fn cancel(tasks: &Tasks, controls: &Controls, id: String) -> Da
     let mut guard = tasks.lock().await;
     let Some(task) = guard.get_mut(&id) else { return failed(id, "task not found"); };
     if task.state == "canceling" || task.state == "canceled" {
-        return DaemonEvent::TaskStateChanged { task_id: id, state: task.state.clone() };
+        return DaemonEvent::TaskStateChanged { task_id: id, state: task.state.clone(), destination_path: super::destination::path(task) };
     }
     if !active(&task.state) { return failed(id, "task is not an active download"); }
     let senders = controls.lock().await;
@@ -22,7 +22,7 @@ pub(super) async fn cancel(tasks: &Tasks, controls: &Controls, id: String) -> Da
     task.state = "canceling".into();
     task.speed_bps = 0;
     sender.send_replace(TransferControl::Canceled);
-    DaemonEvent::TaskStateChanged { task_id: id, state: "canceling".into() }
+    DaemonEvent::TaskStateChanged { task_id: id, state: "canceling".into(), destination_path: super::destination::path(task) }
 }
 
 pub(super) async fn remove(tasks: &Tasks, controls: &Controls, limiter: &Arc<BandwidthLimiter>, id: String, delete_file: bool) -> DaemonEvent {
@@ -47,7 +47,7 @@ pub(super) async fn remove(tasks: &Tasks, controls: &Controls, limiter: &Arc<Ban
             guard.remove(&id);
             controls.lock().await.remove(&id);
             limiter.remove(&id).await;
-            return DaemonEvent::TaskStateChanged { task_id: id, state: "removed".into() };
+            return DaemonEvent::TaskStateChanged { task_id: id, state: "removed".into(), destination_path: None };
         }
         if tokio::time::Instant::now() >= deadline { return failed(id, "timed out waiting for the transfer to stop; task was not removed"); }
         tokio::time::sleep(Duration::from_millis(25)).await;
@@ -114,7 +114,7 @@ mod tests {
         tokio::fs::write(&path, b"unrelated").await.unwrap();
         let mut task = DownloadInfo { url: "https://example.test".into(), state: "failed".into(),
             filename: Some("existing.bin".into()), downloaded: 0, total: None, speed_bps: 0,
-            final_path: None, resume_supported: false, partial_name: None, requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false };
+            final_path: None, destination_path: None, resume_supported: false, partial_name: None, requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false };
         remove_files_in(&task, &root).await.unwrap();
         assert_eq!(tokio::fs::read(&path).await.unwrap(), b"unrelated");
         task.final_path = Some(root.join("../outside").to_string_lossy().into_owned());

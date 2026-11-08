@@ -93,6 +93,9 @@ fn cancel_keeps_history_and_delete_active_cleans_partial() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(20));
     };
+    let task = f.task(&url).unwrap();
+    assert!(task.final_path.is_none());
+    assert!(task.destination_path.as_deref().is_some_and(|path| path.ends_with("held.bin")));
     let event = f.request(ClientRequest::Cancel { task_id: url.clone() });
     assert!(matches!(event, DaemonEvent::TaskStateChanged { .. }), "{event:?}");
     f.wait(&url, "canceled");
@@ -143,6 +146,9 @@ fn delete_completed_or_missing_file_and_failed_collision() {
     let (url, release, server) = serve(false, "existing.bin");
     f.add(&url); let task = f.wait(&url, "completed");
     assert_eq!(task.filename.as_deref(), Some("existing (1).bin"));
+    assert_eq!(task.destination_path.as_deref(), task.final_path.as_deref());
+    let state = f.request(ClientRequest::GetSnapshot { task_id: Some(url.clone()) });
+    assert!(matches!(state, DaemonEvent::TaskStateChanged { destination_path: Some(ref path), .. } if path.ends_with("existing (1).bin")));
     assert_eq!(std::fs::read(f.root.join("Downloads/existing (1).bin")).unwrap(), b"abc");
     f.delete(&url);
     assert!(!f.root.join("Downloads/existing (1).bin").exists());
