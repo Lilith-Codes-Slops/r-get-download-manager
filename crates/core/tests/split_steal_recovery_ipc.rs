@@ -140,8 +140,8 @@ fn serve(mut stream: TcpStream, release: Arc<AtomicBool>, running: Arc<AtomicBoo
     let header = format!("HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{last}/{TOTAL}\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n", end - start);
     if stream.write_all(header.as_bytes()).is_err() { return; }
     if start == 0 && end == 1 { let _ = send_body(&mut stream, start, end); return; }
-    if !after_restart && start == TOTAL / 2 && end == TOTAL { slow_started.store(true, Ordering::SeqCst); }
-    if !after_restart && start == 0 && end == TOTAL / 2 {
+    if !after_restart && start == TOTAL / 2 && end == TOTAL / 2 + 8 * 1024 * 1024 { slow_started.store(true, Ordering::SeqCst); }
+    if !after_restart && start < TOTAL / 2 && end <= TOTAL / 2 {
         while running.load(Ordering::SeqCst) && !slow_started.load(Ordering::SeqCst) { std::thread::sleep(Duration::from_millis(10)); }
         let _ = send_body(&mut stream, start, end);
     } else if !after_restart {

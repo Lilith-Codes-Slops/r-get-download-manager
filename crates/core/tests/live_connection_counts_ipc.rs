@@ -3,7 +3,7 @@ use downloader_ipc::{ClientRequest, DaemonEvent, DownloadInfo, FrameDecoder, Fra
 use std::{io::{Read, Write}, net::{TcpListener, TcpStream}, os::unix::net::UnixStream, path::PathBuf,
     process::{Child, Command, Stdio}, sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}}, time::{Duration, Instant}};
 
-const TOTAL: u64 = 16 * 1024 * 1024;
+const TOTAL: u64 = 32 * 1024 * 1024;
 struct Daemon { root: PathBuf, process: Child }
 impl Daemon {
     fn new() -> Self {
@@ -108,7 +108,7 @@ fn serve(mut stream: TcpStream, high: Arc<AtomicBool>, release: Arc<AtomicBool>,
         if stream.write_all(&bytes).is_err() { return; }
         offset += count;
         while !probe && running.load(Ordering::SeqCst) && !release.load(Ordering::SeqCst)
-            && !(start == TOTAL / 2 && high.load(Ordering::SeqCst)) {
+            && !(start >= TOTAL / 2 && high.load(Ordering::SeqCst)) {
             std::thread::sleep(Duration::from_millis(10));
         }
     }

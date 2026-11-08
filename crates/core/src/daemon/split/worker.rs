@@ -35,8 +35,8 @@ pub(super) async fn run(mut ctx: Context) -> Result<Exit, String> {
             let allow_steal = ctx.desired.as_ref().is_none_or(|receiver| *receiver.borrow() > 1);
             map.claim(ctx.owner).or_else(|| if allow_steal { map.steal(ctx.owner) } else { None })
         };
-        let Some((segment, start, end)) = work else { return Ok(Exit::Idle) };
-        if let Err(error) = receive_range(&mut ctx, segment, start, end).await {
+        let Some((segment, start, _end)) = work else { return Ok(Exit::Idle) };
+        if let Err(error) = receive_range(&mut ctx, segment, start).await {
             ctx.map.lock().await.release(segment, ctx.owner)?;
             return match error {
                 Failure::Retired => Ok(Exit::Retired),
@@ -47,7 +47,17 @@ pub(super) async fn run(mut ctx: Context) -> Result<Exit, String> {
     }
 }
 
-async fn receive_range(ctx: &mut Context, segment: usize, mut offset: u64, requested_end: u64) -> Result<(), Failure> {
+async fn receive_range(ctx: &mut Context, segment: usize, mut offset: u64) -> Result<(), Failure> {
+    loop {
+        if *ctx.stop.borrow() { return Err(Failure::Fatal("split stopped".into())); }
+        if *ctx.retire.borrow() { return Err(Failure::Retired); }
+        let requested_end = ctx.map.lock().await.begin_request(segment, ctx.owner, offset)?;
+        offset = receive_request(ctx, segment, offset, requested_end).await?;
+        if ctx.map.lock().await.finish_request(segment, ctx.owner, offset)? { return Ok(()); }
+    }
+}
+
+async fn receive_request(ctx: &mut Context, segment: usize, mut offset: u64, requested_end: u64) -> Result<u64, Failure> {
     let request = ctx.client.get(&ctx.url)
         .header(reqwest::header::ACCEPT_ENCODING, "identity")
         .header(reqwest::header::RANGE, format!("bytes={offset}-{}", requested_end - 1))
@@ -106,13 +116,8 @@ async fn receive_range(ctx: &mut Context, segment: usize, mut offset: u64, reque
             map.abort_write(segment, ctx.owner, offset)?;
             return Err(Failure::Fatal(error));
         }
-        let current_end = map.commit_write(segment, ctx.owner, offset, &write_chunk)?;
+        map.commit_write(segment, ctx.owner, offset, &write_chunk)?;
         offset += len as u64;
-        if offset == current_end {
-            map.finish(segment, ctx.owner)?;
-            // Drop the old response here. If this range was stolen, its server
-            // response can still contain bytes now owned by the other worker.
-            return Ok(());
-        }
+        if offset == requested_end { return Ok(offset); }
     }
 }

@@ -1,4 +1,4 @@
-//! Pure sizing policy. Integration with live allocation and host storage is pending.
+//! Pure sizing policy. Per-host storage is pending.
 const MIB: u64 = 1024 * 1024;
 pub(super) const MIN_TARGET: u64 = MIB;
 pub(super) const MAX_TARGET: u64 = 128 * MIB;

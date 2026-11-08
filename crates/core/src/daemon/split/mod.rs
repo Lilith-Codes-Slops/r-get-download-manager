@@ -25,6 +25,8 @@ mod startup_tests;
 #[cfg(test)]
 mod stealing_tests;
 #[cfg(test)]
+mod target_range_tests;
+#[cfg(test)]
 mod adaptive_tests;
 #[cfg(test)]
 mod connection_tests;

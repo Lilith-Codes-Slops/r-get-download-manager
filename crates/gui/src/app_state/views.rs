@@ -116,7 +116,7 @@ impl AppState {
                     metric(ui, "Requested maximum", &count(task.requested_connections));
                     metric(ui, "Active workers", &count(self.live_segments.active_workers(task).or(task.active_connections)));
                     if let Some(policy) = self.policies.get(task) {
-                        metric(ui, "Segment size target", &format!("{} (not yet applied)", format_bytes(policy.target_size)));
+                        metric(ui, "Segment size target", &format_bytes(policy.target_size));
                         metric(ui, "Current steal floor", &format_bytes(policy.steal_floor));
                         metric(ui, "Last policy reason", &policy.reason);
                     }

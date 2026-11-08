@@ -79,7 +79,7 @@ async fn live_response_latency_drives_the_floor() {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let guard = map.lock().await;
-            if guard.active_count() == 1 && guard.stealable_slots() == 0 { break; }
+            if guard.active_count() == 1 && guard.policy().reason == "rtt" && guard.stealable_slots() == 0 { break; }
             drop(guard);
             tokio::time::sleep(Duration::from_millis(10)).await;
         }

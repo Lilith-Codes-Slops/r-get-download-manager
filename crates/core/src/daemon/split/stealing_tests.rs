@@ -34,7 +34,7 @@ async fn handle(mut stream: tokio::net::TcpStream, started: watch::Sender<bool>,
     let header = format!("HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{}/{TOTAL}\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n", end - start, end - 1);
     if stream.write_all(header.as_bytes()).await.is_err() { return; }
     if start == 0 && end == 1 { let _ = body(&mut stream, 0, 1).await; return; }
-    if start == TOTAL / 2 && end == TOTAL {
+    if start == TOTAL / 2 && end == TOTAL / 2 + 8 * 1024 * 1024 {
         started.send_replace(true);
         let first_end = (start + 64 * 1024).min(end);
         if !body(&mut stream, start, first_end).await { return; }
@@ -45,7 +45,7 @@ async fn handle(mut stream: tokio::net::TcpStream, started: watch::Sender<bool>,
             if ready.changed().await.is_err() { return; }
         }
         let _ = body(&mut stream, first_end, end).await;
-    } else if start == 0 && end == TOTAL / 2 {
+    } else if start < TOTAL / 2 && end <= TOTAL / 2 {
         let mut ready = started.subscribe();
         loop {
             let is_ready = *ready.borrow_and_update();
