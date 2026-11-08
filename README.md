@@ -167,6 +167,12 @@ Use `dl verify <task-URL> sha256 <expected-hex>` or replace `sha256` with
 `blake3`. Verification is explicit and applies only to completed tasks; it is
 not yet an automatic post-download action. A mismatch returns an error.
 
+### Manual live verification and IPC contract
+
+See the [isolated manual verification procedure](docs/manual-live-verification.md)
+for real-host, GUI, checkpoint-kill and v1 checks. The current live connection
+and segment event shapes are recorded in the [IPC contract](docs/ipc-segment-contract.md).
+
 ### Split checkpoint hardening tests (Linux)
 
 Split workers reserve each positioned-write range under the map lock, release the
