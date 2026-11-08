@@ -102,7 +102,7 @@ fn restore_published_file(saved: &mut SavedState, root: &Path, id: &str) -> bool
     true
 }
 
-fn prepare_one(saved: &SavedState, root: &Path, id: &str, state: &str) -> Result<PreparedRecovery, String> {
+pub(super) fn prepare_one(saved: &SavedState, root: &Path, id: &str, state: &str) -> Result<PreparedRecovery, String> {
     use std::io::{Seek, SeekFrom};
     let name = saved.tasks.get(id).and_then(|t| t.partial_name.as_deref()).ok_or("no recorded partial file")?;
     let mut components = Path::new(name).components();

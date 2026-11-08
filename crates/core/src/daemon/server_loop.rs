@@ -14,7 +14,6 @@ impl ServerLoop {
     pub fn new(pool: IpcConnectionPool) -> Self {
         Self { pool }
     }
-
     pub async fn run(&self, mut rx: mpsc::Receiver<()>) {
         let endpoint = match EndpointPathResolver::resolve() {
             Ok(e) => e,
@@ -23,7 +22,6 @@ impl ServerLoop {
                 return;
             }
         };
-
         #[cfg(target_os = "linux")]
         {
             let lock_path = format!("{endpoint}.lock");
@@ -41,11 +39,13 @@ impl ServerLoop {
             };
             let root = std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Downloads"));
             if root.is_none() { eprintln!("HOME is not set; cannot recover download files"); return; }
-            let (saved, recovered, split_recovered, root) = match tokio::task::spawn_blocking(move || {
+            let (saved, recovered, split_recovered, retry_startup, root) = match tokio::task::spawn_blocking(move || {
                 let mut saved = saved;
+                let old_tasks = saved.tasks.clone(); let old_states = saved.prior_states.clone();
                 let split_recovered = root.as_ref().map(|root| super::split::startup::reconcile(&mut saved, root)).unwrap_or_default();
                 let recovered = root.as_ref().map(|root| super::recovery::reconcile(&mut saved, root)).unwrap_or_default();
-                (saved, recovered, split_recovered, root)
+                let retry_startup = super::retry::startup_fallbacks(&mut saved, &old_tasks, &old_states);
+                (saved, recovered, split_recovered, retry_startup, root)
             }).await {
                 Ok(value) => value,
                 Err(e) => { eprintln!("failed to prepare recovery: {e}"); return; }
@@ -108,6 +108,7 @@ impl ServerLoop {
                     super::split::live::spawn(item, root, tasks.clone(), controls.clone(), limiter.clone(), store.clone()).await;
                 }
             }
+            for (task, paused) in retry_startup { super::retry::spawn_restart(task, paused, tasks.clone(), controls.clone(), limiter.clone(), store.clone()).await; }
             eprintln!("daemon listening on {endpoint}");
             let checkpoint = {
                 let store = store.clone();
@@ -121,7 +122,6 @@ impl ServerLoop {
                     }
                 })
             };
-
             loop {
                 tokio::select! {
                     _ = rx.recv() => break,
@@ -132,7 +132,6 @@ impl ServerLoop {
                                 let limiter = limiter.clone();
                                 let controls = controls.clone();
                                 let store = store.clone();
-
                                 tokio::spawn(async move {
                                     let mut prefix = [0u8; 4];
                                     if stream.read_exact(&mut prefix).await.is_err() {
@@ -146,7 +145,6 @@ impl ServerLoop {
                                     if stream.read_exact(&mut payload).await.is_err() {
                                         return;
                                     }
-
                                     match serde_json::from_slice::<ClientRequest>(&payload) {
                                         Ok(req) => {
                                             if matches!(&req, ClientRequest::SubscribeSegmentPolicies) {
@@ -167,10 +165,14 @@ impl ServerLoop {
                                                         DaemonEvent::TaskFailed { task_id: url, error: "only valid HTTP and HTTPS URLs are supported".into() }
                                                     } else {
                                                         let mut guard = tasks.lock().await;
-                                                        if guard.get(&url).is_some_and(|state| !state.state.starts_with("failed:") && state.state != "canceled") {
-                                                            DaemonEvent::TaskFailed { task_id: url, error: "task already exists".into() }
+                                                        if guard.get(&url).is_some_and(|state| !state.state.starts_with("failed:") && state.state != "canceled" && state.state != "completed") {
+                                                            let state = guard.get(&url).map(|t| t.state.clone()).unwrap_or_default();
+                                                            drop(guard);
+                                                            if state == "paused" { super::control::set_paused(&tasks, &controls, url, false).await }
+                                                            else { DaemonEvent::TaskStateChanged { task_id: url, state, destination_path: None } }
                                                         } else {
-                                                            guard.insert(url.clone(), DownloadInfo { url: url.clone(), state: "downloading".into(), filename: None, downloaded: 0, total: None, speed_bps: 0, final_path: None, destination_path: None, resume_supported: false, partial_name: None, requested_connections: Some(connections), active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false });
+                                                            let prior = guard.get(&url).cloned();
+                                                            guard.insert(url.clone(), DownloadInfo { url: url.clone(), state: "downloading".into(), filename: None, downloaded: 0, total: None, speed_bps: 0, final_path: None, destination_path: None, resume_supported: false, partial_name: prior.as_ref().filter(|t| t.state != "completed" && t.state != "canceled").and_then(|t| t.partial_name.clone()), requested_connections: Some(connections), active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false });
                                                             let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(super::control::TransferControl::Running);
                                                             controls.lock().await.insert(url.clone(), cancel_tx);
                                                             drop(guard);
@@ -181,7 +183,7 @@ impl ServerLoop {
                                                             let task_store = store.clone();
                                                             let transfer_store = store.clone();
                                                             tokio::spawn(async move {
-                                                                let result = super::transfer::download_file(&task_id, connections, task_states.clone(), task_limiter, transfer_store, cancel_rx.clone()).await;
+                                                                let result = super::retry::run(&task_id, connections, prior, task_states.clone(), task_limiter, transfer_store, cancel_rx.clone()).await;
                                                                 let mut guard = task_states.lock().await;
                                                                 if let Some(task) = guard.get_mut(&task_id) {
                                                                     task.speed_bps = 0; task.active_connections = Some(0); task.live_connections_supported = false;
@@ -289,7 +291,6 @@ impl ServerLoop {
             checkpoint.abort();
             if let Err(e) = store.save(&tasks, &limiter).await { eprintln!("final queue checkpoint failed: {e}"); }
         }
-
         #[cfg(not(target_os = "linux"))]
         {
             let _ = endpoint;

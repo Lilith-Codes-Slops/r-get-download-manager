@@ -17,6 +17,8 @@ mod publication;
 mod collision;
 mod destination;
 #[cfg(target_os = "linux")]
+mod retry;
+#[cfg(target_os = "linux")]
 mod split;
 #[cfg(target_os = "linux")]
 mod segment_events;

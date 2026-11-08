@@ -12,8 +12,10 @@ fn candidate(path: &Path, index: usize) -> io::Result<PathBuf> {
     Ok(path.with_file_name(name))
 }
 
-pub(super) async fn available(path: &Path) -> io::Result<PathBuf> {
-    for index in 0..=LIMIT {
+pub(super) async fn available(path: &Path) -> io::Result<PathBuf> { available_from(path, false).await }
+
+pub(super) async fn available_from(path: &Path, renamed: bool) -> io::Result<PathBuf> {
+    for index in usize::from(renamed)..=LIMIT {
         let name = candidate(path, index)?;
         match tokio::fs::symlink_metadata(&name).await {
             Ok(_) => continue,

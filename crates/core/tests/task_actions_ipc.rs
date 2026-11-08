@@ -155,3 +155,23 @@ fn delete_completed_or_missing_file_and_failed_collision() {
     assert_eq!(std::fs::read(f.root.join("Downloads/existing.bin")).unwrap(), b"other file");
     drop(release); server.join().unwrap();
 }
+
+#[test]
+fn add_after_completed_starts_another_download_without_overwriting() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/file", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        for body in [b"one", b"two"] {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096]; let _ = stream.read(&mut request).unwrap();
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Disposition: attachment; filename=again.bin\r\nConnection: close\r\n\r\n").unwrap();
+            stream.write_all(body).unwrap();
+        }
+    });
+    let mut f = Fixture::new(); f.start();
+    f.add(&url); f.wait(&url, "completed");
+    f.add(&url); f.wait(&url, "completed");
+    assert_eq!(std::fs::read(f.root.join("Downloads/again.bin")).unwrap(), b"one");
+    assert_eq!(std::fs::read(f.root.join("Downloads/again (1).bin")).unwrap(), b"two");
+    server.join().unwrap();
+}

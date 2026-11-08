@@ -6,7 +6,8 @@ use tokio::sync::Mutex;
 use tokio::io::AsyncWriteExt;
 
 /// Minimal single-stream HTTP download into ~/Downloads with live progress.
-pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<BTreeMap<String, DownloadInfo>>>, limiter: Arc<super::bandwidth::BandwidthLimiter>, store: Arc<super::persistence::Persistence>, mut control: tokio::sync::watch::Receiver<super::control::TransferControl>) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<BTreeMap<String, DownloadInfo>>>, limiter: Arc<super::bandwidth::BandwidthLimiter>, store: Arc<super::persistence::Persistence>, force_rename: bool, mut control: tokio::sync::watch::Receiver<super::control::TransferControl>) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+    if !super::control::wait_running(&tasks, url, &mut control).await { return Err("download canceled".into()); }
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(30))
         .read_timeout(std::time::Duration::from_secs(60))
@@ -98,7 +99,7 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
     }
 
     // The check is advisory; publication also handles races atomically.
-    let dest = super::collision::available(&dest).await?;
+    let dest = super::collision::available_from(&dest, force_rename).await?;
     let filename = dest.file_name().and_then(|name| name.to_str()).ok_or("invalid destination filename")?;
     if let Some(task) = tasks.lock().await.get_mut(url) { task.filename = Some(filename.to_owned()); }
 
@@ -148,9 +149,17 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
     let downloaded = match super::transfer_body::receive(&client, Some(resp), url, &mut file, &tasks, &limiter, &mut control, resume.as_ref(), total, checkpoint.as_mut(), 0).await {
         Ok(n) => n,
         Err(e) => {
+            let canceled = *control.borrow() == super::control::TransferControl::Canceled;
+            if !canceled {
+                if let Some(checkpoint) = checkpoint.as_mut() {
+                    if let Err(error) = checkpoint.save(&file, true).await { eprintln!("could not save failed transfer checkpoint: {error}"); }
+                }
+            }
             drop(file);
-            let _ = tokio::fs::remove_file(&temporary).await;
-            if let Some(checkpoint) = &checkpoint { let _ = tokio::fs::remove_file(&checkpoint.sidecar).await; }
+            if *control.borrow() == super::control::TransferControl::Canceled || checkpoint.is_none() {
+                let _ = tokio::fs::remove_file(&temporary).await;
+                if let Some(checkpoint) = &checkpoint { let _ = tokio::fs::remove_file(&checkpoint.sidecar).await; }
+            }
             return Err(e);
         }
     };

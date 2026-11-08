@@ -64,7 +64,8 @@ fn headers(stream: &mut TcpStream) -> String {
     String::from_utf8(out).unwrap().to_ascii_lowercase()
 }
 
-fn run_recovery(changed_etag: bool) {
+fn run_recovery(mode: u8) {
+    let changed_etag = mode != 0;
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/file", listener.local_addr().unwrap());
     let server = std::thread::spawn(move || {
@@ -78,6 +79,18 @@ fn run_recovery(changed_etag: bool) {
         let etag = if changed_etag { "v2" } else { "v1" };
         let response = format!("HTTP/1.1 206 Partial Content\r\nContent-Length: 8\r\nContent-Range: bytes 4-11/12\r\nETag: \"{etag}\"\r\n\r\nefghijkl");
         second.write_all(response.as_bytes()).unwrap();
+        if changed_etag {
+            let (mut third, _) = listener.accept().unwrap();
+            let request = headers(&mut third);
+            if mode == 1 {
+                assert!(request.contains("range: bytes=4-"), "{request}");
+                assert!(request.contains("if-range: \"v1\""), "{request}");
+                third.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 8\r\nContent-Range: bytes 4-11/12\r\nETag: \"v1\"\r\n\r\nefghijkl").unwrap();
+            } else {
+                assert!(!request.contains("range: bytes="), "{request}");
+                third.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nAccept-Ranges: bytes\r\nETag: \"v1\"\r\nContent-Disposition: attachment; filename=file.bin\r\n\r\nabcdefghijkl").unwrap();
+            }
+        }
     });
     let mut f = Fixture::new();
     f.start();
@@ -107,6 +120,15 @@ fn run_recovery(changed_etag: bool) {
         assert!(failed.state.contains("validator"));
         assert_eq!(std::fs::read(&partial).unwrap(), b"abcd");
         assert!(!f.root.join("Downloads/file.bin").exists());
+        let sidecar = PathBuf::from(format!("{}.meta", partial.display()));
+        if mode == 2 { std::fs::write(&sidecar, b"corrupt").unwrap(); }
+        if mode == 3 { std::fs::remove_file(&sidecar).unwrap(); }
+        assert!(matches!(f.request(&ClientRequest::AddTask { url: url.clone(), mirrors: vec![], connections: 1, extract: false, category: None, not_before: None }), DaemonEvent::TaskStateChanged { .. }));
+        f.wait_for(&url, "completed");
+        let name = if mode == 1 { "file.bin" } else { "file (1).bin" };
+        assert_eq!(std::fs::read(f.root.join("Downloads").join(name)).unwrap(), b"abcdefghijkl");
+        if mode == 1 { assert!(!f.root.join("Downloads/file (1).bin").exists()); }
+        else { assert_eq!(std::fs::read(&partial).unwrap(), b"abcd"); }
     } else {
         f.wait_for(&url, "completed");
         assert_eq!(std::fs::read(f.root.join("Downloads/file.bin")).unwrap(), b"abcdefghijkl");
@@ -115,7 +137,69 @@ fn run_recovery(changed_etag: bool) {
 }
 
 #[test]
-fn paused_checkpoint_survives_crash_and_resumes_from_verified_prefix() { run_recovery(false); }
+fn paused_checkpoint_survives_crash_and_resumes_from_verified_prefix() { run_recovery(0); }
 
 #[test]
-fn changed_server_validator_rejects_recovered_partial() { run_recovery(true); }
+fn changed_server_validator_rejects_recovered_partial() { run_recovery(1); }
+
+#[test]
+fn corrupt_checkpoint_retry_starts_renamed_without_touching_old_partial() { run_recovery(2); }
+
+#[test]
+fn missing_checkpoint_retry_starts_renamed_without_touching_old_partial() { run_recovery(3); }
+
+#[test]
+fn corrupt_checkpoint_at_restart_requeues_paused_then_starts_renamed() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/file", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap(); headers(&mut first);
+        first.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nAccept-Ranges: bytes\r\nETag: \"v1\"\r\nContent-Disposition: attachment; filename=file.bin\r\n\r\nabcd").unwrap();
+        let (mut second, _) = listener.accept().unwrap();
+        let request = headers(&mut second); assert!(!request.contains("range: bytes="));
+        second.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nAccept-Ranges: bytes\r\nETag: \"v1\"\r\nContent-Disposition: attachment; filename=file.bin\r\n\r\nabcdefghijkl").unwrap();
+    });
+    let mut f = Fixture::new(); f.start();
+    f.request(&ClientRequest::AddTask { url: url.clone(), mirrors: vec![], connections: 1, extract: false, category: None, not_before: None });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let DaemonEvent::DetailedQueue { tasks } = f.request(&ClientRequest::GetDetailedQueue) {
+            if tasks.iter().any(|t| t.url == url && t.downloaded == 4 && t.resume_supported) { break; }
+        }
+        assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(20));
+    }
+    f.request(&ClientRequest::Pause { task_id: url.clone() });
+    let paused = f.wait_for(&url, "paused");
+    let partial = f.root.join("Downloads").join(paused.partial_name.unwrap());
+    f.stop(); std::fs::write(format!("{}.meta", partial.display()), b"corrupt").unwrap();
+    f.start(); f.wait_for(&url, "paused");
+    f.request(&ClientRequest::Resume { task_id: url.clone() });
+    f.wait_for(&url, "completed");
+    assert_eq!(std::fs::read(f.root.join("Downloads/file (1).bin")).unwrap(), b"abcdefghijkl");
+    assert_eq!(std::fs::read(&partial).unwrap(), b"abcd");
+    server.join().unwrap();
+}
+
+#[test]
+fn failed_initial_stream_preserves_its_checkpoint_for_same_url_retry() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/file", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap(); headers(&mut first);
+        first.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nAccept-Ranges: bytes\r\nETag: \"v1\"\r\nContent-Disposition: attachment; filename=file.bin\r\nConnection: close\r\n\r\nabcd").unwrap();
+        drop(first);
+        let (mut second, _) = listener.accept().unwrap(); let request = headers(&mut second);
+        assert!(request.contains("range: bytes=4-"), "{request}");
+        second.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 8\r\nContent-Range: bytes 4-11/12\r\nETag: \"v1\"\r\nConnection: close\r\n\r\nefghijkl").unwrap();
+    });
+    let mut f = Fixture::new(); f.start();
+    f.request(&ClientRequest::AddTask { url: url.clone(), mirrors: vec![], connections: 1, extract: false, category: None, not_before: None });
+    let failed = f.wait_for(&url, "failed:");
+    let partial = f.root.join("Downloads").join(failed.partial_name.unwrap());
+    assert_eq!(std::fs::read(&partial).unwrap(), b"abcd");
+    assert!(PathBuf::from(format!("{}.meta", partial.display())).exists());
+    f.request(&ClientRequest::AddTask { url: url.clone(), mirrors: vec![], connections: 1, extract: false, category: None, not_before: None });
+    f.wait_for(&url, "completed");
+    assert_eq!(std::fs::read(f.root.join("Downloads/file.bin")).unwrap(), b"abcdefghijkl");
+    server.join().unwrap();
+}

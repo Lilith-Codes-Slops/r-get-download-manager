@@ -95,7 +95,7 @@ pub(super) fn verify(file: &std::fs::File, record: &SplitRecord) -> Result<Vec<b
 
 /// Only a partial named by a known task may be passed here. Uncheckpointed
 /// bytes are left untouched and will be overwritten by subsequent range writes.
-pub(super) fn prepare(sidecar: &Path, partial: &Path, task_url: &str, database: Option<&SplitRecord>) -> Result<PreparedSplit, String> {
+pub(in crate::daemon) fn prepare(sidecar: &Path, partial: &Path, task_url: &str, database: Option<&SplitRecord>) -> Result<PreparedSplit, String> {
     let mut expected = partial.as_os_str().to_os_string();
     expected.push(".meta");
     if sidecar != Path::new(&expected) { return Err("unexpected split sidecar path".into()); }
