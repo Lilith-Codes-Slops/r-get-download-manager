@@ -16,7 +16,7 @@ pub(super) async fn receive(
 ) -> TransferResult<u64> {
     let mut response = initial;
     let mut downloaded = initial_downloaded;
-    let start = std::time::Instant::now();
+    let progress = super::progress::ProgressMeter::new(initial_downloaded);
     loop {
         let state = *control.borrow();
         if state == TransferControl::Paused {
@@ -71,8 +71,7 @@ pub(super) async fn receive(
             let mut guard = tasks.lock().await;
             if *control.borrow() != TransferControl::Canceled {
                 if let Some(task) = guard.get_mut(url) {
-                    task.downloaded = downloaded;
-                    task.speed_bps = (downloaded as f64 / start.elapsed().as_secs_f64().max(0.001)) as u64;
+                    progress.update(task, downloaded);
                 }
             }
         }

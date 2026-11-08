@@ -11,6 +11,8 @@ pub use single_instance_lock::SingleInstanceLock;
 pub use tray_service::TrayService;
 
 mod transfer;
+mod progress;
+mod publication;
 #[cfg(target_os = "linux")]
 mod split;
 mod bandwidth;

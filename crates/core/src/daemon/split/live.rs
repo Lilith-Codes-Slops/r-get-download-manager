@@ -64,10 +64,7 @@ pub(in crate::daemon) async fn run(prepared: PreparedSplit, partial: PathBuf, cl
         break guard;
     };
     if let Some(task) = guard.get_mut(&id) { task.state = "finalizing".into(); task.downloaded = task.total.unwrap_or(task.downloaded); }
-    crate::daemon::transfer::publish_no_clobber(&partial, &dest).await?;
-    // Persist the published directory entry before discarding recovery files.
-    let parent = dest.parent().ok_or("destination has no directory")?.to_owned();
-    tokio::task::spawn_blocking(move || std::fs::File::open(parent)?.sync_all()).await??;
+    crate::daemon::publication::publish_no_clobber(&partial, &dest).await?;
     drop(guard);
     let _ = tokio::fs::remove_file(&partial).await;
     let _ = tokio::fs::remove_file(&sidecar).await;

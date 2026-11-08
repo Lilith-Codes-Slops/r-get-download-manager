@@ -1,4 +1,4 @@
-//! Durable, single-stream checkpoints. These are not automatically replayed.
+//! Durable, version-1 single-stream checkpoints used by verified startup recovery.
 use super::range::ResumeInfo;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

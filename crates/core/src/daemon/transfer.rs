@@ -149,6 +149,8 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
         if let Some(checkpoint) = &checkpoint { let _ = tokio::fs::remove_file(&checkpoint.sidecar).await; }
         return Err(e.into());
     }
+    // Persist all data before linking even when no resume checkpoint exists.
+    if let Err(error) = file.sync_data().await { return Err(error.into()); }
     drop(file);
     // Serialize publication with task removal. A removed/canceled transfer must
     // not publish even if a new task with the same URL has since been queued.
@@ -170,15 +172,9 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
         if let Some(task) = guard.get_mut(url) { task.state = "finalizing".into(); }
         break guard;
     };
-    if let Err(e) = publish_no_clobber(&temporary, &dest).await {
-        // If the name was taken after the initial check, keep the downloaded
-        // data so it can be recovered manually rather than silently losing it.
-        if e.kind() != std::io::ErrorKind::AlreadyExists {
-            let _ = tokio::fs::remove_file(&temporary).await;
-            if let Some(checkpoint) = &checkpoint { let _ = tokio::fs::remove_file(&checkpoint.sidecar).await; }
-        }
-        return Err(e.into());
-    }
+    // The link may exist even if directory syncing fails; preserve the partial
+    // and checkpoint on every publication error instead of deleting evidence.
+    super::publication::publish_no_clobber(&temporary, &dest).await?;
     drop(guard);
     // A cleanup failure leaves only a redundant .part file, not a corrupted
     // final file. Never delete the successfully published destination.
@@ -194,14 +190,6 @@ async fn check_destination(dest: &std::path::Path) -> std::io::Result<()> {
             format!("destination already exists: {}. Rename or move it before retrying; it was not overwritten", dest.display()))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e),
-    }
-}
-
-pub(super) async fn publish_no_clobber(partial: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
-    match tokio::fs::hard_link(partial, dest).await {
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(std::io::Error::new(
-            e.kind(), format!("destination appeared during download: {}. Existing file was not overwritten; downloaded data is preserved at {}", dest.display(), partial.display()))),
-        result => result,
     }
 }
 
@@ -234,7 +222,8 @@ fn safe_filename(name: &str) -> Result<&str, std::io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_destination, publish_no_clobber, safe_filename};
+    use super::{check_destination, safe_filename};
+    use crate::daemon::publication::publish_no_clobber;
 
     #[test]
     fn rejects_unsafe_names() {
@@ -258,6 +247,10 @@ mod tests {
         assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
         assert!(error.to_string().contains("preserved at"));
         assert_eq!(tokio::fs::read(&dest).await.unwrap(), b"existing data");
+        assert_eq!(tokio::fs::read(&partial).await.unwrap(), b"new data");
+        tokio::fs::remove_file(&dest).await.unwrap();
+        publish_no_clobber(&partial, &dest).await.unwrap();
+        assert_eq!(tokio::fs::read(&dest).await.unwrap(), b"new data");
         assert_eq!(tokio::fs::read(&partial).await.unwrap(), b"new data");
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }

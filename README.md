@@ -106,9 +106,10 @@ For eligible single-stream downloads, the daemon writes a synced `.part.meta`
 checkpoint beside the partial file and records it in SQLite. On startup it
 attempts to reconcile task-owned checkpoints, verify the partial-file hash, and
 resume with a validated HTTP range. Paused tasks remain paused. Tasks without a
-valid checkpoint are marked failed; a retry starts from the beginning. Orphaned
+valid checkpoint are marked failed; a retry starts from the beginning. See
+[checkpoint formats and recovery rules](docs/checkpoints.md). Orphaned
 partial files are not adopted automatically. Pause and resume commands require
-the daemon to be running; for now they apply only to single-stream downloads
+the daemon to be running; they apply to eligible single-stream and split downloads
 from servers that advertise byte ranges, a known length and a strong ETag. Resume validates
 the ETag, destination URL and exact Content-Range before appending. To pause or
 resume, use `dl pause <URL>` and `dl resume <URL>`; wait until the queue shows

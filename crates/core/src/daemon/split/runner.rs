@@ -29,8 +29,7 @@ pub(super) async fn run_checkpointed(
     checkpoint.save(&map, &file, &store, &tasks).await?;
     let mut last_time = Instant::now();
     let mut last_bytes: u64 = checkpoint.record.segments.iter().map(|s| s.downloaded).sum();
-    let initial_bytes = last_bytes;
-    let started = Instant::now();
+    let progress = crate::daemon::progress::ProgressMeter::new(last_bytes);
     let mut complete = false;
     loop {
         if let Some(rx) = control.as_mut() {
@@ -82,8 +81,7 @@ pub(super) async fn run_checkpointed(
                     let bytes: u64 = map.lock().await.records().iter().map(|s| s.downloaded).sum();
                     if let Some(task) = tasks.lock().await.get_mut(&url) {
                         if task.partial_name.as_deref() == Some(partial_name.as_str()) && task.state == "downloading" {
-                            task.downloaded = bytes;
-                            task.speed_bps = (bytes.saturating_sub(initial_bytes) as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
+                            progress.update(task, bytes);
                         }
                     }
                     if bytes.saturating_sub(last_bytes) >= 8 * 1024 * 1024 || last_time.elapsed() >= Duration::from_secs(5) {

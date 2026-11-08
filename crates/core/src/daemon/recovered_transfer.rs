@@ -86,7 +86,7 @@ pub(super) async fn run(item: PreparedRecovery, tasks: Tasks, limiter: Arc<Bandw
         if let Some(task) = guard.get_mut(&url) { task.state = "finalizing".into(); }
         break guard;
     };
-    super::transfer::publish_no_clobber(&item.partial, &final_path).await?;
+    super::publication::publish_no_clobber(&item.partial, &final_path).await?;
     drop(guard);
     let _ = tokio::fs::remove_file(&item.partial).await;
     let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
