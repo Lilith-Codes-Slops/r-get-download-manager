@@ -72,6 +72,7 @@ async fn receive_range(ctx: &mut Context, segment: usize, mut offset: u64, reque
         };
         let Some(chunk) = chunk else { return Err(Failure::Fatal("split body ended before the owned range was complete".into())) };
         let chunk = chunk.map_err(|e| e.to_string())?;
+        if chunk.is_empty() { continue; }
         if chunk.len() as u64 > requested_end - offset { return Err(Failure::Fatal("split body exceeds its requested range".into())); }
         tokio::select! {
             _ = ctx.limiter.acquire(&ctx.url, chunk.len()) => {},
@@ -80,20 +81,26 @@ async fn receive_range(ctx: &mut Context, segment: usize, mut offset: u64, reque
         }
         if *ctx.stop.borrow() { return Err(Failure::Fatal("split stopped".into())); }
         if *ctx.retire.borrow() { return Err(Failure::Retired); }
-        // Holding the map lock across the write is the ownership and checkpoint
-        // barrier. A steal can only shrink the unwritten portion after this write.
-        let mut map = ctx.map.lock().await;
-        let current_end = map.owned_end(segment, ctx.owner, offset)?;
-        let len = (current_end - offset).min(chunk.len() as u64) as usize;
+        // Reserve under the map lock, then write without holding it. Stealing
+        // can only transfer bytes beyond the reservation; release must wait.
+        let len = ctx.map.lock().await.reserve_write(segment, ctx.owner, offset, chunk.len())?;
         let write_chunk = chunk.slice(..len);
         let file = ctx.file.clone();
         let bytes_for_write = write_chunk.clone();
         let write_offset = offset;
-        tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || {
             use std::os::unix::fs::FileExt;
-            file.write_all_at(&bytes_for_write, write_offset)
-        }).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
-        map.advance(segment, ctx.owner, offset, &write_chunk)?;
+            file.write_all_at(&bytes_for_write, write_offset)?;
+            #[cfg(feature = "checkpoint-test-hooks")]
+            super::test_hooks::block_after_write()?;
+            Ok::<(), std::io::Error>(())
+        }).await.map_err(|e| e.to_string()).and_then(|result| result.map_err(|e| e.to_string()));
+        let mut map = ctx.map.lock().await;
+        if let Err(error) = result {
+            map.abort_write(segment, ctx.owner, offset)?;
+            return Err(Failure::Fatal(error));
+        }
+        let current_end = map.commit_write(segment, ctx.owner, offset, &write_chunk)?;
         offset += len as u64;
         if offset == current_end {
             map.finish(segment, ctx.owner)?;

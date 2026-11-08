@@ -83,6 +83,10 @@ impl Checkpoint {
 }
 
 pub(super) fn write_atomic(path: &Path, record: &impl serde::Serialize) -> std::io::Result<()> {
+    write_atomic_with(path, record, || Ok(()))
+}
+
+pub(super) fn write_atomic_with(path: &Path, record: &impl serde::Serialize, after_rename: impl FnOnce() -> std::io::Result<()>) -> std::io::Result<()> {
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -99,6 +103,7 @@ pub(super) fn write_atomic(path: &Path, record: &impl serde::Serialize) -> std::
         file.write_all(b"\n")?;
         file.sync_all()?;
         std::fs::rename(&temp, path)?;
+        after_rename()?;
         #[cfg(unix)]
         std::fs::File::open(path.parent().ok_or_else(|| std::io::Error::other("sidecar has no directory"))?)?.sync_all()?;
         Ok(())

@@ -34,13 +34,16 @@ pub(super) struct SplitCheckpoint {
 
 impl SplitCheckpoint {
     /// The caller owns a task-matched partial and must create an initial
-    /// checkpoint before permitting writes. The map lock is the write barrier.
+    /// checkpoint before permitting writes. The snapshot includes only writes
+    /// that have completed and been committed under the map lock.
     pub async fn save(&mut self, map: &Mutex<SegmentMap>, file: &Arc<std::fs::File>, store: &Persistence, tasks: &Tasks) -> Result<(), String> {
-        let guard = map.lock().await;
+        let segments = map.lock().await.records();
+        self.record.sequence = self.record.sequence.checked_add(1).ok_or("split checkpoint sequence exhausted")?;
+        self.record.segments = segments;
         let handle = file.clone();
         tokio::task::spawn_blocking(move || handle.sync_data()).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
-        self.record.sequence = self.record.sequence.checked_add(1).ok_or("split checkpoint sequence exhausted")?;
-        self.record.segments = guard.records();
+        #[cfg(feature = "checkpoint-test-hooks")]
+        super::test_hooks::stop_at("data_synced", &self.record).await?;
         let parent = self.sidecar.parent().ok_or("split sidecar has no parent")?;
         let partial = parent.join(&self.record.partial_name);
         super::recovery::validate_record(&self.record, &partial)?;
@@ -64,10 +67,17 @@ impl SplitCheckpoint {
         }
         let path = self.sidecar.clone();
         let record = self.record.clone();
-        tokio::task::spawn_blocking(move || crate::daemon::checkpoint::write_atomic(&path, &record))
+        tokio::task::spawn_blocking(move || crate::daemon::checkpoint::write_atomic_with(&path, &record, || {
+            #[cfg(feature = "checkpoint-test-hooks")]
+            super::test_hooks::stop_at_rename(&record)?;
+            Ok(())
+        }))
             .await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+        #[cfg(feature = "checkpoint-test-hooks")]
+        super::test_hooks::stop_at("sidecar_committed", &self.record).await?;
         store.save_split_recovery(tasks, &self.record).await.map_err(|e| e.to_string())?;
-        drop(guard);
+        #[cfg(feature = "checkpoint-test-hooks")]
+        super::test_hooks::stop_at("sqlite_committed", &self.record).await?;
         Ok(())
     }
 }

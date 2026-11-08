@@ -18,11 +18,18 @@ impl Fixture {
         std::fs::create_dir_all(root.join("run")).unwrap();
         Self { root, daemon: None }
     }
-    fn start(&mut self) {
-        self.daemon = Some(Command::new(env!("CARGO_BIN_EXE_downloader-core"))
-            .env("HOME", &self.root).env("XDG_RUNTIME_DIR", self.root.join("run"))
+    fn start(&mut self) { self.start_with_hook(None); }
+    fn start_with_hook(&mut self, hook: Option<&str>) {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_downloader-core"));
+        command.env("HOME", &self.root).env("XDG_RUNTIME_DIR", self.root.join("run"))
             .env("XDG_STATE_HOME", self.root.join("state"))
-            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap());
+            .env_remove("RGET_TEST_CHECKPOINT_HOOK").env_remove("RGET_TEST_CHECKPOINT_MARKER").env_remove("RGET_TEST_WRITE_BLOCK")
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        if let Some(hook) = hook {
+            command.env("RGET_TEST_CHECKPOINT_HOOK", hook).env("RGET_TEST_CHECKPOINT_MARKER", self.root.join("marker"));
+            if hook == "write_block" { command.env("RGET_TEST_WRITE_BLOCK", self.root.join("marker")); }
+        }
+        self.daemon = Some(command.spawn().unwrap());
         let deadline = Instant::now() + Duration::from_secs(15);
         while UnixStream::connect(self.root.join("run/rget.sock")).is_err() {
             assert!(Instant::now() < deadline, "daemon did not start");
@@ -283,3 +290,7 @@ fn cancel_paused_split_joins_before_removing_files() {
     assert!(!f.root.join("Downloads").join(format!("{partial}.meta")).exists());
     assert!(!f.root.join("Downloads/split.bin").exists());
 }
+
+#[cfg(feature = "checkpoint-test-hooks")]
+#[path = "support/split_checkpoint_crash_cases.rs"]
+mod checkpoint_crash_cases;

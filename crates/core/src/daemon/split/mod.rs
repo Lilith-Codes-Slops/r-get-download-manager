@@ -3,6 +3,8 @@ pub(super) mod checkpoint;
 pub(super) mod recovery;
 pub(super) mod startup;
 pub(super) mod live;
+#[cfg(feature = "checkpoint-test-hooks")]
+mod test_hooks;
 mod adaptive;
 mod runner;
 mod segments;
@@ -19,6 +21,10 @@ mod startup_tests;
 mod stealing_tests;
 #[cfg(test)]
 mod adaptive_tests;
+#[cfg(test)]
+mod connection_tests;
+#[cfg(test)]
+mod rate_tests;
 
 use super::bandwidth::BandwidthLimiter;
 use super::range::ResumeInfo;

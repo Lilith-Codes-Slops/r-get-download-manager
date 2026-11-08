@@ -156,3 +156,67 @@ fn reconciles_checkpoints_after_a_segment_layout_changes() {
     newer.segments[0].hash = blake3::hash(&[0, 1]).to_hex().to_string();
     assert!(recovery::prepare(&f.sidecar, &f.partial, &older.task_url, Some(&newer)).is_err());
 }
+
+#[tokio::test]
+async fn snapshot_ignores_inflight_data_without_waiting_for_write_completion() {
+    let url = "https://example.test/file";
+    let f = Fixture::new(url, 8);
+    let prepared = recovery::prepare(&f.sidecar, &f.partial, url, None).unwrap();
+    let task = DownloadInfo { url: url.into(), state: "downloading".into(), filename: Some("file.bin".into()),
+        downloaded: 3, total: Some(8), speed_bps: 0, final_path: None,
+        resume_supported: true, partial_name: Some(f.record.partial_name.clone()) };
+    let tasks: Tasks = Arc::new(Mutex::new(BTreeMap::from([(url.into(), task)])));
+    let store = Persistence::new(f.dir.join("state/queue.sqlite3"));
+    let (segment, offset, _) = prepared.map.lock().await.claim(7).unwrap();
+    assert_eq!(offset, 3);
+    assert_eq!(prepared.map.lock().await.reserve_write(segment, 7, offset, 1).unwrap(), 1);
+    prepared.file.write_all_at(&[3], offset).unwrap();
+    let mut checkpoint = SplitCheckpoint { sidecar: f.sidecar.clone(), record: prepared.record };
+    tokio::time::timeout(std::time::Duration::from_secs(5), checkpoint.save(&prepared.map, &prepared.file, &store, &tasks)).await.unwrap().unwrap();
+    let old = store.load_split_recovery(url).await.unwrap().unwrap();
+    assert_eq!(old.segments[0].downloaded, 3);
+    assert!(recovery::prepare(&f.sidecar, &f.partial, url, Some(&old)).is_ok());
+    prepared.map.lock().await.commit_write(segment, 7, offset, &[3]).unwrap();
+    checkpoint.save(&prepared.map, &prepared.file, &store, &tasks).await.unwrap();
+    let new = store.load_split_recovery(url).await.unwrap().unwrap();
+    assert_eq!(new.segments[0].downloaded, 4);
+    assert!(recovery::prepare(&f.sidecar, &f.partial, url, Some(&new)).is_ok());
+}
+
+#[tokio::test]
+async fn another_range_and_checkpoint_progress_while_write_is_blocked() {
+    let url = "https://example.test/file";
+    let f = Fixture::new(url, 8);
+    let prepared = recovery::prepare(&f.sidecar, &f.partial, url, None).unwrap();
+    let task = DownloadInfo { url: url.into(), state: "downloading".into(), filename: Some("file.bin".into()),
+        downloaded: 3, total: Some(8), speed_bps: 0, final_path: None,
+        resume_supported: true, partial_name: Some(f.record.partial_name.clone()) };
+    let tasks: Tasks = Arc::new(Mutex::new(BTreeMap::from([(url.into(), task)])));
+    let store = Persistence::new(f.dir.join("state/queue.sqlite3"));
+    let mut map = prepared.map.lock().await;
+    let (first, first_pos, _) = map.claim(1).unwrap();
+    let (second, second_pos, _) = map.claim(2).unwrap();
+    map.reserve_write(first, 1, first_pos, 1).unwrap();
+    drop(map);
+    let (send, recv) = std::sync::mpsc::channel();
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let first_file = prepared.file.clone();
+    let write = tokio::task::spawn_blocking(move || {
+        let _ = ready_tx.send(());
+        recv.recv().unwrap();
+        first_file.write_all_at(&[3], first_pos).unwrap();
+    });
+    ready_rx.await.unwrap();
+    prepared.map.lock().await.reserve_write(second, 2, second_pos, 1).unwrap();
+    prepared.file.write_all_at(&[4], second_pos).unwrap();
+    prepared.map.lock().await.commit_write(second, 2, second_pos, &[4]).unwrap();
+    let mut checkpoint = SplitCheckpoint { sidecar: f.sidecar.clone(), record: prepared.record };
+    tokio::time::timeout(std::time::Duration::from_secs(5), checkpoint.save(&prepared.map, &prepared.file, &store, &tasks)).await.unwrap().unwrap();
+    let saved = store.load_split_recovery(url).await.unwrap().unwrap();
+    assert_eq!(saved.segments[0].downloaded, 3);
+    assert_eq!(saved.segments[1].downloaded, 1);
+    send.send(()).unwrap();
+    write.await.unwrap();
+    prepared.map.lock().await.commit_write(first, 1, first_pos, &[3]).unwrap();
+    assert!(recovery::prepare(&f.sidecar, &f.partial, url, Some(&saved)).is_ok());
+}

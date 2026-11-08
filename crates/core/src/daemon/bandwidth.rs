@@ -89,6 +89,16 @@ mod tests {
         limiter.set(Some("a"), 0).await.unwrap();
     }
     #[tokio::test]
+    async fn concurrent_workers_share_one_task_budget() {
+        let limiter = BandwidthLimiter::new();
+        limiter.set(Some("task"), 8).await.unwrap(); // 1000 bytes per second total
+        let start = Instant::now();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            tokio::join!(limiter.acquire("task", 1000), limiter.acquire("task", 1000));
+        }).await.expect("shared task limiter timed out");
+        assert!(start.elapsed() >= Duration::from_millis(1850), "two workers exceeded the aggregate task rate");
+    }
+    #[tokio::test]
     async fn global_budget_is_shared() {
         let limiter = BandwidthLimiter::new();
         limiter.set(None, 8).await.unwrap(); // 1000 bytes per second

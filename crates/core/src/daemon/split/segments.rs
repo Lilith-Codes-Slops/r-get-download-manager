@@ -7,7 +7,7 @@ pub(super) const MAX_SEGMENTS: usize = 256;
 enum Status { Pending, Active(usize), Done }
 
 #[derive(Clone, Debug)]
-struct Segment { start: u64, end: u64, downloaded: u64, status: Status, hash: blake3::Hasher }
+struct Segment { start: u64, end: u64, downloaded: u64, status: Status, hash: blake3::Hasher, in_flight: Option<u64> }
 
 // Indices are stable: stealing appends a segment, never inserts/removes one.
 pub(super) struct SegmentMap { segments: Vec<Segment> }
@@ -24,7 +24,7 @@ impl SegmentMap {
         for index in 0..count {
             let length = base + if (index as u64) < extra { 1 } else { 0 };
             let end = start + length;
-            segments.push(Segment { start, end, downloaded: 0, status: Status::Pending, hash: blake3::Hasher::new() });
+            segments.push(Segment { start, end, downloaded: 0, status: Status::Pending, hash: blake3::Hasher::new(), in_flight: None });
             start = end;
         }
         Ok(Self { segments })
@@ -42,17 +42,19 @@ impl SegmentMap {
         if self.segments.len() >= MAX_SEGMENTS || self.segments.iter().any(|s| s.status == Status::Active(owner)) { return None; }
         let (index, _) = self.segments.iter().enumerate()
             .filter(|(_, s)| matches!(s.status, Status::Active(_)))
-            .map(|(i, s)| (i, s.end - s.start - s.downloaded))
+            .map(|(i, s)| (i, s.end - s.in_flight.unwrap_or(s.start + s.downloaded)))
             .filter(|(_, remaining)| *remaining >= 2 * MIN_SEGMENT)
             .max_by_key(|(_, remaining)| *remaining)?;
         let source = &mut self.segments[index];
-        let remaining_start = source.start + source.downloaded;
+        // A reserved write is owned by the donor until it joins; only the
+        // suffix beyond that reservation can be split.
+        let remaining_start = source.in_flight.unwrap_or(source.start + source.downloaded);
         let old_end = source.end;
         let midpoint = remaining_start + (old_end - remaining_start) / 2;
         source.end = midpoint;
         let new_index = self.segments.len();
         self.segments.push(Segment { start: midpoint, end: old_end, downloaded: 0,
-            status: Status::Active(owner), hash: blake3::Hasher::new() });
+            status: Status::Active(owner), hash: blake3::Hasher::new(), in_flight: None });
         Some((new_index, midpoint, old_end))
     }
 
@@ -63,17 +65,48 @@ impl SegmentMap {
         }
         Ok(segment.end)
     }
+    /// Reserve a chunk under the map lock. Steals must start beyond it, and
+    /// ownership cannot be released until the write is committed or aborted.
+    pub fn reserve_write(&mut self, index: usize, owner: usize, offset: u64, length: usize) -> Result<usize, String> {
+        let end = self.owned_end(index, owner, offset)?;
+        let segment = &mut self.segments[index];
+        if segment.in_flight.is_some() { return Err("split write already in flight".into()); }
+        let len = (end - offset).min(length as u64) as usize;
+        if len == 0 { return Err("empty split write reservation".into()); }
+        segment.in_flight = Some(offset + len as u64);
+        Ok(len)
+    }
+    pub fn commit_write(&mut self, index: usize, owner: usize, offset: u64, bytes: &[u8]) -> Result<u64, String> {
+        let end = self.owned_end(index, owner, offset)?;
+        let segment = &mut self.segments[index];
+        let write_end = offset.checked_add(bytes.len() as u64).ok_or("split write offset overflow")?;
+        if segment.in_flight != Some(write_end) || bytes.is_empty() {
+            return Err("split write reservation mismatch".into());
+        }
+        segment.hash.update(bytes);
+        segment.downloaded += bytes.len() as u64;
+        segment.in_flight = None;
+        Ok(end)
+    }
+    pub fn abort_write(&mut self, index: usize, owner: usize, offset: u64) -> Result<(), String> {
+        self.owned_end(index, owner, offset)?;
+        let segment = &mut self.segments[index];
+        if segment.in_flight.take().is_none() { return Err("no split write in flight".into()); }
+        Ok(())
+    }
+    #[cfg(test)]
     pub fn advance(&mut self, index: usize, owner: usize, offset: u64, bytes: &[u8]) -> Result<(), String> {
         let end = self.owned_end(index, owner, offset)?;
         if bytes.len() as u64 > end - offset { return Err("split write exceeds owned range".into()); }
         let segment = &mut self.segments[index];
+        if segment.in_flight.is_some() { return Err("split write already in flight".into()); }
         segment.hash.update(bytes);
         segment.downloaded += bytes.len() as u64;
         Ok(())
     }
     pub fn finish(&mut self, index: usize, owner: usize) -> Result<(), String> {
         let segment = self.segments.get_mut(index).ok_or("unknown split segment")?;
-        if segment.status != Status::Active(owner) || segment.downloaded != segment.end - segment.start {
+        if segment.status != Status::Active(owner) || segment.in_flight.is_some() || segment.downloaded != segment.end - segment.start {
             return Err("cannot finish an unowned or incomplete segment".into());
         }
         segment.status = Status::Done;
@@ -81,7 +114,7 @@ impl SegmentMap {
     }
     pub fn release(&mut self, index: usize, owner: usize) -> Result<(), String> {
         let segment = self.segments.get_mut(index).ok_or("unknown split segment")?;
-        if segment.status != Status::Active(owner) { return Err("cannot release an unowned segment".into()); }
+        if segment.status != Status::Active(owner) || segment.in_flight.is_some() { return Err("cannot release an unowned or in-flight segment".into()); }
         segment.status = if segment.downloaded == segment.end - segment.start { Status::Done } else { Status::Pending };
         Ok(())
     }
@@ -97,7 +130,7 @@ impl SegmentMap {
         if records.len() != hashes.len() { return Err("segment hash count mismatch".into()); }
         let segments = records.iter().zip(hashes).map(|(record, hash)| Segment {
             start: record.start, end: record.end, downloaded: record.downloaded,
-            status: if record.downloaded == record.end - record.start { Status::Done } else { Status::Pending }, hash,
+            status: if record.downloaded == record.end - record.start { Status::Done } else { Status::Pending }, hash, in_flight: None,
         }).collect();
         Ok(Self { segments })
     }
@@ -165,6 +198,24 @@ mod tests {
         assert_eq!(records.first().unwrap().start, 0);
         for pair in records.windows(2) { assert_eq!(pair[0].end, pair[1].start); }
         assert_eq!(records.last().unwrap().end, 8 * MIN_SEGMENT);
+    }
+    #[test]
+    fn reservations_exclude_uncommitted_bytes_and_protect_inflight_writes() {
+        let mut map = SegmentMap::new(12 * MIN_SEGMENT, 2).unwrap();
+        let (first, start, _) = map.claim(0).unwrap();
+        let (second, other, _) = map.claim(1).unwrap();
+        assert_eq!(map.reserve_write(first, 0, start, 4).unwrap(), 4);
+        assert_eq!(map.reserve_write(second, 1, other, 3).unwrap(), 3);
+        assert_eq!(map.records()[0].downloaded, 0);
+        assert!(map.release(first, 0).is_err());
+        assert!(map.commit_write(first, 0, start, b"bad").is_err());
+        let (stolen, midpoint, _) = map.steal(2).unwrap();
+        assert!(midpoint >= other + 3);
+        assert!(map.release(stolen, 2).is_ok());
+        map.commit_write(first, 0, start, b"abcd").unwrap();
+        map.abort_write(second, 1, other).unwrap();
+        assert_eq!(map.records()[0].downloaded, 4);
+        assert!(map.release(second, 1).is_ok());
     }
     #[test]
     fn never_steals_below_minimum_floor() {

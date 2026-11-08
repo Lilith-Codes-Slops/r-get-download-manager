@@ -36,5 +36,7 @@ futures-util = "0.3"
 
 [features]
 default = []
+# Explicitly opt in to daemon-kill integration-test hooks; never use in production.
+checkpoint-test-hooks = []
 torrent = ["librqbit"]
 http3 = []

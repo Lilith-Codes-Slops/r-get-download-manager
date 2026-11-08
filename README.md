@@ -156,3 +156,36 @@ currently supported daemon platform.
 Use `dl verify <task-URL> sha256 <expected-hex>` or replace `sha256` with
 `blake3`. Verification is explicit and applies only to completed tasks; it is
 not yet an automatic post-download action. A mismatch returns an error.
+
+### Split checkpoint hardening tests (Linux)
+
+Split workers reserve each positioned-write range under the map lock, release the
+lock while writing, and commit progress only after the write completes. A steal
+can take only bytes beyond any reservation. Checkpoint snapshots include only
+committed prefixes; file sync, sidecar replacement and SQLite commit happen
+without holding the map lock. Uncheckpointed bytes may be overwritten on resume.
+
+The normal test suite includes concurrent reservations, a checkpoint taken
+while a write is in flight, a shared task-rate test, a split task-rate test, and
+a local HTTP/1.1 keep-alive measurement. To print the number of range requests
+and accepted TCP connections (including the probe) for that measurement:
+
+```sh
+cargo test -p downloader-core --lib split::connection_tests::reports_connection_reuse --locked -- --nocapture
+```
+
+The measurement is local and workload-specific: response cancellation, steals,
+server policies and HTTP version can all change connection reuse. A shared
+`reqwest::Client` permits pooling but does not guarantee reuse.
+
+Real daemon-kill tests and the controlled in-flight-write test require a
+**test-only fault-injection feature**. Never enable it for a production daemon:
+
+```sh
+cargo test -p downloader-core --test split_live_ipc --features checkpoint-test-hooks --locked
+```
+
+These tests stop the daemon after data sync, sidecar rename (before directory sync), sidecar commit, and SQLite commit,
+then restart and verify the complete output. This does not prove every possible
+power-loss, runtime shutdown, or filesystem failure scenario. In particular, a
+daemon-wide graceful-shutdown barrier for blocking writes remains outstanding.
