@@ -42,7 +42,7 @@ impl AppState {
                     if ui.selectable_label(selected, RichText::new(name).strong()).clicked() { self.selected_task = Some(task.url.clone()); }
                     ui.label(RichText::new(&task.state).weak());
                     ui.label(format!("{}/s", format_bytes(task.speed_bps)));
-                    ui.label(format!("Workers: {} / {} requested", count(task.active_connections), count(task.requested_connections)));
+                    ui.label(format!("Workers: {} / {} requested", count(self.live_segments.active_workers(task).or(task.active_connections)), count(task.requested_connections)));
                 });
                 let live = self.live_segments.summary(task);
                 if let Some((segments, bytes, total)) = live {
@@ -114,7 +114,7 @@ impl AppState {
                 ui.heading("Network & splits");
                 egui::Grid::new("network_grid").num_columns(2).show(ui, |ui| {
                     metric(ui, "Requested maximum", &count(task.requested_connections));
-                    metric(ui, "Active workers", &count(task.active_connections));
+                    metric(ui, "Active workers", &count(self.live_segments.active_workers(task).or(task.active_connections)));
                     if let Some((segments, bytes, total)) = self.live_segments.summary(task) {
                         metric(ui, "Segments", &format!("{segments} · {:.1}% (live)", bytes as f64 / total as f64 * 100.0));
                     } else if let Some(segments) = task.segment_count {
@@ -122,7 +122,7 @@ impl AppState {
                         metric(ui, "Segments", &format!("{segments} · {overall} (queue sample)"));
                     }
                 });
-                ui.label("Active counts are workers assigned to ranges, not a count of TCP sockets. Counts are sampled and may be lower during startup, throttling, or when work is limited.");
+                ui.label("Active workers own a segment; this is not a TCP socket count. The count changes with ownership and can be lower during startup, throttling, or when work is limited.");
                 if let Some(note) = &task.connection_note { ui.label(note); }
                 unavailable(ui, "Configure speed limit", "Not yet supported in the GUI.");
                 ui.horizontal(|ui| {

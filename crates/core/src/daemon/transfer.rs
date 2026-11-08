@@ -45,20 +45,31 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
     // A split is attempted only when safe resume metadata and at least two
     // minimum-size ranges are available. The original response remains unused
     // so an unsupported probe can fall back to the normal single stream.
+    let mut fallback_note: Option<&str> = None;
     #[cfg(target_os = "linux")]
     let split = if connections > 1 {
         let candidate = resume.as_ref().filter(|info| info.total >= 2 * 1024 * 1024);
         match candidate {
             Some(info) => {
                 let supported = super::split::live::probe(&client, url, info, &mut control).await?;
-                if !supported { resume = None; }
+                if !supported {
+                    resume = None;
+                    fallback_note = Some("Using one stream: the server ignored or rejected the byte-range probe; safe resume is unavailable.");
+                }
                 supported
             }
-            None => false,
+            None => {
+                fallback_note = Some(if resume.is_some() {
+                    "Using one stream: the file is smaller than the minimum size for split downloads."
+                } else {
+                    "Using one stream: verified byte-range support, a strong ETag, or a known length is unavailable."
+                });
+                false
+            },
         }
     } else { false };
     #[cfg(not(target_os = "linux"))]
-    let split = false;
+    let split = { if connections > 1 { fallback_note = Some("Using one stream: split downloads are not supported on this platform."); } false };
     {
         let mut guard = tasks.lock().await;
         if *control.borrow() == super::control::TransferControl::Canceled || !guard.contains_key(url) {
@@ -70,7 +81,7 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
             task.resume_supported = resume.is_some();
             task.active_connections = Some(if split { 0 } else { 1 });
             if connections > 1 && !split {
-                task.connection_note = Some("Using one stream: the resource is too small or lacks verified range support.".into());
+                task.connection_note = fallback_note.map(str::to_owned);
             }
             task.live_connections_supported = split;
             if split {

@@ -10,7 +10,9 @@ enum Status { Pending, Active(usize), Done }
 struct Segment { start: u64, end: u64, downloaded: u64, status: Status, hash: blake3::Hasher, in_flight: Option<u64> }
 
 // Indices are stable: stealing appends a segment, never inserts/removes one.
-pub(super) struct SegmentMap { segments: Vec<Segment>, rejected: bool }
+pub(in crate::daemon) struct SegmentMap {
+    segments: Vec<Segment>, rejected: Option<u16>, changes: std::sync::Arc<tokio::sync::Notify>,
+}
 
 impl SegmentMap {
     pub fn new(total: u64, requested: u8) -> Result<Self, String> {
@@ -27,14 +29,16 @@ impl SegmentMap {
             segments.push(Segment { start, end, downloaded: 0, status: Status::Pending, hash: blake3::Hasher::new(), in_flight: None });
             start = end;
         }
-        Ok(Self { segments, rejected: false })
+        Ok(Self { segments, rejected: None, changes: std::sync::Arc::new(tokio::sync::Notify::new()) })
     }
 
     pub fn claim(&mut self, owner: usize) -> Option<(usize, u64, u64)> {
         if self.segments.iter().any(|segment| segment.status == Status::Active(owner)) { return None; }
         let (index, segment) = self.segments.iter_mut().enumerate().find(|(_, segment)| segment.status == Status::Pending)?;
         segment.status = Status::Active(owner);
-        Some((index, segment.start + segment.downloaded, segment.end))
+        let work = (index, segment.start + segment.downloaded, segment.end);
+        self.changes.notify_one();
+        Some(work)
     }
 
     /// Only steal unwritten work. Both halves must retain at least 1 MiB.
@@ -55,6 +59,7 @@ impl SegmentMap {
         let new_index = self.segments.len();
         self.segments.push(Segment { start: midpoint, end: old_end, downloaded: 0,
             status: Status::Active(owner), hash: blake3::Hasher::new(), in_flight: None });
+        self.changes.notify_one();
         Some((new_index, midpoint, old_end))
     }
 
@@ -110,12 +115,14 @@ impl SegmentMap {
             return Err("cannot finish an unowned or incomplete segment".into());
         }
         segment.status = Status::Done;
+        self.changes.notify_one();
         Ok(())
     }
     pub fn release(&mut self, index: usize, owner: usize) -> Result<(), String> {
         let segment = self.segments.get_mut(index).ok_or("unknown split segment")?;
         if segment.status != Status::Active(owner) || segment.in_flight.is_some() { return Err("cannot release an unowned or in-flight segment".into()); }
         segment.status = if segment.downloaded == segment.end - segment.start { Status::Done } else { Status::Pending };
+        self.changes.notify_one();
         Ok(())
     }
     pub fn progress(&self) -> Vec<downloader_ipc::SegmentProgress> {
@@ -139,7 +146,7 @@ impl SegmentMap {
             start: record.start, end: record.end, downloaded: record.downloaded,
             status: if record.downloaded == record.end - record.start { Status::Done } else { Status::Pending }, hash, in_flight: None,
         }).collect();
-        Ok(Self { segments, rejected: false })
+        Ok(Self { segments, rejected: None, changes: std::sync::Arc::new(tokio::sync::Notify::new()) })
     }
     pub fn stealable_slots(&self) -> usize {
         let available = self.segments.iter().filter(|s| matches!(s.status, Status::Active(_)))
@@ -149,8 +156,10 @@ impl SegmentMap {
     }
     pub fn active_count(&self) -> u8 { self.segments.iter().filter(|s| matches!(s.status, Status::Active(_))).count() as u8 }
     pub fn segment_count(&self) -> u16 { self.segments.len() as u16 }
-    pub fn note_rejection(&mut self) { self.rejected = true; }
-    pub fn was_rejected(&self) -> bool { self.rejected }
+    pub fn changes(&self) -> std::sync::Arc<tokio::sync::Notify> { self.changes.clone() }
+    pub fn note_rejection(&mut self, status: u16) { self.rejected = Some(status); self.changes.notify_one(); }
+    pub fn was_rejected(&self) -> bool { self.rejected.is_some() }
+    pub fn rejection_status(&self) -> Option<u16> { self.rejected }
     pub fn pending_count(&self) -> usize { self.segments.iter().filter(|segment| segment.status == Status::Pending).count() }
     pub fn is_complete(&self) -> bool { self.segments.iter().all(|segment| segment.status == Status::Done) }
 }

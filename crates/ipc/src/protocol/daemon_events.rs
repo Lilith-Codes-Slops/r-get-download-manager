@@ -18,7 +18,8 @@ pub struct DownloadInfo {
     /// Requested worker ceiling, absent for older task records or daemons.
     #[serde(default)]
     pub requested_connections: Option<u8>,
-    /// Workers currently owning a range (or the single-stream worker), not TCP sockets.
+    /// Workers currently owning a range (or the single-stream transfer), not TCP sockets.
+    /// An IPC response is a point-in-time observation, not a guarantee about later activity.
     #[serde(default)]
     pub active_connections: Option<u8>,
     /// Number of split segments, when known.

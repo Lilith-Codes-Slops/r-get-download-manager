@@ -239,8 +239,13 @@ impl ServerLoop {
                                                     }
                                                 }
                                                 ClientRequest::GetDetailedQueue => {
-                                                    let guard = tasks.lock().await;
-                                                    DaemonEvent::DetailedQueue { tasks: guard.values().cloned().collect() }
+                                                    let mut snapshot: Vec<_> = tasks.lock().await.values().cloned().collect();
+                                                    for task in &mut snapshot {
+                                                        if let Some(active) = super::segment_events::active_count(&task.url, task.partial_name.as_deref()).await {
+                                                            task.active_connections = Some(active);
+                                                        }
+                                                    }
+                                                    DaemonEvent::DetailedQueue { tasks: snapshot }
                                                 }
                                                 ClientRequest::ListQueue | ClientRequest::GetSnapshot { task_id: None } => {
                                                     let guard = tasks.lock().await;

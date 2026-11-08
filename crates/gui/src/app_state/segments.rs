@@ -24,6 +24,11 @@ impl LiveSegments {
             _ => {}
         }
     }
+    pub fn active_workers(&self, task: &DownloadInfo) -> Option<u8> {
+        self.summary(task)?;
+        let (_, segments) = self.0.get(&task.url)?;
+        Some(segments.iter().filter(|segment| segment.status == "active").count().min(u8::MAX as usize) as u8)
+    }
     pub fn summary(&self, task: &DownloadInfo) -> Option<(usize, u64, u64)> {
         if !matches!(task.state.as_str(), "downloading" | "paused" | "pausing" | "resuming") { return None; }
         let (generation, segments) = self.0.get(&task.url)?;
@@ -53,11 +58,15 @@ mod tests {
         let mut live = LiveSegments::default();
         live.apply(DaemonEvent::SegmentsSnapshot { task_id: "task".into(), generation: "attempt".into(), segments: vec![segment(0, 0, 2), segment(1, 10, 1)] });
         assert_eq!(live.summary(&task()), Some((2, 3, 20)));
+        assert_eq!(live.active_workers(&task()), Some(2));
         live.apply(DaemonEvent::SegmentUpdate { task_id: "task".into(), segment_id: "0".into(), start_byte: 0, end_byte: 10,
             downloaded: 6, mirror_id: None, generation: Some("attempt".into()), status: Some("active".into()) });
         assert_eq!(live.summary(&task()), Some((2, 7, 20)));
+        live.apply(DaemonEvent::SegmentUpdate { task_id: "task".into(), segment_id: "0".into(), start_byte: 0, end_byte: 10,
+            downloaded: 10, mirror_id: None, generation: Some("attempt".into()), status: Some("done".into()) });
+        assert_eq!(live.active_workers(&task()), Some(1));
         live.apply(DaemonEvent::SegmentsRemoved { task_id: "task".into(), generation: "old".into() });
-        assert_eq!(live.summary(&task()), Some((2, 7, 20)));
+        assert_eq!(live.summary(&task()), Some((2, 11, 20)));
         let mut other = task(); other.partial_name = Some("retry".into());
         assert_eq!(live.summary(&other), None);
         live.apply(DaemonEvent::SegmentsReset);

@@ -1,4 +1,4 @@
-//! Split engine with work-stealing and adaptive concurrency. User-directed resizing remains future work.
+//! Split engine with work-stealing and adaptive concurrency.
 pub(super) mod checkpoint;
 pub(super) mod recovery;
 pub(super) mod startup;
@@ -7,7 +7,7 @@ pub(super) mod live;
 mod test_hooks;
 mod adaptive;
 mod runner;
-mod segments;
+pub(super) mod segments;
 mod worker;
 #[cfg(test)]
 mod tests;

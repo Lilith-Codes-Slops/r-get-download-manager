@@ -216,7 +216,7 @@ fn non_range_server_falls_back_to_single_stream() {
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Disposition: attachment; filename=fallback.bin\r\nConnection: close\r\n\r\nabc").unwrap();
     });
     let mut f = Fixture::new(); f.start(); f.add(&url, 8);
-    f.wait(&url, "completed");
+    let task = f.wait(&url, "completed"); assert!(task.connection_note.as_deref().is_some_and(|note| note.contains("one stream") && note.contains("byte-range")));
     assert_eq!(std::fs::read(f.root.join("Downloads/fallback.bin")).unwrap(), b"abc");
     server.join().unwrap();
 }
@@ -239,7 +239,7 @@ fn server_ignoring_range_falls_back_without_claiming_resume_support() {
     });
     let mut f = Fixture::new(); f.start(); f.add(&url, 2);
     let task = f.wait(&url, "completed");
-    assert!(!task.resume_supported);
+    assert!(!task.resume_supported); assert!(task.connection_note.as_deref().is_some_and(|note| note.contains("ignored or rejected") && note.contains("resume is unavailable")));
     assert_eq!(std::fs::read(f.root.join("Downloads/fallback-large.bin")).unwrap(), vec![42; 2 * 1024 * 1024]);
     server.join().unwrap();
 }

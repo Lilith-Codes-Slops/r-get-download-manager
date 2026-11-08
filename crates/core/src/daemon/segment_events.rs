@@ -6,19 +6,23 @@ use tokio::{io::AsyncWriteExt, net::UnixStream, sync::broadcast};
 struct Hub {
     latest: BTreeMap<String, DaemonEvent>,
     sender: broadcast::Sender<DaemonEvent>,
+    maps: BTreeMap<String, (String, std::sync::Weak<tokio::sync::Mutex<super::split::segments::SegmentMap>>)>,
 }
 fn hub() -> &'static Mutex<Hub> {
     static HUB: OnceLock<Mutex<Hub>> = OnceLock::new();
     HUB.get_or_init(|| {
         let (sender, _) = broadcast::channel(1024);
-        Mutex::new(Hub { latest: BTreeMap::new(), sender })
+        Mutex::new(Hub { latest: BTreeMap::new(), sender, maps: BTreeMap::new() })
     })
 }
 
 /// A generation prevents an old transfer from clearing a newer retry's events.
 pub(super) struct Publisher { id: String, generation: String }
 impl Publisher {
-    pub fn new(id: String, generation: String) -> Self { Self { id, generation } }
+    pub fn new(id: String, generation: String, map: &std::sync::Arc<tokio::sync::Mutex<super::split::segments::SegmentMap>>) -> Self {
+        hub().lock().unwrap_or_else(|e| e.into_inner()).maps.insert(id.clone(), (generation.clone(), std::sync::Arc::downgrade(map)));
+        Self { id, generation }
+    }
     pub fn publish(&self, segments: Vec<SegmentProgress>) {
         let event = DaemonEvent::SegmentsSnapshot { task_id: self.id.clone(),
             generation: self.generation.clone(), segments };
@@ -47,12 +51,25 @@ impl Publisher {
 impl Drop for Publisher {
     fn drop(&mut self) {
         let mut hub = hub().lock().unwrap_or_else(|e| e.into_inner());
+        if hub.maps.get(&self.id).is_some_and(|(generation, _)| generation == &self.generation) { hub.maps.remove(&self.id); }
         let ours = matches!(hub.latest.get(&self.id), Some(DaemonEvent::SegmentsSnapshot { generation, .. }) if generation == &self.generation);
         if ours {
             hub.latest.remove(&self.id);
             let _ = hub.sender.send(DaemonEvent::SegmentsRemoved { task_id: self.id.clone(), generation: self.generation.clone() });
         }
     }
+}
+
+/// Read the authoritative ownership map on demand, not a timer sample.
+pub(super) async fn active_count(id: &str, generation: Option<&str>) -> Option<u8> {
+    let map = {
+        let hub = hub().lock().unwrap_or_else(|e| e.into_inner());
+        let (current, map) = hub.maps.get(id)?;
+        if Some(current.as_str()) != generation { return None; }
+        map.upgrade()?
+    };
+    let count = map.lock().await.active_count();
+    Some(count)
 }
 
 async fn send(stream: &mut UnixStream, event: &DaemonEvent) -> Result<(), ()> {
@@ -99,14 +116,15 @@ mod tests {
     fn publishes_deltas_and_replaces_changed_layouts_without_stale_removal() {
         let id = "segment-event-test".to_string();
         let mut rx = hub().lock().unwrap().sender.subscribe();
-        let old = Publisher::new(id.clone(), "old".into());
+        let map = std::sync::Arc::new(tokio::sync::Mutex::new(super::super::split::segments::SegmentMap::new(2 * 1024 * 1024, 2).unwrap()));
+        let old = Publisher::new(id.clone(), "old".into(), &map);
         old.publish(vec![part(0, 10, 1)]);
         assert!(matches!(next_for(&mut rx, &id), DaemonEvent::SegmentsSnapshot { .. }));
         old.publish(vec![part(0, 10, 2)]);
         assert!(matches!(next_for(&mut rx, &id), DaemonEvent::SegmentUpdate { downloaded: 2, .. }));
         old.publish(vec![part(0, 5, 2)]);
         assert!(matches!(next_for(&mut rx, &id), DaemonEvent::SegmentsSnapshot { .. }));
-        let new = Publisher::new(id.clone(), "new".into());
+        let new = Publisher::new(id.clone(), "new".into(), &map);
         new.publish(vec![part(0, 10, 0)]);
         assert!(matches!(next_for(&mut rx, &id), DaemonEvent::SegmentsSnapshot { .. }));
         drop(old);

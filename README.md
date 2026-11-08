@@ -83,9 +83,10 @@ systemctl --user is-active rget.service
 The Linux daemon supports single-stream and experimental split HTTP/HTTPS
 downloads. The CLI can request 1–32 connections using
 `dl add <URL> --connections 2`; the GUI's Add download dialog selects 1–32
-(default 8). The task view shows the requested ceiling and sampled active
-workers, not TCP sockets; unavailable telemetry from older daemons is shown as
-unknown. Split progress is delivered separately as throttled segment events;
+(default 8). The task view shows the requested ceiling and active workers
+currently owning ranges, not TCP sockets. Split ownership transitions trigger
+updates, and queue requests read the current map; displays can lag briefly in
+transit. Unavailable telemetry from older daemons is shown as unknown. Split progress is delivered separately as throttled segment events;
 when the event stream is unavailable the GUI falls back to queue samples. Live connection changes are available only for split tasks; existing
 single-stream tasks cannot yet be converted to split mode. When a known-length
 resource advertises byte ranges and a strong ETag, the daemon probes an exact

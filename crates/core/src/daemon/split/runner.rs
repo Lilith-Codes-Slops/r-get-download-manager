@@ -27,7 +27,8 @@ pub(super) async fn run_checkpointed(
     let map = prepared.map;
     let file = prepared.file;
     checkpoint.save(&map, &file, &store, &tasks).await?;
-    let publisher = crate::daemon::segment_events::Publisher::new(url.clone(), partial_name.clone());
+    let publisher = crate::daemon::segment_events::Publisher::new(url.clone(), partial_name.clone(), &map);
+    let changes = map.lock().await.changes();
     publisher.publish(map.lock().await.progress());
     let mut last_time = Instant::now();
     let mut last_bytes: u64 = checkpoint.record.segments.iter().map(|s| s.downloaded).sum();
@@ -83,11 +84,24 @@ pub(super) async fn run_checkpointed(
                         break transfer.await.map_err(|e| format!("split supervisor failed: {e}"))?;
                     }
                 }
+                _ = changes.notified() => {
+                    let (active, segments, rejected) = {
+                        let map = map.lock().await;
+                        (map.active_count(), map.progress(), map.rejection_status())
+                    };
+                    publisher.publish(segments);
+                    if let Some(task) = tasks.lock().await.get_mut(&url) {
+                        if task.partial_name.as_deref() == Some(partial_name.as_str()) && matches!(task.state.as_str(), "downloading" | "pausing" | "resuming" | "canceling") {
+                            task.active_connections = Some(active);
+                            if let Some(status) = rejected { task.connection_note = Some(rejection_note(status)); }
+                        }
+                    }
+                }
                 _ = timer.tick() => {
                     let (bytes, active, segments, rejected, progress_snapshot) = {
                         let map = map.lock().await;
                         let progress = map.progress();
-                        (progress.iter().map(|s| s.downloaded).sum(), map.active_count(), map.segment_count(), map.was_rejected(), progress)
+                        (progress.iter().map(|s| s.downloaded).sum(), map.active_count(), map.segment_count(), map.rejection_status(), progress)
                     };
                     publisher.publish(progress_snapshot);
                     if let Some(task) = tasks.lock().await.get_mut(&url) {
@@ -97,7 +111,7 @@ pub(super) async fn run_checkpointed(
                                 if *desired.borrow() != count { desired.send_replace(count); }
                             }
                             task.active_connections = Some(active); task.segment_count = Some(segments);
-                            if rejected { task.connection_note = Some("Server rejected a range request (HTTP 429/503); concurrency may have been reduced.".into()); }
+                            if let Some(status) = rejected { task.connection_note = Some(rejection_note(status)); }
                         }
                     }
                     if bytes.saturating_sub(last_bytes) >= 8 * 1024 * 1024 || last_time.elapsed() >= Duration::from_secs(5) {
@@ -115,11 +129,11 @@ pub(super) async fn run_checkpointed(
         publisher.publish(map.lock().await.progress());
         let (rejected, segments) = {
             let map = map.lock().await;
-            (map.was_rejected(), map.segment_count())
+            (map.rejection_status(), map.segment_count())
         };
         if let Some(task) = tasks.lock().await.get_mut(&url) {
             task.segment_count = Some(segments);
-            if rejected { task.connection_note = Some("Server rejected a range request (HTTP 429/503); concurrency may have been reduced.".into()); }
+            if let Some(status) = rejected { task.connection_note = Some(rejection_note(status)); }
         }
         if control.as_ref().is_some_and(|rx| *rx.borrow() == TransferControl::Canceled) { return Err("download canceled".into()); }
         match outcome {
@@ -131,4 +145,8 @@ pub(super) async fn run_checkpointed(
             Err(error) => return Err(error),
         }
     }
+}
+
+fn rejection_note(status: u16) -> String {
+    format!("Server rejected a range request (HTTP {status}); the engine reduces concurrency or retries. See active workers for the current count.")
 }
