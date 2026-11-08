@@ -116,6 +116,8 @@ pub(super) async fn spawn(item: PreparedRecovery, tasks: Tasks, controls: Contro
             }
         }
         drop(guard);
+        #[cfg(target_os = "linux")]
+        super::progress_events::notify();
         if let Err(e) = store.save(&tasks, &limiter).await { eprintln!("queue checkpoint failed: {e}"); }
     });
 }

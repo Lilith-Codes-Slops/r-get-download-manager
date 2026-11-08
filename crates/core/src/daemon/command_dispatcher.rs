@@ -12,7 +12,7 @@ impl CommandDispatcher {
             ClientRequest::RefreshUrl { .. } => Ok(()),
             ClientRequest::SetLimit { .. } | ClientRequest::SetConnections { .. } => Ok(()),
             ClientRequest::RemoveTask { .. } => Ok(()),
-            ClientRequest::ListQueue | ClientRequest::GetDetailedQueue | ClientRequest::SubscribeSegments | ClientRequest::SubscribeSegmentPolicies => Ok(()),
+            ClientRequest::ListQueue | ClientRequest::GetDetailedQueue | ClientRequest::SubscribeSegments | ClientRequest::SubscribeSegmentPolicies | ClientRequest::SubscribeProgress => Ok(()),
             ClientRequest::GetSnapshot { .. } => Ok(()),
             ClientRequest::AddMirror { .. } => Ok(()),
             ClientRequest::SelectMediaQuality { .. } => Ok(()),

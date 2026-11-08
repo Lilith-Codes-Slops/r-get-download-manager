@@ -50,6 +50,12 @@ pub struct SegmentProgress {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum DaemonEvent {
+    /// Emitted only on the opt-in progress stream; task includes current
+    /// committed bytes, speed, state, planned/published destination and attempt.
+    ProgressUpdate { task_id: String, task: DownloadInfo },
+    ProgressRemoved { task_id: String },
+    ProgressReset,
+    ProgressHeartbeat,
     SpeedTick {
         task_id: String,
         speed_bps: u64,
@@ -153,6 +159,14 @@ mod tests {
     fn policy_update_roundtrips() {
         let event = DaemonEvent::SegmentPolicyUpdate { task_id: "task".into(), generation: "attempt".into(),
             target_size: 8 * 1024 * 1024, steal_floor: 2 * 1024 * 1024, reason: "rtt".into() };
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
+    }
+
+    #[test]
+    fn progress_update_roundtrips() {
+        let task: DownloadInfo = serde_json::from_str(r#"{"url":"task","state":"downloading","filename":"file.bin","downloaded":3,"total":10,"speed_bps":7,"final_path":null,"destination_path":"/Downloads/file.bin","partial_name":".rget-1.part"}"#).unwrap();
+        let event = DaemonEvent::ProgressUpdate { task_id: task.url.clone(), task };
         let json = serde_json::to_string(&event).unwrap();
         assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
     }

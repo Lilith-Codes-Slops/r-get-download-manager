@@ -109,6 +109,7 @@ impl ServerLoop {
                 }
             }
             for (task, paused) in retry_startup { super::retry::spawn_restart(task, paused, tasks.clone(), controls.clone(), limiter.clone(), store.clone()).await; }
+            let progress = super::progress_events::start(tasks.clone());
             eprintln!("daemon listening on {endpoint}");
             let checkpoint = {
                 let store = store.clone();
@@ -147,14 +148,9 @@ impl ServerLoop {
                                     }
                                     match serde_json::from_slice::<ClientRequest>(&payload) {
                                         Ok(req) => {
-                                            if matches!(&req, ClientRequest::SubscribeSegmentPolicies) {
-                                                super::segment_events::subscribe_policies(stream).await;
-                                                return;
-                                            }
-                                            if matches!(&req, ClientRequest::SubscribeSegments) {
-                                                super::segment_events::subscribe(stream).await;
-                                                return;
-                                            }
+                                            if matches!(&req, ClientRequest::SubscribeSegmentPolicies) { super::segment_events::subscribe_policies(stream).await; return; }
+                                            if matches!(&req, ClientRequest::SubscribeProgress) { super::progress_events::subscribe(stream).await; return; }
+                                            if matches!(&req, ClientRequest::SubscribeSegments) { super::segment_events::subscribe(stream).await; return; }
                                             if !matches!(&req, ClientRequest::GetDetailedQueue) { eprintln!("received: {req:?}"); }
                                             let should_save = matches!(&req, ClientRequest::AddTask { .. } | ClientRequest::Pause { .. } | ClientRequest::Resume { .. } | ClientRequest::Cancel { .. } | ClientRequest::RemoveTask { .. } | ClientRequest::SetLimit { .. } | ClientRequest::SetConnections { .. });
                                             let reply = match req {
@@ -198,6 +194,7 @@ impl ServerLoop {
                                                                     }
                                                                 }
                                                                 drop(guard);
+                                                                super::progress_events::notify();
                                                                 if let Err(e) = task_store.save(&task_states, &limiter_for_task_save).await { eprintln!("queue checkpoint failed: {e}"); }
                                                             });
                                                             DaemonEvent::TaskStateChanged { task_id: url, state: "downloading".into(), destination_path: None }
@@ -266,6 +263,7 @@ impl ServerLoop {
                                                 }
                                                 _ => DaemonEvent::TaskFailed { task_id: String::new(), error: "command is not yet supported".into() },
                                             };
+                                            if should_save { super::progress_events::notify(); }
                                             let reply = if should_save && !matches!(&reply, DaemonEvent::TaskFailed { .. }) {
                                                 match store.save(&tasks, &limiter).await {
                                                     Ok(()) => reply,
@@ -288,6 +286,7 @@ impl ServerLoop {
                     }
                 }
             }
+            progress.abort();
             checkpoint.abort();
             if let Err(e) = store.save(&tasks, &limiter).await { eprintln!("final queue checkpoint failed: {e}"); }
         }

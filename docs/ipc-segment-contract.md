@@ -97,3 +97,26 @@ has an optional destination field for compatibility, but this daemon does not
 currently publish a general SpeedTick subscription; progress is polled via the
 structured queue. Planned destinations must never be treated as owned files
 for deletion.
+
+## General progress subscription
+
+`SubscribeProgress` opens a separate optional stream. The daemon sends
+`progress_reset`, then one `progress_update` per current task, followed by
+ordered updates, `progress_removed` events, and `progress_heartbeat` messages.
+Each update contains `task_id` and a complete `task` (`DownloadInfo`) including
+committed bytes, total, average speed, state, `destination_path`, `final_path`,
+and `partial_name`. The partial name identifies a split attempt where one
+exists. Detailed segment snapshots remain available from `SubscribeSegments`,
+with their own generation guards; they are not embedded in progress updates.
+
+Progress is sampled approximately every 500 ms and sampled promptly after IPC
+state changes or transfer completion. Intermediate states may be coalesced.
+The planned destination can change at publication. On connection, the reset and
+snapshot precede later updates; a lagged or disconnected subscriber must
+reconnect and rebuild its cache from a new reset. The broadcaster is bounded and
+closes lagged streams rather than silently losing updates. A stream heartbeat is
+sent about every five seconds. No progress event is sent to ordinary request
+connections or older clients. Because older strongly typed clients may reject
+unknown event variants, compatibility relies on the new stream being opt-in,
+not on their silently ignoring an unknown event. The GUI falls back to polling
+`GetDetailedQueue` if the subscription is unsupported or disconnected.

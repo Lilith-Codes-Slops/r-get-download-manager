@@ -95,7 +95,7 @@ pub(super) async fn active_count(id: &str, generation: Option<&str>) -> Option<u
     Some(count)
 }
 
-async fn send(stream: &mut UnixStream, event: &DaemonEvent) -> Result<(), ()> {
+pub(super) async fn send(stream: &mut UnixStream, event: &DaemonEvent) -> Result<(), ()> {
     let bytes = serde_json::to_vec(event).map_err(|_| ())?;
     if bytes.len() > downloader_ipc::MAX_FRAME_PAYLOAD { return Err(()); }
     let write = async {

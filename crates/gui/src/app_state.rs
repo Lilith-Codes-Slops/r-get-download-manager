@@ -1,6 +1,7 @@
 mod views;
 mod segments;
 mod policies;
+mod progress;
 use crate::ipc_bridge_worker::{BridgeMessage, IpcBridgeWorker};
 use downloader_ipc::{ClientRequest, DaemonEvent, DownloadInfo};
 use eframe::egui::{self, Color32, RichText};
@@ -42,6 +43,7 @@ pub struct AppState {
     edit_connections: u8,
     notice: Option<String>,
     connected: bool,
+    progress_active: bool,
 }
 
 impl AppState {
@@ -52,13 +54,18 @@ impl AppState {
             view: View::Tasks, detail: Detail::Status, theme: Theme::System,
             sort: Sort::Name, descending: false, add_open: false, settings_open: false,
             pending_delete: None, url: String::new(), connections: 8,
-            edit_connection_task: None, edit_connections: 1, notice: None, connected: false,
+            edit_connection_task: None, edit_connections: 1, notice: None, connected: false, progress_active: false,
         }
     }
 
     fn poll(&mut self) {
         while let Ok(message) = self.bridge.updates.try_recv() {
             match message {
+                BridgeMessage::ProgressDisconnected => self.progress_active = false,
+                BridgeMessage::ProgressEvent(event) => {
+                    if matches!(event, DaemonEvent::ProgressReset) { self.progress_active = true; self.connected = true; }
+                    progress::apply(&mut self.tasks, event);
+                }
                 BridgeMessage::PoliciesDisconnected => self.policies.clear(),
                 BridgeMessage::PolicyEvent(event) => self.policies.apply(event),
                 BridgeMessage::SegmentsDisconnected => self.live_segments.clear(),
@@ -66,7 +73,7 @@ impl AppState {
                 BridgeMessage::ConnectionError(error) => { self.connected = false; self.notice = Some(format!("Daemon disconnected: {error}")); }
                 BridgeMessage::Event(DaemonEvent::DetailedQueue { tasks }) => {
                     self.connected = true;
-                    self.tasks = tasks;
+                    if !self.progress_active { self.tasks = tasks; }
                 }
                 BridgeMessage::Event(DaemonEvent::ConnectionsChanged { task_id, requested }) => {
                     if let Some(task) = self.tasks.iter_mut().find(|task| task.url == task_id) { task.requested_connections = Some(requested); }

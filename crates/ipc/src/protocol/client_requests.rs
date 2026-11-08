@@ -43,6 +43,8 @@ pub enum ClientRequest {
     SubscribeSegments,
     /// Dedicated stream for optional adaptive policy telemetry.
     SubscribeSegmentPolicies,
+    /// Ordered task progress updates, with a reset on each connection.
+    SubscribeProgress,
     GetSnapshot {
         task_id: Option<String>,
     },

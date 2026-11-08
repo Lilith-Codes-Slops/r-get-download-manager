@@ -95,6 +95,7 @@ pub(in crate::daemon) async fn spawn(prepared: PreparedSplit, root: &Path, tasks
             }}
         }
         drop(guard);
+        crate::daemon::progress_events::notify();
         if let Err(error) = store.save(&tasks, &limiter).await { eprintln!("queue checkpoint failed: {error}"); }
     });
 }

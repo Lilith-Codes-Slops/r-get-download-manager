@@ -22,6 +22,8 @@ mod retry;
 mod split;
 #[cfg(target_os = "linux")]
 mod segment_events;
+#[cfg(target_os = "linux")]
+mod progress_events;
 mod bandwidth;
 mod control;
 mod task_removal;

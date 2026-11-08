@@ -8,7 +8,11 @@ pub struct EventBroadcaster {
 
 impl EventBroadcaster {
     pub fn new() -> Self {
-        let (tx, _) = broadcast::channel(128);
+        Self::with_capacity(128)
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        let (tx, _) = broadcast::channel(capacity);
         Self { tx }
     }
 

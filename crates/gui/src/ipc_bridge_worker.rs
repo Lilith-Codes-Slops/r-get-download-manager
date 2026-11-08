@@ -10,6 +10,8 @@ pub enum BridgeMessage {
     SegmentsDisconnected,
     PolicyEvent(DaemonEvent),
     PoliciesDisconnected,
+    ProgressEvent(DaemonEvent),
+    ProgressDisconnected,
 }
 
 pub struct IpcBridgeWorker {
@@ -21,6 +23,10 @@ impl IpcBridgeWorker {
     pub fn start(ctx: eframe::egui::Context) -> Self {
         let (requests, rx) = mpsc::channel();
         let (tx, updates) = mpsc::channel();
+        let progress_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let progress_status = progress_active.clone();
+        let progress_tx = tx.clone(); let progress_ctx = ctx.clone();
+        std::thread::spawn(move || super::progress_stream::run(progress_tx, progress_ctx, progress_status));
         let segment_tx = tx.clone();
         let segment_ctx = ctx.clone();
         std::thread::spawn(move || segment_stream(segment_tx, segment_ctx, false));
@@ -56,7 +62,7 @@ impl IpcBridgeWorker {
                             Err(e) => { connected = false; let _ = tx.send(BridgeMessage::ConnectionError(e)); }
                         }
                     }
-                    Err(mpsc::RecvTimeoutError::Timeout) if connected => {
+                    Err(mpsc::RecvTimeoutError::Timeout) if connected && !progress_active.load(std::sync::atomic::Ordering::Acquire) => {
                         match roundtrip(&ClientRequest::GetDetailedQueue) {
                             Ok(event) => { let _ = tx.send(BridgeMessage::Event(event)); }
                             Err(e) => { connected = false; let _ = tx.send(BridgeMessage::ConnectionError(e)); }

@@ -97,6 +97,7 @@ pub(super) async fn spawn_restart(prior: DownloadInfo, paused: bool, tasks: Task
             }}
         }
         drop(guard);
+        super::progress_events::notify();
         if let Err(error) = store.save(&tasks, &limiter).await { eprintln!("queue checkpoint failed: {error}"); }
     });
 }

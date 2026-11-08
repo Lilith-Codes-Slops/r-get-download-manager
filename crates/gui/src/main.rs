@@ -2,6 +2,7 @@
 
 mod app_state;
 mod ipc_bridge_worker;
+mod progress_stream;
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
