@@ -27,9 +27,15 @@ pub(super) async fn run_checkpointed(
     let map = prepared.map;
     let file = prepared.file;
     checkpoint.save(&map, &file, &store, &tasks).await?;
-    let publisher = crate::daemon::segment_events::Publisher::new(url.clone(), partial_name.clone(), &map);
-    let changes = map.lock().await.changes();
+    let publisher = Arc::new(crate::daemon::segment_events::Publisher::new(url.clone(), partial_name.clone(), &map));
+    let changes = {
+        let mut guard = map.lock().await;
+        guard.attach_policy_publisher(Arc::downgrade(&publisher));
+        guard.changes()
+    };
     publisher.publish(map.lock().await.progress());
+    publisher.publish_policy(map.lock().await.policy(), true);
+    let mut policy_refresh = Instant::now();
     let mut last_time = Instant::now();
     let mut last_bytes: u64 = checkpoint.record.segments.iter().map(|s| s.downloaded).sum();
     let progress = crate::daemon::progress::ProgressMeter::new(last_bytes);
@@ -42,6 +48,7 @@ pub(super) async fn run_checkpointed(
                 // and persist the verified map before exposing the paused state.
                 checkpoint.save(&map, &file, &store, &tasks).await?;
                 publisher.publish(map.lock().await.progress());
+                publisher.publish_policy(map.lock().await.policy(), false);
                 last_bytes = checkpoint.record.segments.iter().map(|s| s.downloaded).sum();
                 last_time = Instant::now();
                 {
@@ -98,11 +105,15 @@ pub(super) async fn run_checkpointed(
                     }
                 }
                 _ = timer.tick() => {
+                    let refresh = policy_refresh.elapsed() >= Duration::from_secs(5);
                     let (bytes, active, segments, rejected, progress_snapshot) = {
                         let map = map.lock().await;
+                        // Publish under the map lock so a later worker update cannot be overwritten by this snapshot.
+                        publisher.publish_policy(map.policy(), refresh);
                         let progress = map.progress();
                         (progress.iter().map(|s| s.downloaded).sum(), map.active_count(), map.segment_count(), map.rejection_status(), progress)
                     };
+                    if refresh { policy_refresh = Instant::now(); }
                     publisher.publish(progress_snapshot);
                     if let Some(task) = tasks.lock().await.get_mut(&url) {
                         if task.partial_name.as_deref() == Some(partial_name.as_str()) && task.state == "downloading" {
@@ -127,6 +138,7 @@ pub(super) async fn run_checkpointed(
             }
         };
         publisher.publish(map.lock().await.progress());
+        publisher.publish_policy(map.lock().await.policy(), false);
         let (rejected, segments) = {
             let map = map.lock().await;
             (map.rejection_status(), map.segment_count())

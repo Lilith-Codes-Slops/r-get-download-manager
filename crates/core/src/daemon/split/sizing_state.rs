@@ -1,18 +1,22 @@
 //! Per-task coupling for the sizing policy, steal floor and congestion cooldown.
-use super::{adaptive_sizer::AdaptiveSizer, steal_floor::StealFloor};
+use super::{adaptive_sizer::{AdaptiveSizer, Reason}, steal_floor::StealFloor};
 use std::time::{Duration, Instant};
 
 const COOLDOWN: Duration = Duration::from_secs(12);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::daemon) struct PolicySnapshot { pub target_size: u64, pub steal_floor: u64, pub reason: &'static str }
 
 pub(super) struct SizingState {
     sizer: AdaptiveSizer,
     floor: StealFloor,
     cooldown_until: Option<Instant>,
     floor_cap: Option<u64>,
+    last_reason: &'static str,
 }
 impl Default for SizingState {
     fn default() -> Self {
-        Self { sizer: AdaptiveSizer::new(None), floor: StealFloor::default(), cooldown_until: None, floor_cap: None }
+        Self { sizer: AdaptiveSizer::new(None), floor: StealFloor::default(), cooldown_until: None, floor_cap: None, last_reason: "initial" }
     }
 }
 impl SizingState {
@@ -29,19 +33,30 @@ impl SizingState {
         }
     }
     pub fn observe(&mut self, goodput: Option<f64>, latency: Option<f64>, now: Instant) {
+        let before = self.snapshot(now);
         let allow_growth = !self.cooling(now);
         let old = self.sizer.target;
         let slowdown = self.sizer.observe_with_growth(goodput, latency, allow_growth);
         if latency.is_some() { self.floor.observe_latency(self.sizer.recent_rtt_ms, allow_growth); }
         self.couple(old);
         if let Some(cap) = self.floor_cap { self.floor.limit(cap); }
-        if slowdown { self.congestion(now); }
+        if slowdown { self.congestion(now); self.last_reason = "slowdown"; }
+        else if self.sizer.target != old {
+            self.last_reason = match self.sizer.last_change_reason {
+                Reason::Goodput => "goodput", Reason::Rtt => "rtt", Reason::Rejection => "rejection",
+                Reason::Slowdown => "slowdown", Reason::Initial => "initial", Reason::Remembered => "remembered",
+            };
+        } else if latency.is_some() && self.current_floor(now) != before.steal_floor { self.last_reason = "rtt"; }
     }
     pub fn reject(&mut self, now: Instant) {
         let old = self.sizer.target;
         self.sizer.reject();
         self.couple(old);
         self.congestion(now);
+        self.last_reason = "rejection";
+    }
+    pub fn snapshot(&self, now: Instant) -> PolicySnapshot {
+        PolicySnapshot { target_size: self.sizer.target, steal_floor: self.current_floor(now), reason: self.last_reason }
     }
     fn congestion(&mut self, now: Instant) {
         // Apply even at the target minimum, where the target cannot shrink.

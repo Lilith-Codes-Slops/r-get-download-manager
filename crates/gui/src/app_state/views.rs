@@ -115,6 +115,11 @@ impl AppState {
                 egui::Grid::new("network_grid").num_columns(2).show(ui, |ui| {
                     metric(ui, "Requested maximum", &count(task.requested_connections));
                     metric(ui, "Active workers", &count(self.live_segments.active_workers(task).or(task.active_connections)));
+                    if let Some(policy) = self.policies.get(task) {
+                        metric(ui, "Segment size target", &format!("{} (not yet applied)", format_bytes(policy.target_size)));
+                        metric(ui, "Current steal floor", &format_bytes(policy.steal_floor));
+                        metric(ui, "Last policy reason", &policy.reason);
+                    }
                     if let Some((segments, bytes, total)) = self.live_segments.summary(task) {
                         metric(ui, "Segments", &format!("{segments} · {:.1}% (live)", bytes as f64 / total as f64 * 100.0));
                     } else if let Some(segments) = task.segment_count {

@@ -60,3 +60,13 @@ Before enabling this policy, add tests for compaction and reconciliation across
 all checkpoint crash windows, in-flight steals, request-size caps, segment-count
 exhaustion, 429/503, throttling, redirects, persistence and concurrent host tasks.
 Retain the existing crash, pause, cancellation, checksum and single-stream tests.
+
+## Observability
+
+The Network & splits detail view shows the current policy target, effective
+steal floor and last change reason for a live split attempt. The target is
+explicitly marked **not yet applied** to allocations. Policy updates use a
+separate optional IPC stream, include the partial-file generation, and are
+refreshed approximately every five seconds while active. A value change emits a
+tracing line at `info` level. Metrics are live observations, not checkpointed or
+persisted host preferences; disconnected or older daemons do not provide them.

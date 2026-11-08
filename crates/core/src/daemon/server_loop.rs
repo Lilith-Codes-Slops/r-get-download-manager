@@ -151,6 +151,10 @@ impl ServerLoop {
 
                                     match serde_json::from_slice::<ClientRequest>(&payload) {
                                         Ok(req) => {
+                                            if matches!(&req, ClientRequest::SubscribeSegmentPolicies) {
+                                                super::segment_events::subscribe_policies(stream).await;
+                                                return;
+                                            }
                                             if matches!(&req, ClientRequest::SubscribeSegments) {
                                                 super::segment_events::subscribe(stream).await;
                                                 return;

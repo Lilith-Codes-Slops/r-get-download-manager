@@ -58,3 +58,28 @@ and range. `segments_removed` carries `task_id` and `generation`; it removes
 only that matching attempt. Committed progress in events is not necessarily a
 durable checkpoint. A crash can cause uncheckpointed data to be downloaded
 again. Event delivery is not a durable log and may be delayed or coalesced.
+
+## Optional policy stream
+
+`{"op":"subscribe_segment_policies"}` opens a **separate** framed event
+stream; the existing segment stream is unchanged so older subscribers do not
+receive unknown event variants. It begins with `segment_policies_reset`, then
+zero or more current `segment_policy_update` events; changes are sent as they
+occur and unchanged values are refreshed approximately every five seconds
+while a split transfer is active. `segments_heartbeat` is also used on this
+stream. A lagging subscriber must reconnect and rebuild after the reset.
+
+An update is shaped as:
+
+```json
+{"event":"segment_policy_update","task_id":"<URL>","generation":".rget-1-0.part","target_size":8388608,"steal_floor":2097152,"reason":"rtt"}
+```
+
+Sizes are bytes. The target is currently a calculated policy value **not used
+for live segment allocation**; the steal floor is applied to new steals. Reason
+is a string such as `initial`, `goodput`, `rtt`, `rejection`, or `slowdown`;
+clients should tolerate future values. `segment_policy_removed` carries the
+same `task_id` and `generation`. Values are per attempt, not persisted host
+history. Ignore an event whose generation does not match the current task's
+partial name. If this optional stream is unsupported or disconnects, clear the
+cached policy instead of displaying stale values.

@@ -8,6 +8,8 @@ pub enum BridgeMessage {
     ConnectionError(String),
     SegmentEvent(DaemonEvent),
     SegmentsDisconnected,
+    PolicyEvent(DaemonEvent),
+    PoliciesDisconnected,
 }
 
 pub struct IpcBridgeWorker {
@@ -20,7 +22,10 @@ impl IpcBridgeWorker {
         let (requests, rx) = mpsc::channel();
         let (tx, updates) = mpsc::channel();
         let segment_tx = tx.clone();
-        std::thread::spawn(move || segment_stream(segment_tx, ctx));
+        let segment_ctx = ctx.clone();
+        std::thread::spawn(move || segment_stream(segment_tx, segment_ctx, false));
+        let policy_tx = tx.clone();
+        std::thread::spawn(move || segment_stream(policy_tx, ctx, true));
         std::thread::spawn(move || {
             let runtime = match tokio::runtime::Runtime::new() {
                 Ok(runtime) => runtime,
@@ -86,7 +91,7 @@ fn roundtrip(_req: &ClientRequest) -> Result<DaemonEvent, String> {
 }
 
 #[cfg(target_os = "linux")]
-fn segment_stream(tx: Sender<BridgeMessage>, ctx: eframe::egui::Context) {
+fn segment_stream(tx: Sender<BridgeMessage>, ctx: eframe::egui::Context, policies: bool) {
     use std::os::unix::net::UnixStream;
     loop {
         let result = (|| -> Result<(), String> {
@@ -94,19 +99,22 @@ fn segment_stream(tx: Sender<BridgeMessage>, ctx: eframe::egui::Context) {
             let mut stream = UnixStream::connect(endpoint).map_err(|e| e.to_string())?;
             stream.set_read_timeout(Some(Duration::from_secs(15))).map_err(|e| e.to_string())?;
             stream.set_write_timeout(Some(Duration::from_secs(3))).map_err(|e| e.to_string())?;
-            FrameEncoder::write_frame(&mut stream, &ClientRequest::SubscribeSegments).map_err(|e| e.to_string())?;
+            let request = if policies { ClientRequest::SubscribeSegmentPolicies } else { ClientRequest::SubscribeSegments };
+            FrameEncoder::write_frame(&mut stream, &request).map_err(|e| e.to_string())?;
             loop {
                 let event: DaemonEvent = FrameDecoder::read_frame(&mut stream).map_err(|e| e.to_string())?;
                 if matches!(event, DaemonEvent::SegmentsHeartbeat) { continue; }
-                if tx.send(BridgeMessage::SegmentEvent(event)).is_err() { return Ok(()); }
+                let message = if policies { BridgeMessage::PolicyEvent(event) } else { BridgeMessage::SegmentEvent(event) };
+                if tx.send(message).is_err() { return Ok(()); }
                 ctx.request_repaint();
             }
         })();
         let _ = result;
-        if tx.send(BridgeMessage::SegmentsDisconnected).is_err() { return; }
+        let message = if policies { BridgeMessage::PoliciesDisconnected } else { BridgeMessage::SegmentsDisconnected };
+        if tx.send(message).is_err() { return; }
         ctx.request_repaint();
         std::thread::sleep(Duration::from_secs(5));
     }
 }
 #[cfg(not(target_os = "linux"))]
-fn segment_stream(_tx: Sender<BridgeMessage>, _ctx: eframe::egui::Context) {}
+fn segment_stream(_tx: Sender<BridgeMessage>, _ctx: eframe::egui::Context, _policies: bool) {}

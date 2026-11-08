@@ -1,5 +1,6 @@
 mod views;
 mod segments;
+mod policies;
 use crate::ipc_bridge_worker::{BridgeMessage, IpcBridgeWorker};
 use downloader_ipc::{ClientRequest, DaemonEvent, DownloadInfo};
 use eframe::egui::{self, Color32, RichText};
@@ -22,6 +23,7 @@ pub struct AppState {
     bridge: IpcBridgeWorker,
     tasks: Vec<DownloadInfo>,
     live_segments: segments::LiveSegments,
+    policies: policies::Policies,
     selected_task: Option<String>,
     selected_file: Option<PathBuf>,
     files: Vec<DownloadFile>,
@@ -45,7 +47,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         Self {
-            bridge: IpcBridgeWorker::start(cc.egui_ctx.clone()), tasks: Vec::new(), live_segments: segments::LiveSegments::default(), selected_task: None,
+            bridge: IpcBridgeWorker::start(cc.egui_ctx.clone()), tasks: Vec::new(), live_segments: segments::LiveSegments::default(), policies: policies::Policies::default(), selected_task: None,
             selected_file: None, files: Vec::new(), last_files_refresh: Instant::now() - Duration::from_secs(10),
             view: View::Tasks, detail: Detail::Status, theme: Theme::System,
             sort: Sort::Name, descending: false, add_open: false, settings_open: false,
@@ -57,6 +59,8 @@ impl AppState {
     fn poll(&mut self) {
         while let Ok(message) = self.bridge.updates.try_recv() {
             match message {
+                BridgeMessage::PoliciesDisconnected => self.policies.clear(),
+                BridgeMessage::PolicyEvent(event) => self.policies.apply(event),
                 BridgeMessage::SegmentsDisconnected => self.live_segments.clear(),
                 BridgeMessage::SegmentEvent(event) => self.live_segments.apply(event),
                 BridgeMessage::ConnectionError(error) => { self.connected = false; self.notice = Some(format!("Daemon disconnected: {error}")); }

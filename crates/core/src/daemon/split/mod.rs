@@ -8,7 +8,7 @@ mod test_hooks;
 mod adaptive;
 mod adaptive_sizer;
 mod steal_floor;
-mod sizing_state;
+pub(super) mod sizing_state;
 #[cfg(test)]
 mod steal_floor_tests;
 mod runner;

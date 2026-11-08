@@ -240,3 +240,38 @@ fn segment_subscription_streams_progress_without_queue_requests() {
     assert!(advanced, "no live progress event arrived");
     f.wait(&server.url, "completed");
 }
+
+#[test]
+fn policy_subscription_reports_current_values_and_refreshes_without_queue_polling() {
+    let server = HttpServer::new();
+    let mut f = Fixture::new(); f.start(); f.add(&server.url, 2);
+    f.wait_checkpoint(&server.url);
+    let mut stream = UnixStream::connect(f.root.join("run/rget.sock")).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+    FrameEncoder::write_frame(&mut stream, &ClientRequest::SubscribeSegmentPolicies).unwrap();
+    let reset: DaemonEvent = FrameDecoder::read_frame(&mut stream).unwrap();
+    assert!(matches!(reset, DaemonEvent::SegmentPoliciesReset));
+    let initial: DaemonEvent = FrameDecoder::read_frame(&mut stream).unwrap();
+    let (generation, mut previous) = match initial {
+        DaemonEvent::SegmentPolicyUpdate { task_id, generation, target_size, steal_floor, reason } => {
+            assert_eq!(task_id, server.url);
+            (generation, (target_size, steal_floor, reason))
+        }
+        other => panic!("missing initial policy: {other:?}"),
+    };
+    assert!((1024 * 1024..=128 * 1024 * 1024).contains(&previous.0));
+    assert!(previous.1 >= 1024 * 1024);
+    let deadline = Instant::now() + Duration::from_secs(18);
+    loop {
+        let event: DaemonEvent = FrameDecoder::read_frame(&mut stream).unwrap();
+        if let DaemonEvent::SegmentPolicyUpdate { task_id, generation: current, target_size, steal_floor, reason } = event {
+            assert_eq!(task_id, server.url); assert_eq!(current, generation);
+            let current = (target_size, steal_floor, reason);
+            if current == previous { break; }
+            previous = current;
+        }
+        assert!(Instant::now() < deadline, "periodic policy refresh not received");
+    }
+    server.release.store(true, Ordering::SeqCst);
+    f.wait(&server.url, "completed");
+}

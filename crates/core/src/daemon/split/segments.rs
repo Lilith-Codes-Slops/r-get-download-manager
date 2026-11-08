@@ -13,6 +13,7 @@ struct Segment { start: u64, end: u64, downloaded: u64, status: Status, hash: bl
 pub(in crate::daemon) struct SegmentMap {
     segments: Vec<Segment>, rejected: Option<u16>, changes: std::sync::Arc<tokio::sync::Notify>,
     sizing: super::sizing_state::SizingState,
+    policy_publisher: Option<std::sync::Weak<crate::daemon::segment_events::Publisher>>,
 }
 
 impl SegmentMap {
@@ -31,7 +32,7 @@ impl SegmentMap {
             start = end;
         }
         Ok(Self { segments, rejected: None, changes: std::sync::Arc::new(tokio::sync::Notify::new()),
-            sizing: super::sizing_state::SizingState::default() })
+            sizing: super::sizing_state::SizingState::default(), policy_publisher: None })
     }
 
     pub fn claim(&mut self, owner: usize) -> Option<(usize, u64, u64)> {
@@ -46,7 +47,10 @@ impl SegmentMap {
     /// Transfer only unreserved, unwritten work; the donor retains at least 1 MiB.
     pub fn steal(&mut self, owner: usize) -> Option<(usize, u64, u64)> {
         if self.segments.len() >= MAX_SEGMENTS || self.segments.iter().any(|s| s.status == Status::Active(owner)) { return None; }
-        let floor = self.sizing.decide_floor(std::time::Instant::now());
+        let now = std::time::Instant::now();
+        let before = self.sizing.snapshot(now);
+        let floor = self.sizing.decide_floor(now);
+        self.emit_policy_change(before, now);
         let (index, _) = self.segments.iter().enumerate()
             .filter(|(_, s)| matches!(s.status, Status::Active(_)))
             .map(|(i, s)| (i, s.end - s.in_flight.unwrap_or(s.start + s.downloaded)))
@@ -152,7 +156,7 @@ impl SegmentMap {
             status: if record.downloaded == record.end - record.start { Status::Done } else { Status::Pending }, hash, in_flight: None,
         }).collect();
         Ok(Self { segments, rejected: None, changes: std::sync::Arc::new(tokio::sync::Notify::new()),
-            sizing: super::sizing_state::SizingState::default() })
+            sizing: super::sizing_state::SizingState::default(), policy_publisher: None })
     }
     pub fn stealable_slots(&self) -> usize {
         let floor = self.sizing.current_floor(std::time::Instant::now());
@@ -165,12 +169,28 @@ impl SegmentMap {
     pub fn active_count(&self) -> u8 { self.segments.iter().filter(|s| matches!(s.status, Status::Active(_))).count() as u8 }
     pub fn segment_count(&self) -> u16 { self.segments.len() as u16 }
     pub fn changes(&self) -> std::sync::Arc<tokio::sync::Notify> { self.changes.clone() }
-    pub fn note_rtt(&mut self, rtt_ms: f64) { self.sizing.observe(None, Some(rtt_ms), std::time::Instant::now()); }
-    pub fn note_goodput(&mut self, bps: f64) {
-        self.sizing.observe(Some(bps), None, std::time::Instant::now());
+    pub fn attach_policy_publisher(&mut self, publisher: std::sync::Weak<crate::daemon::segment_events::Publisher>) {
+        self.policy_publisher = Some(publisher);
     }
+    pub fn policy(&self) -> super::sizing_state::PolicySnapshot { self.sizing.snapshot(std::time::Instant::now()) }
+    fn emit_policy_change(&self, before: super::sizing_state::PolicySnapshot, now: std::time::Instant) {
+        let after = self.sizing.snapshot(now);
+        if before != after {
+            if let Some(publisher) = self.policy_publisher.as_ref().and_then(|p| p.upgrade()) { publisher.publish_policy(after, false); }
+            self.changes.notify_one();
+        }
+    }
+    fn observe_policy(&mut self, goodput: Option<f64>, rtt: Option<f64>) {
+        let now = std::time::Instant::now(); let before = self.sizing.snapshot(now);
+        self.sizing.observe(goodput, rtt, now);
+        self.emit_policy_change(before, now);
+    }
+    pub fn note_rtt(&mut self, rtt_ms: f64) { self.observe_policy(None, Some(rtt_ms)); }
+    pub fn note_goodput(&mut self, bps: f64) { self.observe_policy(Some(bps), None); }
     pub fn note_rejection(&mut self, status: u16) {
-        self.rejected = Some(status); self.sizing.reject(std::time::Instant::now()); self.changes.notify_one();
+        let now = std::time::Instant::now(); let before = self.sizing.snapshot(now);
+        self.rejected = Some(status); self.sizing.reject(now);
+        self.emit_policy_change(before, now); self.changes.notify_one();
     }
     pub fn was_rejected(&self) -> bool { self.rejected.is_some() }
     pub fn rejection_status(&self) -> Option<u16> { self.rejected }

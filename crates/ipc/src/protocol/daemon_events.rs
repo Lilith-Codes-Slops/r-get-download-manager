@@ -71,6 +71,9 @@ pub enum DaemonEvent {
     SegmentsRemoved { task_id: String, generation: String },
     SegmentsReset,
     SegmentsHeartbeat,
+    SegmentPoliciesReset,
+    SegmentPolicyUpdate { task_id: String, generation: String, target_size: u64, steal_floor: u64, reason: String },
+    SegmentPolicyRemoved { task_id: String, generation: String },
     ConnectionsChanged { task_id: String, requested: u8 },
     TaskStateChanged {
         task_id: String,
@@ -127,6 +130,14 @@ mod tests {
     fn legacy_segment_update_deserializes_without_new_fields() {
         let json = r#"{"event":"segment_update","task_id":"a","segment_id":"0","start_byte":0,"end_byte":5,"downloaded":2,"mirror_id":null}"#;
         assert!(matches!(serde_json::from_str::<DaemonEvent>(json).unwrap(), DaemonEvent::SegmentUpdate { generation: None, status: None, .. }));
+    }
+
+    #[test]
+    fn policy_update_roundtrips() {
+        let event = DaemonEvent::SegmentPolicyUpdate { task_id: "task".into(), generation: "attempt".into(),
+            target_size: 8 * 1024 * 1024, steal_floor: 2 * 1024 * 1024, reason: "rtt".into() };
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
     }
 
     #[test]

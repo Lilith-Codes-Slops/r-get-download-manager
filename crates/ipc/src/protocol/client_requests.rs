@@ -41,6 +41,8 @@ pub enum ClientRequest {
     GetDetailedQueue,
     /// Open a separate connection for a stream of complete split snapshots.
     SubscribeSegments,
+    /// Dedicated stream for optional adaptive policy telemetry.
+    SubscribeSegmentPolicies,
     GetSnapshot {
         task_id: Option<String>,
     },
