@@ -12,6 +12,9 @@ pub struct DownloadInfo {
     /// Planned destination; may change before atomic publication. Not proof of ownership.
     #[serde(default)]
     pub destination_path: Option<String>,
+    /// Original response/URL-derived name before collision handling, when recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_filename: Option<String>,
     /// Whether this server provided enough information for safe HTTP resume.
     #[serde(default)]
     pub resume_supported: bool,
@@ -133,6 +136,7 @@ mod tests {
     fn legacy_queue_task_deserializes_without_connection_telemetry() {
         let json = r#"{"url":"https://example.test/file","state":"paused","filename":null,"downloaded":1,"total":10,"speed_bps":0,"final_path":null}"#;
         let task: DownloadInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(task.suggested_filename, None);
         assert_eq!(task.requested_connections, None);
         assert_eq!(task.active_connections, None);
         assert_eq!(task.segment_count, None);
@@ -165,7 +169,7 @@ mod tests {
 
     #[test]
     fn progress_update_roundtrips() {
-        let task: DownloadInfo = serde_json::from_str(r#"{"url":"task","state":"downloading","filename":"file.bin","downloaded":3,"total":10,"speed_bps":7,"final_path":null,"destination_path":"/Downloads/file.bin","partial_name":".rget-1.part"}"#).unwrap();
+        let task: DownloadInfo = serde_json::from_str(r#"{"url":"task","state":"downloading","filename":"file.bin","downloaded":3,"total":10,"speed_bps":7,"final_path":null,"destination_path":"/Downloads/file.bin","suggested_filename":"original.bin","partial_name":".rget-1.part"}"#).unwrap();
         let event = DaemonEvent::ProgressUpdate { task_id: task.url.clone(), task };
         let json = serde_json::to_string(&event).unwrap();
         assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
@@ -176,7 +180,7 @@ mod tests {
         let event = DaemonEvent::DetailedQueue { tasks: vec![DownloadInfo {
             url: "https://example.test/file".into(), state: "downloading".into(),
             filename: Some("file".into()), downloaded: 42, total: Some(100),
-            speed_bps: 12, final_path: None, destination_path: None, resume_supported: false, partial_name: None,
+            speed_bps: 12, final_path: None, destination_path: None, suggested_filename: None, resume_supported: false, partial_name: None,
          requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false }] };
         let json = serde_json::to_string(&event).unwrap();
         assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);

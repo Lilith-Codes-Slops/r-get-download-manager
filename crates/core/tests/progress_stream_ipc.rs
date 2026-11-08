@@ -57,6 +57,7 @@ fn progress_stream_reports_data_completion_reconnect_and_removal() {
     assert!(matches!(daemon.request(ClientRequest::AddTask { url: url.clone(), mirrors: vec![], connections: 1, extract: false, category: None, not_before: None }), DaemonEvent::TaskStateChanged { .. }));
     let active = next_task(&mut stream, &url, |task| task.downloaded == 3);
     assert_eq!(active.total, Some(6)); assert_eq!(active.filename.as_deref(), Some("stream.bin"));
+    assert_eq!(active.suggested_filename.as_deref(), Some("stream.bin"));
     assert!(active.destination_path.as_deref().is_some_and(|path| path.ends_with("stream.bin")));
     assert!(active.final_path.is_none());
     let mut second = daemon.stream(&ClientRequest::SubscribeProgress);

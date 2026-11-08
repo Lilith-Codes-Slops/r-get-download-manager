@@ -146,6 +146,7 @@ fn delete_completed_or_missing_file_and_failed_collision() {
     let (url, release, server) = serve(false, "existing.bin");
     f.add(&url); let task = f.wait(&url, "completed");
     assert_eq!(task.filename.as_deref(), Some("existing (1).bin"));
+    assert_eq!(task.suggested_filename.as_deref(), Some("existing.bin"));
     assert_eq!(task.destination_path.as_deref(), task.final_path.as_deref());
     let state = f.request(ClientRequest::GetSnapshot { task_id: Some(url.clone()) });
     assert!(matches!(state, DaemonEvent::TaskStateChanged { destination_path: Some(ref path), .. } if path.ends_with("existing (1).bin")));
@@ -215,6 +216,8 @@ fn concurrent_adds_with_same_name_publish_distinct_files() {
     wait_for_filename(&f, &a, "same.bin"); wait_for_filename(&f, &b, "same.bin");
     release_a.store(true, Ordering::SeqCst); release_b.store(true, Ordering::SeqCst);
     let ta = f.wait(&a, "completed"); let tb = f.wait(&b, "completed");
+    assert_eq!(ta.suggested_filename.as_deref(), Some("same.bin"));
+    assert_eq!(tb.suggested_filename.as_deref(), Some("same.bin"));
     let pa = ta.final_path.unwrap(); let pb = tb.final_path.unwrap();
     assert_ne!(pa, pb);
     assert_eq!(std::fs::read(&pa).unwrap(), b"first"); assert_eq!(std::fs::read(&pb).unwrap(), b"second");
@@ -235,6 +238,7 @@ fn late_collision_on_first_suffix_advances_to_second_suffix() {
     release.store(true, Ordering::SeqCst);
     let task = f.wait(&url, "completed");
     assert_eq!(task.filename.as_deref(), Some("late (2).bin"));
+    assert_eq!(task.suggested_filename.as_deref(), Some("late.bin"));
     assert_eq!(std::fs::read(f.root.join("Downloads/late.bin")).unwrap(), b"original");
     assert_eq!(std::fs::read(f.root.join("Downloads/late (1).bin")).unwrap(), b"other");
     assert_eq!(std::fs::read(f.root.join("Downloads/late (2).bin")).unwrap(), b"download");

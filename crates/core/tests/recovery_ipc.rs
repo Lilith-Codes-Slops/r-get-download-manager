@@ -124,7 +124,8 @@ fn run_recovery(mode: u8) {
         if mode == 2 { std::fs::write(&sidecar, b"corrupt").unwrap(); }
         if mode == 3 { std::fs::remove_file(&sidecar).unwrap(); }
         assert!(matches!(f.request(&ClientRequest::AddTask { url: url.clone(), mirrors: vec![], connections: 1, extract: false, category: None, not_before: None }), DaemonEvent::TaskStateChanged { .. }));
-        f.wait_for(&url, "completed");
+        let completed = f.wait_for(&url, "completed");
+        assert_eq!(completed.suggested_filename.as_deref(), Some("file.bin"));
         let name = if mode == 1 { "file.bin" } else { "file (1).bin" };
         assert_eq!(std::fs::read(f.root.join("Downloads").join(name)).unwrap(), b"abcdefghijkl");
         if mode == 1 { assert!(!f.root.join("Downloads/file (1).bin").exists()); }

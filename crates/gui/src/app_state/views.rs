@@ -40,6 +40,10 @@ impl AppState {
                 let name = task.filename.as_deref().unwrap_or_else(|| task.url.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(&task.url));
                 ui.horizontal(|ui| {
                     if ui.selectable_label(selected, RichText::new(name).strong()).clicked() { self.selected_task = Some(task.url.clone()); }
+                    if auto_renamed(task) {
+                        ui.label(RichText::new("Renamed").small().color(Color32::from_rgb(232, 171, 92)))
+                            .on_hover_text(format!("Original suggestion: {}", task.suggested_filename.as_deref().unwrap_or("")));
+                    }
                     ui.label(RichText::new(&task.state).weak());
                     ui.label(format!("{}/s", format_bytes(task.speed_bps)));
                     ui.label(format!("Workers: {} / {} requested", count(self.live_segments.active_workers(task).or(task.active_connections)), count(task.requested_connections)));
@@ -76,6 +80,7 @@ impl AppState {
                 ui.label(RichText::new(&task.url).small());
                 egui::Grid::new("details_grid").num_columns(2).spacing([24.0, 6.0]).show(ui, |ui| {
                     metric(ui, "Status", &task.state);
+                    if auto_renamed(task) { if let Some(name) = &task.suggested_filename { metric(ui, "Original suggestion", name); } }
                     metric(ui, "Progress", &format!("{} / {}", format_bytes(task.downloaded), task.total.map(format_bytes).unwrap_or_else(|| "Unknown".into())));
                     metric(ui, "Download rate", &format!("{}/s (average)", format_bytes(task.speed_bps)));
                     let eta = task.total.and_then(|total| if task.speed_bps > 0 { Some(total.saturating_sub(task.downloaded) / task.speed_bps) } else { None });

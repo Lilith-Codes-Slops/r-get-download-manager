@@ -141,6 +141,9 @@ impl eframe::App for AppState {
 fn add_request(url: String, connections: u8) -> ClientRequest {
     ClientRequest::AddTask { url, mirrors: vec![], connections: connections.clamp(1, 32), extract: false, category: None, not_before: None }
 }
+fn auto_renamed(task: &DownloadInfo) -> bool {
+    matches!((&task.suggested_filename, &task.filename), (Some(original), Some(actual)) if original != actual)
+}
 fn count(value: Option<u8>) -> String { value.map(|n| n.to_string()).unwrap_or_else(|| "Unknown".into()) }
 fn unavailable(ui: &mut egui::Ui, label: &str, reason: &str) {
     ui.add_enabled(false, egui::Button::new(label)).on_hover_text(reason);
@@ -177,6 +180,17 @@ mod tests {
         assert!(matches!(add_request("https://example.test/file".into(), 8), ClientRequest::AddTask { connections: 8, .. }));
         assert!(matches!(add_request("https://example.test/file".into(), 0), ClientRequest::AddTask { connections: 1, .. }));
         assert!(matches!(add_request("https://example.test/file".into(), 33), ClientRequest::AddTask { connections: 32, .. }));
+    }
+    #[test]
+    fn renamed_badge_requires_a_known_different_suggestion() {
+        let mut task: DownloadInfo = serde_json::from_str(r#"{"url":"task","state":"downloading","filename":"file (1).bin","downloaded":0,"total":null,"speed_bps":0,"final_path":null}"#).unwrap();
+        assert!(!auto_renamed(&task));
+        task.suggested_filename = Some("file.bin".into());
+        assert!(auto_renamed(&task));
+        task.filename = Some("file.bin".into());
+        assert!(!auto_renamed(&task));
+        task.filename = None;
+        assert!(!auto_renamed(&task));
     }
     #[test]
     fn formats_transfer_values() {

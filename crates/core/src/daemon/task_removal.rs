@@ -114,7 +114,7 @@ mod tests {
         tokio::fs::write(&path, b"unrelated").await.unwrap();
         let mut task = DownloadInfo { url: "https://example.test".into(), state: "failed".into(),
             filename: Some("existing.bin".into()), downloaded: 0, total: None, speed_bps: 0,
-            final_path: None, destination_path: None, resume_supported: false, partial_name: None, requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false };
+            final_path: None, destination_path: None, suggested_filename: None, resume_supported: false, partial_name: None, requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false };
         remove_files_in(&task, &root).await.unwrap();
         assert_eq!(tokio::fs::read(&path).await.unwrap(), b"unrelated");
         task.final_path = Some(root.join("../outside").to_string_lossy().into_owned());

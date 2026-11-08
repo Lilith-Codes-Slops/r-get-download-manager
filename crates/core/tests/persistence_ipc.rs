@@ -80,7 +80,7 @@ fn completed_task_and_limits_survive_daemon_restart() {
     f.stop();
     f.start();
     let restored = request(&f.socket(), &ClientRequest::GetDetailedQueue);
-    assert!(matches!(restored, DaemonEvent::DetailedQueue { tasks } if tasks.iter().any(|task| task.url == url && task.state == "completed")));
+    assert!(matches!(restored, DaemonEvent::DetailedQueue { tasks } if tasks.iter().any(|task| task.url == url && task.state == "completed" && task.suggested_filename.as_deref() == Some("smoke.bin"))));
     let db = rusqlite::Connection::open(f.root.join("state/rget/queue.sqlite3")).unwrap();
     let rate: String = db.query_row("SELECT kbps FROM rget_rates_v1 WHERE id = ''", [], |row| row.get(0)).unwrap();
     assert_eq!(rate, "128");

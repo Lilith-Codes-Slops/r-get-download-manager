@@ -1,5 +1,8 @@
 # Manual live verification (Linux)
 
+For the controlled same-URL retry, collision and GUI badge checks, see
+[collision-live-verification.md](collision-live-verification.md).
+
 These are **instructions, not completed results**. Use an authorized, stable
 HTTP(S) test file of at least 1 GB with a trusted published SHA-256. You need
 space for the file, sufficient bandwidth, and a host that supports bounded byte

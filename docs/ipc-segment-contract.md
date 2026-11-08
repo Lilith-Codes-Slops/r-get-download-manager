@@ -120,3 +120,12 @@ connections or older clients. Because older strongly typed clients may reject
 unknown event variants, compatibility relies on the new stream being opt-in,
 not on their silently ignoring an unknown event. The GUI falls back to polling
 `GetDetailedQueue` if the subscription is unsupported or disconnected.
+
+### Original filename for collision badges
+
+`DownloadInfo.suggested_filename` is optional and records the original
+response- or URL-derived filename before collision handling. Compare it with
+`filename` to show a rename indicator; while a task is active, `filename` is
+still a planned name and may change at publication. If the suggestion is absent
+(for example, from an older daemon or task record), do not guess from the
+filename. The optional field is carried in queue and progress snapshots.

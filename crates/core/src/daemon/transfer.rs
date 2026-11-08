@@ -77,6 +77,7 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
             return Err("download canceled".into());
         }
         if let Some(task) = guard.get_mut(url) {
+            task.suggested_filename = Some(filename.to_owned());
             task.total = total;
             task.resume_supported = resume.is_some();
             task.active_connections = Some(if split { 0 } else { 1 });
