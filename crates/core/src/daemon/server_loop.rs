@@ -151,6 +151,10 @@ impl ServerLoop {
 
                                     match serde_json::from_slice::<ClientRequest>(&payload) {
                                         Ok(req) => {
+                                            if matches!(&req, ClientRequest::SubscribeSegments) {
+                                                super::segment_events::subscribe(stream).await;
+                                                return;
+                                            }
                                             if !matches!(&req, ClientRequest::GetDetailedQueue) { eprintln!("received: {req:?}"); }
                                             let should_save = matches!(&req, ClientRequest::AddTask { .. } | ClientRequest::Pause { .. } | ClientRequest::Resume { .. } | ClientRequest::Cancel { .. } | ClientRequest::RemoveTask { .. } | ClientRequest::SetLimit { .. } | ClientRequest::SetConnections { .. });
                                             let reply = match req {

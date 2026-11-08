@@ -39,6 +39,8 @@ pub enum ClientRequest {
     ListQueue,
     /// Structured queue with transfer telemetry for GUI clients.
     GetDetailedQueue,
+    /// Open a separate connection for a stream of complete split snapshots.
+    SubscribeSegments,
     GetSnapshot {
         task_id: Option<String>,
     },

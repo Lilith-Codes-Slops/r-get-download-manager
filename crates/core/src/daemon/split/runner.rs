@@ -27,6 +27,8 @@ pub(super) async fn run_checkpointed(
     let map = prepared.map;
     let file = prepared.file;
     checkpoint.save(&map, &file, &store, &tasks).await?;
+    let publisher = crate::daemon::segment_events::Publisher::new(url.clone(), partial_name.clone());
+    publisher.publish(map.lock().await.progress());
     let mut last_time = Instant::now();
     let mut last_bytes: u64 = checkpoint.record.segments.iter().map(|s| s.downloaded).sum();
     let progress = crate::daemon::progress::ProgressMeter::new(last_bytes);
@@ -38,6 +40,7 @@ pub(super) async fn run_checkpointed(
                 // The previous supervisor, if any, has joined every worker. Sync
                 // and persist the verified map before exposing the paused state.
                 checkpoint.save(&map, &file, &store, &tasks).await?;
+                publisher.publish(map.lock().await.progress());
                 last_bytes = checkpoint.record.segments.iter().map(|s| s.downloaded).sum();
                 last_time = Instant::now();
                 {
@@ -81,10 +84,12 @@ pub(super) async fn run_checkpointed(
                     }
                 }
                 _ = timer.tick() => {
-                    let (bytes, active, segments, rejected) = {
+                    let (bytes, active, segments, rejected, progress_snapshot) = {
                         let map = map.lock().await;
-                        (map.records().iter().map(|s| s.downloaded).sum(), map.active_count(), map.segment_count(), map.was_rejected())
+                        let progress = map.progress();
+                        (progress.iter().map(|s| s.downloaded).sum(), map.active_count(), map.segment_count(), map.was_rejected(), progress)
                     };
+                    publisher.publish(progress_snapshot);
                     if let Some(task) = tasks.lock().await.get_mut(&url) {
                         if task.partial_name.as_deref() == Some(partial_name.as_str()) && task.state == "downloading" {
                             progress.update(task, bytes);
@@ -107,6 +112,7 @@ pub(super) async fn run_checkpointed(
                 }
             }
         };
+        publisher.publish(map.lock().await.progress());
         let (rejected, segments) = {
             let map = map.lock().await;
             (map.was_rejected(), map.segment_count())

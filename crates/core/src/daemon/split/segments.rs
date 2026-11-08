@@ -118,6 +118,13 @@ impl SegmentMap {
         segment.status = if segment.downloaded == segment.end - segment.start { Status::Done } else { Status::Pending };
         Ok(())
     }
+    pub fn progress(&self) -> Vec<downloader_ipc::SegmentProgress> {
+        self.segments.iter().enumerate().map(|(index, segment)| downloader_ipc::SegmentProgress {
+            segment_id: index as u16, start_byte: segment.start, end_byte: segment.end,
+            downloaded: segment.downloaded,
+            status: match segment.status { Status::Pending => "pending", Status::Active(_) => "active", Status::Done => "done" }.into(),
+        }).collect()
+    }
     pub fn records(&self) -> Vec<super::checkpoint::SegmentRecord> {
         let mut records: Vec<_> = self.segments.iter().map(|segment| super::checkpoint::SegmentRecord {
             start: segment.start, end: segment.end, downloaded: segment.downloaded,

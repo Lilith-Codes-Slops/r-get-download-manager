@@ -203,3 +203,40 @@ fn single_stream_resize_is_explicitly_rejected() {
     assert!(matches!(response, DaemonEvent::TaskFailed { .. }), "{response:?}");
     assert_eq!(f.task(&server.url).requested_connections, Some(1));
 }
+
+#[test]
+fn segment_subscription_streams_progress_without_queue_requests() {
+    let server = HttpServer::new();
+    let mut f = Fixture::new(); f.start(); f.add(&server.url, 2);
+    f.wait_checkpoint(&server.url);
+    let mut stream = UnixStream::connect(f.root.join("run/rget.sock")).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+    FrameEncoder::write_frame(&mut stream, &ClientRequest::SubscribeSegments).unwrap();
+    let reset: DaemonEvent = FrameDecoder::read_frame(&mut stream).unwrap();
+    assert!(matches!(reset, DaemonEvent::SegmentsReset));
+    let initial: DaemonEvent = FrameDecoder::read_frame(&mut stream).unwrap();
+    let (generation, mut segments) = match initial {
+        DaemonEvent::SegmentsSnapshot { task_id, generation, segments } => { assert_eq!(task_id, server.url); (generation, segments) }
+        other => panic!("missing initial layout: {other:?}"),
+    };
+    let before: u64 = segments.iter().map(|segment| segment.downloaded).sum();
+    assert_eq!(segments.len(), 2);
+    server.release.store(true, Ordering::SeqCst);
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut advanced = false;
+    loop {
+        let event: DaemonEvent = FrameDecoder::read_frame(&mut stream).unwrap();
+        match event {
+            DaemonEvent::SegmentsSnapshot { task_id, segments: new, .. } if task_id == server.url => segments = new,
+            DaemonEvent::SegmentUpdate { task_id, segment_id, downloaded, generation: Some(gen), .. } if task_id == server.url && gen == generation => {
+                if let Some(segment) = segments.iter_mut().find(|s| s.segment_id.to_string() == segment_id) { segment.downloaded = downloaded; }
+            }
+            DaemonEvent::SegmentsRemoved { task_id, .. } if task_id == server.url => break,
+            _ => {}
+        }
+        advanced |= segments.iter().map(|segment| segment.downloaded).sum::<u64>() > before;
+        assert!(Instant::now() < deadline, "segment stream stalled");
+    }
+    assert!(advanced, "no live progress event arrived");
+    f.wait(&server.url, "completed");
+}

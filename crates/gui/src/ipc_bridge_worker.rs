@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 pub enum BridgeMessage {
     Event(DaemonEvent),
     ConnectionError(String),
+    SegmentEvent(DaemonEvent),
+    SegmentsDisconnected,
 }
 
 pub struct IpcBridgeWorker {
@@ -14,9 +16,11 @@ pub struct IpcBridgeWorker {
 }
 
 impl IpcBridgeWorker {
-    pub fn start() -> Self {
+    pub fn start(ctx: eframe::egui::Context) -> Self {
         let (requests, rx) = mpsc::channel();
         let (tx, updates) = mpsc::channel();
+        let segment_tx = tx.clone();
+        std::thread::spawn(move || segment_stream(segment_tx, ctx));
         std::thread::spawn(move || {
             let runtime = match tokio::runtime::Runtime::new() {
                 Ok(runtime) => runtime,
@@ -80,3 +84,29 @@ fn roundtrip(req: &ClientRequest) -> Result<DaemonEvent, String> {
 fn roundtrip(_req: &ClientRequest) -> Result<DaemonEvent, String> {
     Err("The daemon currently supports Linux only".into())
 }
+
+#[cfg(target_os = "linux")]
+fn segment_stream(tx: Sender<BridgeMessage>, ctx: eframe::egui::Context) {
+    use std::os::unix::net::UnixStream;
+    loop {
+        let result = (|| -> Result<(), String> {
+            let endpoint = EndpointPathResolver::resolve().map_err(|e| e.to_string())?;
+            let mut stream = UnixStream::connect(endpoint).map_err(|e| e.to_string())?;
+            stream.set_read_timeout(Some(Duration::from_secs(15))).map_err(|e| e.to_string())?;
+            stream.set_write_timeout(Some(Duration::from_secs(3))).map_err(|e| e.to_string())?;
+            FrameEncoder::write_frame(&mut stream, &ClientRequest::SubscribeSegments).map_err(|e| e.to_string())?;
+            loop {
+                let event: DaemonEvent = FrameDecoder::read_frame(&mut stream).map_err(|e| e.to_string())?;
+                if matches!(event, DaemonEvent::SegmentsHeartbeat) { continue; }
+                if tx.send(BridgeMessage::SegmentEvent(event)).is_err() { return Ok(()); }
+                ctx.request_repaint();
+            }
+        })();
+        let _ = result;
+        if tx.send(BridgeMessage::SegmentsDisconnected).is_err() { return; }
+        ctx.request_repaint();
+        std::thread::sleep(Duration::from_secs(5));
+    }
+}
+#[cfg(not(target_os = "linux"))]
+fn segment_stream(_tx: Sender<BridgeMessage>, _ctx: eframe::egui::Context) {}

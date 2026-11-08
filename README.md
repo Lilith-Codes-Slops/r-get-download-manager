@@ -85,7 +85,8 @@ downloads. The CLI can request 1–32 connections using
 `dl add <URL> --connections 2`; the GUI's Add download dialog selects 1–32
 (default 8). The task view shows the requested ceiling and sampled active
 workers, not TCP sockets; unavailable telemetry from older daemons is shown as
-unknown. Live connection changes are available only for split tasks; existing
+unknown. Split progress is delivered separately as throttled segment events;
+when the event stream is unavailable the GUI falls back to queue samples. Live connection changes are available only for split tasks; existing
 single-stream tasks cannot yet be converted to split mode. When a known-length
 resource advertises byte ranges and a strong ETag, the daemon probes an exact
 range and starts with segments of at least 1 MiB; idle workers may steal half

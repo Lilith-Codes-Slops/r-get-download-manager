@@ -44,8 +44,13 @@ impl AppState {
                     ui.label(format!("{}/s", format_bytes(task.speed_bps)));
                     ui.label(format!("Workers: {} / {} requested", count(task.active_connections), count(task.requested_connections)));
                 });
+                let live = self.live_segments.summary(task);
+                if let Some((segments, bytes, total)) = live {
+                    ui.label(format!("{segments} segments · {:.1}%", bytes as f64 / total as f64 * 100.0));
+                }
                 if let Some(total) = task.total.filter(|n| *n > 0) {
-                    ui.add(egui::ProgressBar::new((task.downloaded as f64 / total as f64).clamp(0.0, 1.0) as f32).show_percentage().desired_width(ui.available_width()));
+                    let downloaded = live.map(|(_, bytes, _)| bytes).unwrap_or(task.downloaded);
+                    ui.add(egui::ProgressBar::new((downloaded as f64 / total as f64).clamp(0.0, 1.0) as f32).show_percentage().desired_width(ui.available_width()));
                 } else { ui.label(format!("{} downloaded · total unknown", format_bytes(task.downloaded))); }
                 ui.separator();
             }
@@ -110,9 +115,11 @@ impl AppState {
                 egui::Grid::new("network_grid").num_columns(2).show(ui, |ui| {
                     metric(ui, "Requested maximum", &count(task.requested_connections));
                     metric(ui, "Active workers", &count(task.active_connections));
-                    if let Some(segments) = task.segment_count {
+                    if let Some((segments, bytes, total)) = self.live_segments.summary(task) {
+                        metric(ui, "Segments", &format!("{segments} · {:.1}% (live)", bytes as f64 / total as f64 * 100.0));
+                    } else if let Some(segments) = task.segment_count {
                         let overall = task.total.filter(|n| *n > 0).map(|total| format!("{:.1}% overall", (task.downloaded as f64 / total as f64 * 100.0).clamp(0.0, 100.0))).unwrap_or_else(|| "progress unknown".into());
-                        metric(ui, "Segments", &format!("{segments} · {overall}"));
+                        metric(ui, "Segments", &format!("{segments} · {overall} (queue sample)"));
                     }
                 });
                 ui.label("Active counts are workers assigned to ranges, not a count of TCP sockets. Counts are sampled and may be lower during startup, throttling, or when work is limited.");

@@ -32,6 +32,16 @@ pub struct DownloadInfo {
     pub live_connections_supported: bool,
 }
 
+/// A half-open byte range and committed progress, not socket activity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SegmentProgress {
+    pub segment_id: u16,
+    pub start_byte: u64,
+    pub end_byte: u64,
+    pub downloaded: u64,
+    pub status: String,
+}
+
 /// Broadcast events sent from the daemon to subscribed clients.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -49,7 +59,17 @@ pub enum DaemonEvent {
         end_byte: u64,
         downloaded: u64,
         mirror_id: Option<String>,
+        /// Optional for compatibility with older event producers.
+        #[serde(default)]
+        generation: Option<String>,
+        #[serde(default)]
+        status: Option<String>,
     },
+    /// Complete replacement for a task's changing segment layout.
+    SegmentsSnapshot { task_id: String, generation: String, segments: Vec<SegmentProgress> },
+    SegmentsRemoved { task_id: String, generation: String },
+    SegmentsReset,
+    SegmentsHeartbeat,
     ConnectionsChanged { task_id: String, requested: u8 },
     TaskStateChanged {
         task_id: String,
@@ -100,6 +120,12 @@ mod tests {
         assert_eq!(task.active_connections, None);
         assert_eq!(task.segment_count, None);
         assert_eq!(task.connection_note, None);
+    }
+
+    #[test]
+    fn legacy_segment_update_deserializes_without_new_fields() {
+        let json = r#"{"event":"segment_update","task_id":"a","segment_id":"0","start_byte":0,"end_byte":5,"downloaded":2,"mirror_id":null}"#;
+        assert!(matches!(serde_json::from_str::<DaemonEvent>(json).unwrap(), DaemonEvent::SegmentUpdate { generation: None, status: None, .. }));
     }
 
     #[test]
