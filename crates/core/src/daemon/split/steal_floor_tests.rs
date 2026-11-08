@@ -19,7 +19,7 @@ fn measured_latency_sets_minimum_transferred_range() {
 #[test]
 fn donor_at_floor_is_not_stolen_but_rejection_unblocks_it() {
     for status in [429, 503] {
-        let mut map = SegmentMap::new(16 * MIB, 2).unwrap();
+        let mut map = SegmentMap::new(6 * MIB, 2).unwrap();
         map.note_rtt(250.0);
         let (index, start, _) = map.claim(0).unwrap();
         assert_eq!(map.stealable_slots(), 0);
@@ -37,10 +37,10 @@ fn donor_at_floor_is_not_stolen_but_rejection_unblocks_it() {
 
 #[test]
 fn sharp_slowdown_temporarily_relaxes_floor() {
-    let mut map = SegmentMap::new(16 * MIB, 2).unwrap();
+    let mut map = SegmentMap::new(6 * MIB, 2).unwrap();
+    map.note_goodput(10.0 * MIB as f64);
     map.note_rtt(250.0);
     map.claim(0).unwrap();
-    map.note_goodput(10.0 * MIB as f64);
     assert_eq!(map.stealable_slots(), 0);
     map.note_goodput(5.0 * MIB as f64);
     assert!(map.stealable_slots() > 0);
@@ -53,7 +53,7 @@ async fn live_response_latency_drives_the_floor() {
     use crate::daemon::{bandwidth::BandwidthLimiter, range::ResumeInfo};
     use std::{sync::Arc, time::Duration};
     use tokio::{io::{AsyncReadExt, AsyncWriteExt}, sync::{watch, Mutex}};
-    let total = 16 * MIB;
+    let total = 6 * MIB;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/file", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {

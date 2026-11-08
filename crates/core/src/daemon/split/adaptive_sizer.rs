@@ -28,7 +28,11 @@ impl AdaptiveSizer {
 
     /// Accept only finite, nonnegative samples; no measurement is different from zero throughput.
     /// Call on segment completion or a measurement interval; rejections use `reject` immediately.
+    #[cfg(test)]
     pub fn observe(&mut self, goodput_bps: Option<f64>, rtt_ms: Option<f64>) -> bool {
+        self.observe_with_growth(goodput_bps, rtt_ms, true)
+    }
+    pub fn observe_with_growth(&mut self, goodput_bps: Option<f64>, rtt_ms: Option<f64>, allow_growth: bool) -> bool {
         let goodput = goodput_bps.filter(|v| v.is_finite() && *v >= 0.0);
         let rtt = rtt_ms.filter(|v| v.is_finite() && *v >= 0.0);
         if let Some(value) = rtt { self.recent_rtt_ms = Some(ema(self.recent_rtt_ms, value)); }
@@ -41,11 +45,12 @@ impl AdaptiveSizer {
             self.set(self.target / 2, Reason::Slowdown);
             // Do not repeatedly halve for one historical spike.
             self.recent_peak = goodput.unwrap_or(0.0);
-        } else if goodput.is_some() && self.recent_goodput.is_some_and(|v| v >= HIGH_GOODPUT)
+        } else if allow_growth && goodput.is_some() && self.recent_goodput.is_some_and(|v| v >= HIGH_GOODPUT)
             && self.recent_rtt_ms.is_some_and(|v| v < 80.0) {
             self.set(self.target.saturating_mul(3) / 2, Reason::Goodput);
         } else if (goodput.is_some() || rtt.is_some()) && self.recent_rtt_ms.is_some_and(|v| v > 200.0) {
-            self.set((self.target * 7 / 10).max(2 * MIB), Reason::Rtt);
+            let target = (self.target * 7 / 10).max(2 * MIB);
+            if allow_growth || target <= self.target { self.set(target, Reason::Rtt); }
         }
         slowdown
     }
