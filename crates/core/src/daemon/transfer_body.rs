@@ -21,6 +21,7 @@ pub(super) async fn receive(
         let state = *control.borrow();
         if state == TransferControl::Paused {
             response.take();
+            if let Some(task) = tasks.lock().await.get_mut(url) { task.active_connections = Some(0); }
             if let Some(checkpoint) = checkpoint.as_deref_mut() { checkpoint.save(file, true).await?; }
         }
         if !wait_running(tasks, url, control).await { return Err("download canceled".into()); }
@@ -40,6 +41,7 @@ pub(super) async fn receive(
             validate(&resp, info, downloaded)?;
             resp
         };
+        if let Some(task) = tasks.lock().await.get_mut(url) { task.active_connections = Some(1); }
         let mut stream = resp.bytes_stream();
         loop {
             if *control.borrow() != TransferControl::Running { break; }

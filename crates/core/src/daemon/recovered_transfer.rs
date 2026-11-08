@@ -103,7 +103,7 @@ pub(super) async fn spawn(item: PreparedRecovery, tasks: Tasks, controls: Contro
         let result = run(item, tasks.clone(), limiter.clone(), store.clone(), receiver.clone()).await;
         let mut guard = tasks.lock().await;
         if let Some(task) = guard.get_mut(&task_id) {
-            task.speed_bps = 0;
+            task.speed_bps = 0; task.active_connections = Some(0);
             if *receiver.borrow() == TransferControl::Canceled {
                 task.state = "canceled".into();
                 task.resume_supported = false;

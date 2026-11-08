@@ -68,7 +68,15 @@ fn accepts_every_connection_count_and_falls_back_for_small_non_range_files() {
     loop {
         let DaemonEvent::DetailedQueue { tasks } = daemon.request(ClientRequest::GetDetailedQueue) else { panic!("missing queue") };
         assert!(tasks.iter().all(|task| !task.state.starts_with("failed:")), "{tasks:?}");
-        if tasks.len() == 32 && tasks.iter().all(|task| task.state == "completed") { break; }
+        if tasks.len() == 32 && tasks.iter().all(|task| task.state == "completed") {
+            for task in &tasks {
+                let requested: u8 = task.url.rsplit('-').next().unwrap().parse().unwrap();
+                assert_eq!(task.requested_connections, Some(requested));
+                assert_eq!(task.active_connections, Some(0));
+                if requested > 1 { assert!(task.connection_note.as_deref().is_some_and(|note| note.contains("one stream"))); }
+            }
+            break;
+        }
         assert!(Instant::now() < deadline, "downloads did not complete: {tasks:?}");
         std::thread::sleep(Duration::from_millis(25));
     }

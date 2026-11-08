@@ -82,7 +82,10 @@ systemctl --user is-active rget.service
 
 The Linux daemon supports single-stream and experimental split HTTP/HTTPS
 downloads. The CLI can request 1–32 connections using
-`dl add <URL> --connections 2`; the GUI still requests one. When a known-length
+`dl add <URL> --connections 2`; the GUI's Add download dialog selects 1–32
+(default 8). The task view shows the requested ceiling and sampled active
+workers, not TCP sockets; unavailable telemetry from older daemons is shown as
+unknown. Runtime connection changes are not yet supported. When a known-length
 resource advertises byte ranges and a strong ETag, the daemon probes an exact
 range and starts with segments of at least 1 MiB; idle workers may steal half
 of a sufficiently large unfinished range. Each resulting remaining half is at

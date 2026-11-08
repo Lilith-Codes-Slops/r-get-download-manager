@@ -86,7 +86,7 @@ pub(in crate::daemon) async fn spawn(prepared: PreparedSplit, root: &Path, tasks
         let result = run(prepared, partial, client, tasks.clone(), limiter.clone(), store.clone(), receiver.clone()).await;
         let mut guard = tasks.lock().await;
         if let Some(task) = guard.get_mut(&id) {
-            task.speed_bps = 0; task.resume_supported = false;
+            task.speed_bps = 0; task.resume_supported = false; task.active_connections = Some(0);
             if *receiver.borrow() == TransferControl::Canceled { task.state = "canceled".into(); }
             else { match result {
                 Ok(path) => { task.state = "completed".into(); task.final_path = Some(path.to_string_lossy().into_owned()); task.partial_name = None; }

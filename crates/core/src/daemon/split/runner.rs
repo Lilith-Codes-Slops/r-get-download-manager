@@ -45,6 +45,7 @@ pub(super) async fn run_checkpointed(
                     if *rx.borrow() == TransferControl::Paused {
                         let task = guard.get_mut(&url).ok_or("split task disappeared")?;
                         task.downloaded = last_bytes; task.speed_bps = 0; task.state = "paused".into();
+                        task.active_connections = Some(0);
                     }
                 }
                 store.save(&tasks, &limiter).await.map_err(|e| e.to_string())?;
@@ -78,10 +79,15 @@ pub(super) async fn run_checkpointed(
                     }
                 }
                 _ = timer.tick() => {
-                    let bytes: u64 = map.lock().await.records().iter().map(|s| s.downloaded).sum();
+                    let (bytes, active, segments, rejected) = {
+                        let map = map.lock().await;
+                        (map.records().iter().map(|s| s.downloaded).sum(), map.active_count(), map.segment_count(), map.was_rejected())
+                    };
                     if let Some(task) = tasks.lock().await.get_mut(&url) {
                         if task.partial_name.as_deref() == Some(partial_name.as_str()) && task.state == "downloading" {
                             progress.update(task, bytes);
+                            task.active_connections = Some(active); task.segment_count = Some(segments);
+                            if rejected { task.connection_note = Some("Server rejected a range request (HTTP 429/503); concurrency may have been reduced.".into()); }
                         }
                     }
                     if bytes.saturating_sub(last_bytes) >= 8 * 1024 * 1024 || last_time.elapsed() >= Duration::from_secs(5) {
@@ -96,9 +102,20 @@ pub(super) async fn run_checkpointed(
                 }
             }
         };
+        let (rejected, segments) = {
+            let map = map.lock().await;
+            (map.was_rejected(), map.segment_count())
+        };
+        if let Some(task) = tasks.lock().await.get_mut(&url) {
+            task.segment_count = Some(segments);
+            if rejected { task.connection_note = Some("Server rejected a range request (HTTP 429/503); concurrency may have been reduced.".into()); }
+        }
         if control.as_ref().is_some_and(|rx| *rx.borrow() == TransferControl::Canceled) { return Err("download canceled".into()); }
         match outcome {
-            Ok(()) => complete = true,
+            Ok(()) => {
+                complete = true;
+                if let Some(task) = tasks.lock().await.get_mut(&url) { task.active_connections = Some(0); }
+            },
             Err(error) if error == "split stopped" && control.as_ref().is_some_and(|rx| *rx.borrow() == TransferControl::Paused) => {},
             Err(error) => return Err(error),
         }

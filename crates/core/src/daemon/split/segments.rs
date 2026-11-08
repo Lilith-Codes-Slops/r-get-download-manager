@@ -10,7 +10,7 @@ enum Status { Pending, Active(usize), Done }
 struct Segment { start: u64, end: u64, downloaded: u64, status: Status, hash: blake3::Hasher, in_flight: Option<u64> }
 
 // Indices are stable: stealing appends a segment, never inserts/removes one.
-pub(super) struct SegmentMap { segments: Vec<Segment> }
+pub(super) struct SegmentMap { segments: Vec<Segment>, rejected: bool }
 
 impl SegmentMap {
     pub fn new(total: u64, requested: u8) -> Result<Self, String> {
@@ -27,7 +27,7 @@ impl SegmentMap {
             segments.push(Segment { start, end, downloaded: 0, status: Status::Pending, hash: blake3::Hasher::new(), in_flight: None });
             start = end;
         }
-        Ok(Self { segments })
+        Ok(Self { segments, rejected: false })
     }
 
     pub fn claim(&mut self, owner: usize) -> Option<(usize, u64, u64)> {
@@ -132,8 +132,12 @@ impl SegmentMap {
             start: record.start, end: record.end, downloaded: record.downloaded,
             status: if record.downloaded == record.end - record.start { Status::Done } else { Status::Pending }, hash, in_flight: None,
         }).collect();
-        Ok(Self { segments })
+        Ok(Self { segments, rejected: false })
     }
+    pub fn active_count(&self) -> u8 { self.segments.iter().filter(|s| matches!(s.status, Status::Active(_))).count() as u8 }
+    pub fn segment_count(&self) -> u16 { self.segments.len() as u16 }
+    pub fn note_rejection(&mut self) { self.rejected = true; }
+    pub fn was_rejected(&self) -> bool { self.rejected }
     pub fn pending_count(&self) -> usize { self.segments.iter().filter(|segment| segment.status == Status::Pending).count() }
     pub fn is_complete(&self) -> bool { self.segments.iter().all(|segment| segment.status == Status::Done) }
 }

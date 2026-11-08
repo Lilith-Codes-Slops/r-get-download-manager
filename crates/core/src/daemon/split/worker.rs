@@ -58,6 +58,7 @@ async fn receive_range(ctx: &mut Context, segment: usize, mut offset: u64, reque
     // identity/range mismatches retain the existing fail-closed behavior.
     if response.url() != &ctx.info.url { return Err(Failure::Fatal("range redirected to a different resource".into())); }
     if matches!(response.status(), reqwest::StatusCode::TOO_MANY_REQUESTS | reqwest::StatusCode::SERVICE_UNAVAILABLE) {
+        ctx.map.lock().await.note_rejection();
         return Err(Failure::Rejected);
     }
     crate::daemon::range::validate_bounded(&response, &ctx.info, offset, requested_end)?;

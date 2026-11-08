@@ -162,6 +162,9 @@ fn fixed_splits_survive_daemon_kill_and_resume_verified_ranges() {
     let server = HttpServer::new();
     let mut f = Fixture::new(); f.start(); f.add(&server.url, 2);
     let checkpoint = f.wait_checkpoint(&server.url);
+    let telemetry = f.task(&server.url); assert_eq!(telemetry.requested_connections, Some(2));
+    assert!(telemetry.active_connections.is_some_and(|count| (1..=2).contains(&count)));
+    assert_eq!(telemetry.segment_count, Some(2));
     f.stop();
     server.release.store(true, Ordering::SeqCst);
     f.start(); f.wait(&server.url, "completed");
@@ -258,6 +261,7 @@ fn paused_split_survives_restart_and_resumes_verified_ranges() {
     assert!(f.task(&server.url).resume_supported);
     assert!(matches!(f.request(ClientRequest::Pause { task_id: server.url.clone() }), DaemonEvent::TaskStateChanged { .. }));
     let paused = f.wait(&server.url, "paused");
+    assert_eq!(paused.active_connections, Some(0));
     let partial = f.root.join("Downloads").join(paused.partial_name.as_ref().unwrap());
     let before = std::fs::read(&partial).unwrap();
     std::thread::sleep(Duration::from_millis(300));

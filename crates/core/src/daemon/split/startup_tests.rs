@@ -21,7 +21,7 @@ fn published_split_requires_complete_per_range_hashes() {
         state.split_checkpoints.insert(id.into(), record);
         state.tasks.insert(id.into(), DownloadInfo { url: id.into(), state: "failed: interrupted".into(),
             filename: None, downloaded: 0, total: None, speed_bps: 0, final_path: None,
-            resume_supported: false, partial_name: Some(".rget-1-1.part".into()) });
+            resume_supported: false, partial_name: Some(".rget-1-1.part".into()), requested_connections: None, active_connections: None, segment_count: None, connection_note: None });
         assert!(startup::reconcile(&mut state, &dir).is_empty());
         if valid { assert_eq!(state.tasks[id].state, "completed"); }
         else { assert!(state.tasks[id].state.starts_with("failed:")); }

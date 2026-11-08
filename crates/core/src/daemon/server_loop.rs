@@ -164,7 +164,7 @@ impl ServerLoop {
                                                         if guard.get(&url).is_some_and(|state| !state.state.starts_with("failed:") && state.state != "canceled") {
                                                             DaemonEvent::TaskFailed { task_id: url, error: "task already exists".into() }
                                                         } else {
-                                                            guard.insert(url.clone(), DownloadInfo { url: url.clone(), state: "downloading".into(), filename: None, downloaded: 0, total: None, speed_bps: 0, final_path: None, resume_supported: false, partial_name: None });
+                                                            guard.insert(url.clone(), DownloadInfo { url: url.clone(), state: "downloading".into(), filename: None, downloaded: 0, total: None, speed_bps: 0, final_path: None, resume_supported: false, partial_name: None, requested_connections: Some(connections), active_connections: None, segment_count: None, connection_note: None });
                                                             let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(super::control::TransferControl::Running);
                                                             controls.lock().await.insert(url.clone(), cancel_tx);
                                                             drop(guard);
@@ -178,7 +178,7 @@ impl ServerLoop {
                                                                 let result = super::transfer::download_file(&task_id, connections, task_states.clone(), task_limiter, transfer_store, cancel_rx.clone()).await;
                                                                 let mut guard = task_states.lock().await;
                                                                 if let Some(task) = guard.get_mut(&task_id) {
-                                                                    task.speed_bps = 0;
+                                                                    task.speed_bps = 0; task.active_connections = Some(0);
                                                                     if *cancel_rx.borrow() == super::control::TransferControl::Canceled {
                                                                         task.state = "canceled".into();
                                                                         task.resume_supported = false;

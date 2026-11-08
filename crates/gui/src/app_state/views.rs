@@ -42,6 +42,7 @@ impl AppState {
                     if ui.selectable_label(selected, RichText::new(name).strong()).clicked() { self.selected_task = Some(task.url.clone()); }
                     ui.label(RichText::new(&task.state).weak());
                     ui.label(format!("{}/s", format_bytes(task.speed_bps)));
+                    ui.label(format!("Workers: {} / {} requested", count(task.active_connections), count(task.requested_connections)));
                 });
                 if let Some(total) = task.total.filter(|n| *n > 0) {
                     ui.add(egui::ProgressBar::new((task.downloaded as f64 / total as f64).clamp(0.0, 1.0) as f32).show_percentage().desired_width(ui.available_width()));
@@ -96,15 +97,24 @@ impl AppState {
                         self.pending_delete = Some(task.url.clone());
                     }
                     if (task.state.starts_with("failed:") || task.state == "canceled") && ui.button("Retry").clicked() {
-                        self.send(add_request(task.url.clone()));
+                        self.send(add_request(task.url.clone(), task.requested_connections.unwrap_or(1)));
                     }
                 });
             }
             Detail::Network => {
                 ui.heading("Network & splits");
-                ui.label("The GUI currently adds downloads with one connection; experimental fixed splits are CLI-only.");
+                egui::Grid::new("network_grid").num_columns(2).show(ui, |ui| {
+                    metric(ui, "Requested maximum", &count(task.requested_connections));
+                    metric(ui, "Active workers", &count(task.active_connections));
+                    if let Some(segments) = task.segment_count {
+                        let overall = task.total.filter(|n| *n > 0).map(|total| format!("{:.1}% overall", (task.downloaded as f64 / total as f64 * 100.0).clamp(0.0, 100.0))).unwrap_or_else(|| "progress unknown".into());
+                        metric(ui, "Segments", &format!("{segments} · {overall}"));
+                    }
+                });
+                ui.label("Active counts are workers assigned to ranges, not a count of TCP sockets. Counts are sampled and may be lower during startup, throttling, or when work is limited.");
+                if let Some(note) = &task.connection_note { ui.label(note); }
                 unavailable(ui, "Configure speed limit", "Not yet supported in the GUI.");
-                unavailable(ui, "Configure connections", "Connection selection is not yet available in the GUI.");
+                unavailable(ui, "Configure connections", "Changing connections during a download is not implemented yet.");
             }
             Detail::Actions => {
                 ui.heading("Post-download actions");
@@ -162,11 +172,16 @@ impl AppState {
             egui::Window::new("Add download").open(&mut open).collapsible(false).show(ctx, |ui| {
                 ui.label("Paste an HTTP or HTTPS URL");
                 ui.add(egui::TextEdit::singleline(&mut self.url).hint_text("https://example.com/file.zip").desired_width(420.0));
+                ui.horizontal(|ui| {
+                    ui.label("Maximum connections");
+                    ui.add(egui::DragValue::new(&mut self.connections).range(1..=32));
+                });
+                ui.label("Actual worker count may be lower; unsupported or small resources use one stream.");
                 ui.label("Files are saved to Downloads. Existing files are not overwritten.");
                 if ui.add_enabled(self.connected && !self.url.trim().is_empty(), egui::Button::new("Start download")).clicked() { submit = true; }
                 if !self.connected { ui.label("Waiting for the daemon to connect."); }
             });
-            if submit { let url = self.url.trim().to_string(); self.send(add_request(url)); self.url.clear(); open = false; self.view = View::Tasks; }
+            if submit { let url = self.url.trim().to_string(); self.send(add_request(url, self.connections)); self.url.clear(); open = false; self.view = View::Tasks; }
             self.add_open = open;
         }
         if let Some(id) = self.pending_delete.clone() {
@@ -205,7 +220,7 @@ impl AppState {
                 }
                 ui.separator();
                 ui.heading("Download engine");
-                ui.label("Connections: 1 in the GUI · fixed splits are CLI-only");
+                ui.label("Choose 1–32 connections when adding a download; runtime changes are not yet supported.");
                 ui.label("Theme selection lasts for this session.");
             });
             self.settings_open = open;

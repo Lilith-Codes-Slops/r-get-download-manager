@@ -71,8 +71,9 @@ async fn run(limit: usize, total: u64) -> (usize, bool, usize) {
     let info = ResumeInfo { etag: "\"v1\"".into(), total, url: reqwest::Url::parse(&url).unwrap() };
     let worker_peak = Arc::new(AtomicUsize::new(0));
     let (stop, _) = watch::channel(false);
+    let map = Arc::new(tokio::sync::Mutex::new(SegmentMap::new(total, 4).unwrap()));
     let inputs = adaptive::Inputs { client: reqwest::Client::new(), url, info,
-        file: file.clone(), map: Arc::new(tokio::sync::Mutex::new(SegmentMap::new(total, 4).unwrap())),
+        file: file.clone(), map: map.clone(),
         limiter: Arc::new(BandwidthLimiter::new()), stop, max: 4, peak_workers: Some(worker_peak.clone()) };
     tokio::time::timeout(std::time::Duration::from_secs(30), adaptive::supervise(inputs))
         .await.expect("adaptive transfer timed out").unwrap();
@@ -83,6 +84,7 @@ async fn run(limit: usize, total: u64) -> (usize, bool, usize) {
     std::fs::remove_file(path).unwrap();
     server.abort();
     let was_rejected = *rejected.borrow();
+    assert_eq!(map.lock().await.was_rejected(), was_rejected);
     (peak.load(Ordering::SeqCst), was_rejected, worker_peak.load(Ordering::SeqCst))
 }
 

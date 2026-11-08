@@ -33,6 +33,7 @@ pub struct AppState {
     settings_open: bool,
     pending_delete: Option<String>,
     url: String,
+    connections: u8,
     notice: Option<String>,
     connected: bool,
 }
@@ -44,7 +45,7 @@ impl AppState {
             selected_file: None, files: Vec::new(), last_files_refresh: Instant::now() - Duration::from_secs(10),
             view: View::Tasks, detail: Detail::Status, theme: Theme::System,
             sort: Sort::Name, descending: false, add_open: false, settings_open: false,
-            pending_delete: None, url: String::new(), notice: None, connected: false,
+            pending_delete: None, url: String::new(), connections: 8, notice: None, connected: false,
         }
     }
 
@@ -115,9 +116,10 @@ impl eframe::App for AppState {
     }
 }
 
-fn add_request(url: String) -> ClientRequest {
-    ClientRequest::AddTask { url, mirrors: vec![], connections: 1, extract: false, category: None, not_before: None }
+fn add_request(url: String, connections: u8) -> ClientRequest {
+    ClientRequest::AddTask { url, mirrors: vec![], connections: connections.clamp(1, 32), extract: false, category: None, not_before: None }
 }
+fn count(value: Option<u8>) -> String { value.map(|n| n.to_string()).unwrap_or_else(|| "Unknown".into()) }
 fn unavailable(ui: &mut egui::Ui, label: &str, reason: &str) {
     ui.add_enabled(false, egui::Button::new(label)).on_hover_text(reason);
 }
@@ -148,6 +150,12 @@ fn open_path(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn add_request_uses_selected_and_clamped_connections() {
+        assert!(matches!(add_request("https://example.test/file".into(), 8), ClientRequest::AddTask { connections: 8, .. }));
+        assert!(matches!(add_request("https://example.test/file".into(), 0), ClientRequest::AddTask { connections: 1, .. }));
+        assert!(matches!(add_request("https://example.test/file".into(), 33), ClientRequest::AddTask { connections: 32, .. }));
+    }
     #[test]
     fn formats_transfer_values() {
         assert_eq!(format_bytes(1024), "1.0 KiB");

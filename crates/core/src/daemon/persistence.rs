@@ -182,6 +182,8 @@ fn load(path: &Path) -> StoreResult<SavedState> {
             info.final_path = None;
         }
         info.speed_bps = 0;
+        // Live worker counts do not survive a daemon restart.
+        info.active_connections = info.active_connections.map(|_| 0);
         info.resume_supported = false;
         result.tasks.insert(url, info);
     }
@@ -220,7 +222,7 @@ mod tests {
             state.tasks.insert(url.into(), DownloadInfo {
                 url: url.into(), state: status.into(), filename: Some("test.bin".into()),
                 downloaded: 12, total: Some(100), speed_bps: 5, final_path: None, resume_supported: true, partial_name: None,
-            });
+             requested_connections: None, active_connections: None, segment_count: None, connection_note: None });
         }
         state.global_kbps = 800;
         state.task_kbps.insert("https://example.test/live".into(), 120);
