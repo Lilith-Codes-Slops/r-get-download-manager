@@ -7,6 +7,7 @@ pub(super) mod live;
 mod test_hooks;
 mod adaptive;
 mod adaptive_sizer;
+mod host_memory;
 mod steal_floor;
 pub(super) mod sizing_state;
 #[cfg(test)]

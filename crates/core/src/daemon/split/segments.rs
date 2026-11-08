@@ -96,6 +96,7 @@ impl SegmentMap {
         let segment = &mut self.segments[index];
         if segment.request_end != Some(offset) || segment.in_flight.is_some() { return Err("range request lease mismatch".into()); }
         segment.request_end = None;
+        self.sizing.request_completed(std::time::Instant::now());
         if offset == end { self.finish(index, owner)?; return Ok(true); }
         Ok(false)
     }
@@ -196,6 +197,9 @@ impl SegmentMap {
     pub fn attach_policy_publisher(&mut self, publisher: std::sync::Weak<crate::daemon::segment_events::Publisher>) {
         self.policy_publisher = Some(publisher);
     }
+    pub(super) fn seed_policy(&mut self, remembered: super::host_memory::Remembered) { self.sizing = super::sizing_state::SizingState::remembered(remembered); }
+    pub(super) fn reset_stability(&mut self) { self.sizing.reset_stability(); }
+    pub(super) fn good_memory(&self, now: std::time::Instant) -> Option<super::host_memory::Observation> { self.sizing.good_memory(now) }
     pub fn policy(&self) -> super::sizing_state::PolicySnapshot { self.sizing.snapshot(std::time::Instant::now()) }
     fn emit_policy_change(&self, before: super::sizing_state::PolicySnapshot, now: std::time::Instant) {
         let after = self.sizing.snapshot(now);

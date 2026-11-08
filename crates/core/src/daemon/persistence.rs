@@ -29,6 +29,8 @@ pub(super) struct Persistence {
 
 impl Persistence {
     pub fn new(path: PathBuf) -> Self { Self { path, gate: Mutex::new(()) } }
+    #[cfg(target_os = "linux")]
+    pub(super) fn database_path(&self) -> PathBuf { self.path.clone() }
 
     pub fn default_path() -> StoreResult<PathBuf> {
         let state_dir = match std::env::var_os("XDG_STATE_HOME").filter(|s| !s.is_empty()) {

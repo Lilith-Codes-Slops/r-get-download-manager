@@ -26,6 +26,12 @@ pub(super) async fn run_checkpointed(
     let partial_name = prepared.record.partial_name.clone();
     let map = prepared.map;
     let file = prepared.file;
+    let origin = super::host_memory::origin(&info.url);
+    let path = store.database_path();
+    if let Some(key) = &origin {
+        if let Some(memory) = super::host_memory::load(path.clone(), key.clone()).await { map.lock().await.seed_policy(memory); }
+    }
+    let mut memory_writer = super::host_memory::Writer::new(path, origin);
     checkpoint.save(&map, &file, &store, &tasks).await?;
     let publisher = Arc::new(crate::daemon::segment_events::Publisher::new(url.clone(), partial_name.clone(), &map));
     let changes = {
@@ -46,6 +52,7 @@ pub(super) async fn run_checkpointed(
             if *rx.borrow() == TransferControl::Paused {
                 // The previous supervisor, if any, has joined every worker. Sync
                 // and persist the verified map before exposing the paused state.
+                map.lock().await.reset_stability();
                 checkpoint.save(&map, &file, &store, &tasks).await?;
                 publisher.publish(map.lock().await.progress());
                 publisher.publish_policy(map.lock().await.policy(), false);
@@ -72,6 +79,8 @@ pub(super) async fn run_checkpointed(
         }
         if complete {
             checkpoint.save(&map, &file, &store, &tasks).await?;
+            let now = Instant::now(); memory_writer.consider(map.lock().await.good_memory(now), now);
+            memory_writer.finish().await;
             return Ok(());
         }
         let requested = tasks.lock().await.get(&url).and_then(|task| task.requested_connections).unwrap_or(workers as u8).clamp(1, 32);
@@ -114,6 +123,7 @@ pub(super) async fn run_checkpointed(
                         (progress.iter().map(|s| s.downloaded).sum(), map.active_count(), map.segment_count(), map.rejection_status(), progress)
                     };
                     if refresh { policy_refresh = Instant::now(); }
+                    let now = Instant::now(); memory_writer.consider(map.lock().await.good_memory(now), now);
                     publisher.publish(progress_snapshot);
                     if let Some(task) = tasks.lock().await.get_mut(&url) {
                         if task.partial_name.as_deref() == Some(partial_name.as_str()) && task.state == "downloading" {

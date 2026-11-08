@@ -13,13 +13,29 @@ pub(super) struct SizingState {
     cooldown_until: Option<Instant>,
     floor_cap: Option<u64>,
     last_reason: &'static str,
+    stability: super::host_memory::Stability,
 }
 impl Default for SizingState {
     fn default() -> Self {
-        Self { sizer: AdaptiveSizer::new(None), floor: StealFloor::default(), cooldown_until: None, floor_cap: None, last_reason: "initial" }
+        Self { sizer: AdaptiveSizer::new(None), floor: StealFloor::default(), cooldown_until: None, floor_cap: None, last_reason: "initial", stability: super::host_memory::Stability::default() }
     }
 }
 impl SizingState {
+    pub fn remembered(memory: super::host_memory::Remembered) -> Self {
+        let mut state = Self::default();
+        state.sizer = AdaptiveSizer::new(Some(memory.target));
+        let rtt = memory.bucket.representative_ms();
+        state.sizer.recent_rtt_ms = Some(rtt);
+        state.floor.observe_latency(Some(rtt), true);
+        let cap = (memory.target / 2).max(super::adaptive_sizer::MIN_TARGET);
+        state.floor.limit(cap); state.floor_cap = Some(cap); state.last_reason = "remembered";
+        state
+    }
+    pub fn reset_stability(&mut self) { self.stability.reset(); }
+    pub fn request_completed(&mut self, now: Instant) { self.stability.success(now); }
+    pub fn good_memory(&self, now: Instant) -> Option<super::host_memory::Observation> {
+        self.stability.observation(now, self.sizer.target, self.sizer.recent_rtt_ms)
+    }
     fn cooling(&self, now: Instant) -> bool { self.cooldown_until.is_some_and(|until| now < until) }
     fn couple(&mut self, old: u64) {
         let target = self.sizer.target;
@@ -40,6 +56,8 @@ impl SizingState {
         if latency.is_some() { self.floor.observe_latency(self.sizer.recent_rtt_ms, allow_growth); }
         self.couple(old);
         if let Some(cap) = self.floor_cap { self.floor.limit(cap); }
+        if slowdown || self.sizer.target < old { self.stability.reset(); }
+        self.stability.sample(goodput, latency, slowdown);
         if slowdown { self.congestion(now); self.last_reason = "slowdown"; }
         else if self.sizer.target != old {
             self.last_reason = match self.sizer.last_change_reason {
@@ -51,6 +69,7 @@ impl SizingState {
     pub fn reject(&mut self, now: Instant) {
         let old = self.sizer.target;
         self.sizer.reject();
+        self.stability.reset();
         self.couple(old);
         self.congestion(now);
         self.last_reason = "rejection";

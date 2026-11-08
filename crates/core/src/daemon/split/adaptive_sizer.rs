@@ -1,4 +1,4 @@
-//! Pure sizing policy. Per-host storage is pending.
+//! Pure sizing policy; optional host memory seeds the initial target and RTT bucket.
 const MIB: u64 = 1024 * 1024;
 pub(super) const MIN_TARGET: u64 = MIB;
 pub(super) const MAX_TARGET: u64 = 128 * MIB;
