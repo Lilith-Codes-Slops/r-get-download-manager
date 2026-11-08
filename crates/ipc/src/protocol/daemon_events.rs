@@ -27,6 +27,9 @@ pub struct DownloadInfo {
     /// Describes a fallback or explicit capacity rejection when known.
     #[serde(default)]
     pub connection_note: Option<String>,
+    /// Whether the running daemon accepts live connection changes for this task.
+    #[serde(default)]
+    pub live_connections_supported: bool,
 }
 
 /// Broadcast events sent from the daemon to subscribed clients.
@@ -47,6 +50,7 @@ pub enum DaemonEvent {
         downloaded: u64,
         mirror_id: Option<String>,
     },
+    ConnectionsChanged { task_id: String, requested: u8 },
     TaskStateChanged {
         task_id: String,
         state: String,
@@ -104,7 +108,7 @@ mod tests {
             url: "https://example.test/file".into(), state: "downloading".into(),
             filename: Some("file".into()), downloaded: 42, total: Some(100),
             speed_bps: 12, final_path: None, resume_supported: false, partial_name: None,
-         requested_connections: None, active_connections: None, segment_count: None, connection_note: None }] };
+         requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false }] };
         let json = serde_json::to_string(&event).unwrap();
         assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
     }

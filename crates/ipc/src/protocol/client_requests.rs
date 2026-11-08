@@ -26,6 +26,8 @@ pub enum ClientRequest {
         task_id: String,
         new_url: String,
     },
+    /// Change the active split task's worker ceiling.
+    SetConnections { task_id: String, count: u8 },
     SetLimit {
         task_id: Option<String>,
         kbps: u64,

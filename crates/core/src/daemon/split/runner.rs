@@ -63,9 +63,11 @@ pub(super) async fn run_checkpointed(
             checkpoint.save(&map, &file, &store, &tasks).await?;
             return Ok(());
         }
+        let requested = tasks.lock().await.get(&url).and_then(|task| task.requested_connections).unwrap_or(workers as u8).clamp(1, 32);
+        let (desired, desired_rx) = watch::channel(requested);
         let (stop, _) = watch::channel(false);
         let _stop_on_drop = StopOnDrop(stop.clone());
-        let mut transfer = tokio::spawn(run_map(client.clone(), url.clone(), info.clone(), file.clone(), map.clone(), limiter.clone(), stop.clone(), workers));
+        let mut transfer = tokio::spawn(run_map(client.clone(), url.clone(), info.clone(), file.clone(), map.clone(), limiter.clone(), stop.clone(), requested as usize, Some(desired_rx)));
         let mut timer = tokio::time::interval(Duration::from_millis(250));
         let outcome = loop {
             tokio::select! {
@@ -86,6 +88,9 @@ pub(super) async fn run_checkpointed(
                     if let Some(task) = tasks.lock().await.get_mut(&url) {
                         if task.partial_name.as_deref() == Some(partial_name.as_str()) && task.state == "downloading" {
                             progress.update(task, bytes);
+                            if let Some(count) = task.requested_connections.filter(|count| (1..=32).contains(count)) {
+                                if *desired.borrow() != count { desired.send_replace(count); }
+                            }
                             task.active_connections = Some(active); task.segment_count = Some(segments);
                             if rejected { task.connection_note = Some("Server rejected a range request (HTTP 429/503); concurrency may have been reduced.".into()); }
                         }

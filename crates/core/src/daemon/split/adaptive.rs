@@ -37,17 +37,20 @@ pub(super) struct Inputs {
     pub client: reqwest::Client, pub url: String, pub info: ResumeInfo,
     pub file: Arc<std::fs::File>, pub map: Arc<Mutex<SegmentMap>>,
     pub limiter: Arc<BandwidthLimiter>, pub stop: watch::Sender<bool>, pub max: usize,
+    pub desired: Option<watch::Receiver<u8>>,
     #[cfg(test)]
     pub peak_workers: Option<Arc<std::sync::atomic::AtomicUsize>>,
 }
 
+struct WorkerSignals { retire: watch::Sender<bool>, drain: watch::Sender<bool> }
 fn spawn_worker(inputs: &Inputs, workers: &mut JoinSet<(usize, Result<worker::Exit, String>)>,
-    running: &mut BTreeMap<usize, watch::Sender<bool>>, owner: usize) {
+    running: &mut BTreeMap<usize, WorkerSignals>, owner: usize) {
     let (retire, receiver) = watch::channel(false);
+    let (drain, drain_rx) = watch::channel(false);
     let context = worker::Context { client: inputs.client.clone(), url: inputs.url.clone(), info: inputs.info.clone(),
         file: inputs.file.clone(), map: inputs.map.clone(), limiter: inputs.limiter.clone(),
-        stop: inputs.stop.subscribe(), retire: receiver, owner };
-    running.insert(owner, retire);
+        stop: inputs.stop.subscribe(), retire: receiver, drain: drain_rx, desired: inputs.desired.clone(), owner };
+    running.insert(owner, WorkerSignals { retire, drain });
     #[cfg(test)]
     if let Some(peak) = &inputs.peak_workers {
         peak.fetch_max(running.len(), std::sync::atomic::Ordering::SeqCst);
@@ -55,10 +58,10 @@ fn spawn_worker(inputs: &Inputs, workers: &mut JoinSet<(usize, Result<worker::Ex
     workers.spawn(async move { (owner, worker::run(context).await) });
 }
 
-pub(super) async fn supervise(inputs: Inputs) -> Result<(), String> {
+pub(super) async fn supervise(mut inputs: Inputs) -> Result<(), String> {
     let mut aimd = Aimd::new(inputs.max);
     let mut workers = JoinSet::new();
-    let mut running: BTreeMap<usize, watch::Sender<bool>> = BTreeMap::new();
+    let mut running: BTreeMap<usize, WorkerSignals> = BTreeMap::new();
     let mut owner = 0usize;
     let mut first_error: Option<String> = None;
     let mut rejections = 0u8;
@@ -72,23 +75,24 @@ pub(super) async fn supervise(inputs: Inputs) -> Result<(), String> {
         if first_error.is_none() {
             let map = inputs.map.lock().await;
             let pending = map.pending_count();
+            let stealable = map.stealable_slots();
             let complete = map.is_complete();
             drop(map);
             if complete && running.is_empty() { return Ok(()); }
             // Pending work must always be retried, even when the target fell to
-            // one. An increase may also start one worker solely to steal.
+            // one. An increase may also start workers solely to steal.
             if Instant::now() >= retry_at {
                 let slots = aimd.target.saturating_sub(running.len());
-                let count = slots.min(pending + usize::from(try_steal));
+                let count = slots.min(pending + if try_steal { stealable } else { 0 });
                 for _ in 0..count {
                     spawn_worker(&inputs, &mut workers, &mut running, owner);
                     owner += 1;
                 }
             }
             try_steal = false;
-            let active = running.values().filter(|signal| !*signal.borrow()).count();
-            for signal in running.values().rev().filter(|signal| !*signal.borrow()).take(active.saturating_sub(aimd.target)) {
-                signal.send_replace(true);
+            let active = running.values().filter(|signal| !*signal.retire.borrow() && !*signal.drain.borrow()).count();
+            for signal in running.values().rev().filter(|signal| !*signal.retire.borrow() && !*signal.drain.borrow()).take(active.saturating_sub(aimd.target)) {
+                signal.retire.send_replace(true);
             }
         } else {
             inputs.stop.send_replace(true);
@@ -99,6 +103,7 @@ pub(super) async fn supervise(inputs: Inputs) -> Result<(), String> {
                 match result {
                     Some(Ok((id, result))) => {
                         running.remove(&id);
+                        if running.len() < aimd.target { try_steal = true; }
                         match result {
                             Ok(worker::Exit::Rejected) => {
                                 aimd.reject(Instant::now());
@@ -117,6 +122,30 @@ pub(super) async fn supervise(inputs: Inputs) -> Result<(), String> {
                     Some(Err(error)) => { first_error = Some(format!("split worker failed: {error}")); inputs.stop.send_replace(true); },
                     None => { first_error = Some("split supervisor lost workers".into()); }
                 }
+            },
+            changed = async {
+                match &mut inputs.desired { Some(rx) => rx.changed().await.is_ok(), None => std::future::pending::<bool>().await }
+            } => {
+                if changed {
+                    let count = inputs.desired.as_mut().map(|rx| *rx.borrow_and_update()).unwrap_or(1) as usize;
+                    let new_max = count.clamp(1, 32).min((inputs.info.total / (1024 * 1024)).max(1).min(32) as usize);
+                    let old_max = aimd.max;
+                    aimd.max = new_max;
+                    if new_max > old_max {
+                        aimd.target = new_max;
+                        let active = running.values().filter(|signal| !*signal.retire.borrow() && !*signal.drain.borrow()).count();
+                        for signal in running.values().filter(|signal| *signal.drain.borrow() && !*signal.retire.borrow()).take(new_max.saturating_sub(active)) {
+                            signal.drain.send_replace(false);
+                        }
+                        try_steal = true;
+                    } else if new_max < old_max {
+                        aimd.target = aimd.target.min(new_max);
+                        let active = running.values().filter(|signal| !*signal.retire.borrow() && !*signal.drain.borrow()).count();
+                        for signal in running.values().rev().filter(|signal| !*signal.retire.borrow() && !*signal.drain.borrow()).take(active.saturating_sub(aimd.target)) {
+                            signal.drain.send_replace(true);
+                        }
+                    }
+                } else { inputs.desired = None; }
             },
             _ = timer.tick() => {
                 let bytes: u64 = inputs.map.lock().await.records().iter().map(|s| s.downloaded).sum();

@@ -1,4 +1,4 @@
-//! Live split transfers. User-directed resizing remains disabled.
+//! Live split transfers with user-directed worker ceilings.
 use super::{checkpoint::{SplitCheckpoint, SplitRecord}, recovery::PreparedSplit, runner, segments::SegmentMap};
 use crate::daemon::{bandwidth::BandwidthLimiter, control::{Controls, Tasks, TransferControl}, persistence::Persistence, range::ResumeInfo};
 use std::{path::{Path, PathBuf}, sync::Arc};
@@ -86,7 +86,7 @@ pub(in crate::daemon) async fn spawn(prepared: PreparedSplit, root: &Path, tasks
         let result = run(prepared, partial, client, tasks.clone(), limiter.clone(), store.clone(), receiver.clone()).await;
         let mut guard = tasks.lock().await;
         if let Some(task) = guard.get_mut(&id) {
-            task.speed_bps = 0; task.resume_supported = false; task.active_connections = Some(0);
+            task.speed_bps = 0; task.resume_supported = false; task.active_connections = Some(0); task.live_connections_supported = false;
             if *receiver.borrow() == TransferControl::Canceled { task.state = "canceled".into(); }
             else { match result {
                 Ok(path) => { task.state = "completed".into(); task.final_path = Some(path.to_string_lossy().into_owned()); task.partial_name = None; }

@@ -13,6 +13,8 @@ pub(super) struct Context {
     pub limiter: Arc<BandwidthLimiter>,
     pub stop: watch::Receiver<bool>,
     pub retire: watch::Receiver<bool>,
+    pub drain: watch::Receiver<bool>,
+    pub desired: Option<watch::Receiver<u8>>,
     pub owner: usize,
 }
 
@@ -26,11 +28,12 @@ impl From<String> for Failure { fn from(value: String) -> Self { Self::Fatal(val
 pub(super) async fn run(mut ctx: Context) -> Result<Exit, String> {
     loop {
         if *ctx.stop.borrow() { return Err("split stopped".into()); }
-        if *ctx.retire.borrow() { return Ok(Exit::Retired); }
+        if *ctx.retire.borrow() || *ctx.drain.borrow() { return Ok(Exit::Retired); }
         let work = {
             let mut map = ctx.map.lock().await;
-            if *ctx.retire.borrow() { return Ok(Exit::Retired); }
-            map.claim(ctx.owner).or_else(|| map.steal(ctx.owner))
+            if *ctx.retire.borrow() || *ctx.drain.borrow() { return Ok(Exit::Retired); }
+            let allow_steal = ctx.desired.as_ref().is_none_or(|receiver| *receiver.borrow() > 1);
+            map.claim(ctx.owner).or_else(|| if allow_steal { map.steal(ctx.owner) } else { None })
         };
         let Some((segment, start, end)) = work else { return Ok(Exit::Idle) };
         if let Err(error) = receive_range(&mut ctx, segment, start, end).await {

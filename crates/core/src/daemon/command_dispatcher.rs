@@ -10,7 +10,7 @@ impl CommandDispatcher {
             ClientRequest::Resume { .. } => Ok(()),
             ClientRequest::Cancel { .. } => Ok(()),
             ClientRequest::RefreshUrl { .. } => Ok(()),
-            ClientRequest::SetLimit { .. } => Ok(()),
+            ClientRequest::SetLimit { .. } | ClientRequest::SetConnections { .. } => Ok(()),
             ClientRequest::RemoveTask { .. } => Ok(()),
             ClientRequest::ListQueue | ClientRequest::GetDetailedQueue => Ok(()),
             ClientRequest::GetSnapshot { .. } => Ok(()),

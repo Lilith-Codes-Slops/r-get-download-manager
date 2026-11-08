@@ -85,7 +85,8 @@ downloads. The CLI can request 1–32 connections using
 `dl add <URL> --connections 2`; the GUI's Add download dialog selects 1–32
 (default 8). The task view shows the requested ceiling and sampled active
 workers, not TCP sockets; unavailable telemetry from older daemons is shown as
-unknown. Runtime connection changes are not yet supported. When a known-length
+unknown. Live connection changes are available only for split tasks; existing
+single-stream tasks cannot yet be converted to split mode. When a known-length
 resource advertises byte ranges and a strong ETag, the daemon probes an exact
 range and starts with segments of at least 1 MiB; idle workers may steal half
 of a sufficiently large unfinished range. Each resulting remaining half is at
@@ -100,8 +101,11 @@ range probes can fall back to a single stream. Split checkpoints use a v2 sideca
 for each segment and SQLite metadata; startup attempts to validate and resume
 the recorded ranges. Split pause requests stop and join workers and checkpoint
 before the task reports paused; paused split downloads can be resumed after a
-restart. Mid-download connection changes are not yet supported. Cancel stops and
-joins split workers before cleaning up.
+restart. A split task's requested worker maximum can be changed while running
+or paused. Decreases allow selected workers to finish their current segments;
+increases may create workers when there is stealable work. Actual worker counts
+can be lower than requested due to work availability or adaptive limits. Cancel
+stops and joins split workers before cleaning up.
 These changes require local build and integration testing before production use.
 Queue entries and rate-limit settings are
 stored in `$XDG_STATE_HOME/rget/queue.sqlite3` (or `~/.local/state/rget/queue.sqlite3`).

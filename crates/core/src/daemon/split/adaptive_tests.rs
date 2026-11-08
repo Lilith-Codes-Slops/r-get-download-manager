@@ -74,7 +74,7 @@ async fn run(limit: usize, total: u64) -> (usize, bool, usize) {
     let map = Arc::new(tokio::sync::Mutex::new(SegmentMap::new(total, 4).unwrap()));
     let inputs = adaptive::Inputs { client: reqwest::Client::new(), url, info,
         file: file.clone(), map: map.clone(),
-        limiter: Arc::new(BandwidthLimiter::new()), stop, max: 4, peak_workers: Some(worker_peak.clone()) };
+        limiter: Arc::new(BandwidthLimiter::new()), stop, max: 4, desired: None, peak_workers: Some(worker_peak.clone()) };
     tokio::time::timeout(std::time::Duration::from_secs(30), adaptive::supervise(inputs))
         .await.expect("adaptive transfer timed out").unwrap();
     drop(file);
@@ -128,8 +128,9 @@ async fn retirement_releases_progress_for_another_worker() {
     let limiter = Arc::new(BandwidthLimiter::new());
     let (stop, _) = watch::channel(false);
     let (retire, rx) = watch::channel(false);
+    let (_drain, drain_rx) = watch::channel(false);
     let context = worker::Context { client: reqwest::Client::new(), url: url.clone(), info: info.clone(),
-        file: file.clone(), map: map.clone(), limiter: limiter.clone(), stop: stop.subscribe(), retire: rx, owner: 0 };
+        file: file.clone(), map: map.clone(), limiter: limiter.clone(), stop: stop.subscribe(), retire: rx, drain: drain_rx, desired: None, owner: 0 };
     let handle = tokio::spawn(worker::run(context));
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
@@ -143,8 +144,9 @@ async fn retirement_releases_progress_for_another_worker() {
     assert!(before > 0 && before < total / 2);
     assert_eq!(map.lock().await.pending_count(), 2);
     let (_retire2, rx2) = watch::channel(false);
+    let (_drain2, drain_rx2) = watch::channel(false);
     let context = worker::Context { client: reqwest::Client::new(), url, info,
-        file: file.clone(), map: map.clone(), limiter, stop: stop.subscribe(), retire: rx2, owner: 1 };
+        file: file.clone(), map: map.clone(), limiter, stop: stop.subscribe(), retire: rx2, drain: drain_rx2, desired: None, owner: 1 };
     tokio::time::timeout(std::time::Duration::from_secs(10), worker::run(context)).await.unwrap().unwrap();
     assert!(map.lock().await.is_complete());
     drop(file);
@@ -153,4 +155,77 @@ async fn retirement_releases_progress_for_another_worker() {
     assert!(bytes.iter().enumerate().all(|(i, b)| *b == (i as u64 % 251) as u8));
     std::fs::remove_file(path).unwrap();
     server.abort();
+}
+
+#[tokio::test]
+async fn user_resize_changes_running_split_workers_and_preserves_bytes() {
+    let total = 32 * 1024 * 1024;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/file", listener.local_addr().unwrap());
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let (rejected, _) = watch::channel(false);
+    let server = tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(serve(stream, total, 32, active.clone(), peak.clone(), rejected.clone()));
+        }
+    });
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let path = std::env::temp_dir().join(format!("rget-resize-{}-{nonce}.part", std::process::id()));
+    let file = Arc::new(std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&path).unwrap());
+    let map = Arc::new(tokio::sync::Mutex::new(SegmentMap::new(total, 2).unwrap()));
+    let (stop, _) = watch::channel(false);
+    let (desired, rx) = watch::channel(2u8);
+    let info = ResumeInfo { etag: "\"v1\"".into(), total, url: reqwest::Url::parse(&url).unwrap() };
+    let inputs = adaptive::Inputs { client: reqwest::Client::new(), url, info, file: file.clone(), map: map.clone(),
+        limiter: Arc::new(BandwidthLimiter::new()), stop, max: 2, desired: Some(rx), peak_workers: None };
+    let run = tokio::spawn(adaptive::supervise(inputs));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while map.lock().await.active_count() < 2 { tokio::time::sleep(std::time::Duration::from_millis(20)).await; }
+    }).await.expect("workers did not start");
+    desired.send_replace(4);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while map.lock().await.active_count() < 4 { tokio::time::sleep(std::time::Duration::from_millis(20)).await; }
+    }).await.expect("workers did not increase");
+    desired.send_replace(1);
+    tokio::time::timeout(std::time::Duration::from_secs(30), run).await.unwrap().unwrap().unwrap();
+    assert!(map.lock().await.is_complete());
+    drop(file);
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(bytes.len() as u64, total);
+    assert!(bytes.iter().enumerate().all(|(i, b)| *b == (i as u64 % 251) as u8));
+    std::fs::remove_file(path).unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn user_drain_finishes_the_owned_segment_before_retiring() {
+    use super::worker;
+    let total = 4 * 1024 * 1024;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/file", listener.local_addr().unwrap());
+    let (rejected, _) = watch::channel(false);
+    let server = tokio::spawn(async move {
+        let active = Arc::new(AtomicUsize::new(0)); let peak = Arc::new(AtomicUsize::new(0));
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(serve(stream, total, 32, active.clone(), peak.clone(), rejected.clone()));
+        }
+    });
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let path = std::env::temp_dir().join(format!("rget-drain-{}-{nonce}.part", std::process::id()));
+    let file = Arc::new(std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&path).unwrap());
+    let map = Arc::new(tokio::sync::Mutex::new(SegmentMap::new(total, 2).unwrap()));
+    let (stop, _) = watch::channel(false); let (_retire, rx) = watch::channel(false);
+    let (drain, drain_rx) = watch::channel(false);
+    let info = ResumeInfo { etag: "\"v1\"".into(), total, url: reqwest::Url::parse(&url).unwrap() };
+    let context = worker::Context { client: reqwest::Client::new(), url, info, file: file.clone(), map: map.clone(),
+        limiter: Arc::new(BandwidthLimiter::new()), stop: stop.subscribe(), retire: rx, drain: drain_rx, desired: None, owner: 0 };
+    let handle = tokio::spawn(worker::run(context));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while map.lock().await.records()[0].downloaded == 0 { tokio::time::sleep(std::time::Duration::from_millis(10)).await; }
+    }).await.unwrap();
+    drain.send_replace(true);
+    assert!(matches!(tokio::time::timeout(std::time::Duration::from_secs(10), handle).await.unwrap().unwrap().unwrap(), worker::Exit::Retired));
+    assert_eq!(map.lock().await.records()[0].downloaded, total / 2);
+    drop(file); std::fs::remove_file(path).unwrap(); server.abort();
 }

@@ -93,7 +93,7 @@ async fn recovered_ranges_resume_and_commit_to_sqlite() {
     let prepared = recovery::prepare(&f.sidecar, &f.partial, &url, None).unwrap();
     let task = DownloadInfo { url: url.clone(), state: "downloading".into(), filename: Some("file.bin".into()),
         downloaded: 3, total: Some(f.record.total), speed_bps: 0, final_path: None,
-        resume_supported: true, partial_name: Some(f.record.partial_name.clone()), requested_connections: None, active_connections: None, segment_count: None, connection_note: None };
+        resume_supported: true, partial_name: Some(f.record.partial_name.clone()), requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false };
     let tasks: Tasks = Arc::new(Mutex::new(BTreeMap::from([(url.clone(), task)])));
     let store = Arc::new(Persistence::new(f.dir.join("state/queue.sqlite3")));
     let checkpoint = SplitCheckpoint { sidecar: f.sidecar.clone(), record: prepared.record.clone() };
@@ -120,7 +120,7 @@ async fn checkpoint_waits_for_the_write_barrier() {
     let prepared = recovery::prepare(&f.sidecar, &f.partial, url, None).unwrap();
     let task = DownloadInfo { url: url.into(), state: "downloading".into(), filename: Some("file.bin".into()),
         downloaded: 3, total: Some(8), speed_bps: 0, final_path: None,
-        resume_supported: true, partial_name: Some(f.record.partial_name.clone()), requested_connections: None, active_connections: None, segment_count: None, connection_note: None };
+        resume_supported: true, partial_name: Some(f.record.partial_name.clone()), requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false };
     let tasks: Tasks = Arc::new(Mutex::new(BTreeMap::from([(url.into(), task)])));
     let store = Arc::new(Persistence::new(f.dir.join("state/queue.sqlite3")));
     let map = prepared.map.clone();
@@ -164,7 +164,7 @@ async fn snapshot_ignores_inflight_data_without_waiting_for_write_completion() {
     let prepared = recovery::prepare(&f.sidecar, &f.partial, url, None).unwrap();
     let task = DownloadInfo { url: url.into(), state: "downloading".into(), filename: Some("file.bin".into()),
         downloaded: 3, total: Some(8), speed_bps: 0, final_path: None,
-        resume_supported: true, partial_name: Some(f.record.partial_name.clone()), requested_connections: None, active_connections: None, segment_count: None, connection_note: None };
+        resume_supported: true, partial_name: Some(f.record.partial_name.clone()), requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false };
     let tasks: Tasks = Arc::new(Mutex::new(BTreeMap::from([(url.into(), task)])));
     let store = Persistence::new(f.dir.join("state/queue.sqlite3"));
     let (segment, offset, _) = prepared.map.lock().await.claim(7).unwrap();
@@ -190,7 +190,7 @@ async fn another_range_and_checkpoint_progress_while_write_is_blocked() {
     let prepared = recovery::prepare(&f.sidecar, &f.partial, url, None).unwrap();
     let task = DownloadInfo { url: url.into(), state: "downloading".into(), filename: Some("file.bin".into()),
         downloaded: 3, total: Some(8), speed_bps: 0, final_path: None,
-        resume_supported: true, partial_name: Some(f.record.partial_name.clone()), requested_connections: None, active_connections: None, segment_count: None, connection_note: None };
+        resume_supported: true, partial_name: Some(f.record.partial_name.clone()), requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false };
     let tasks: Tasks = Arc::new(Mutex::new(BTreeMap::from([(url.into(), task)])));
     let store = Persistence::new(f.dir.join("state/queue.sqlite3"));
     let mut map = prepared.map.lock().await;

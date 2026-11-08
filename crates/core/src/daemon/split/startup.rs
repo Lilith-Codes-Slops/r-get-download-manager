@@ -70,7 +70,8 @@ pub(in crate::daemon) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<P
                     task.downloaded = item.record.segments.iter().map(|s| s.downloaded).sum();
                     task.total = Some(item.record.total); task.filename = Some(item.record.filename.clone());
                     task.speed_bps = 0; task.resume_supported = true;
-                    task.requested_connections = Some(item.record.requested_connections);
+                    task.requested_connections = Some(task.requested_connections.filter(|count| (1..=32).contains(count)).unwrap_or(item.record.requested_connections));
+                    task.live_connections_supported = true;
                     task.active_connections = Some(0); task.segment_count = Some(item.record.segments.len() as u16);
                 }
                 result.push(item);

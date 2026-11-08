@@ -50,12 +50,13 @@ pub(super) async fn download_fixed(
         return Err("fixed split requires a new empty partial file".into());
     }
     let (stop, _) = watch::channel(false);
-    run_map(client, url, info, file, map, limiter, stop, connections as usize).await
+    run_map(client, url, info, file, map, limiter, stop, connections as usize, None).await
 }
 
 async fn run_map(
     client: reqwest::Client, url: String, info: ResumeInfo, file: Arc<std::fs::File>,
     map: Arc<Mutex<SegmentMap>>, limiter: Arc<BandwidthLimiter>, stop: watch::Sender<bool>, max_workers: usize,
+    desired: Option<watch::Receiver<u8>>,
 ) -> Result<(), String> {
     if *stop.borrow() { return Err("split stopped".into()); }
     // Verify a bounded range before starting workers; unsupported servers can
@@ -73,7 +74,7 @@ async fn run_map(
     drop(probe);
 
     let max = max_workers.min((info.total / (1024 * 1024)).min(32) as usize);
-    adaptive::supervise(adaptive::Inputs { client, url, info, file, map, limiter, stop, max,
+    adaptive::supervise(adaptive::Inputs { client, url, info, file, map, limiter, stop, max, desired,
         #[cfg(test)] peak_workers: None,
     }).await
 }

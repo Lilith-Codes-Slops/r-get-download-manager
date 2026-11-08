@@ -34,6 +34,8 @@ pub struct AppState {
     pending_delete: Option<String>,
     url: String,
     connections: u8,
+    edit_connection_task: Option<String>,
+    edit_connections: u8,
     notice: Option<String>,
     connected: bool,
 }
@@ -45,7 +47,8 @@ impl AppState {
             selected_file: None, files: Vec::new(), last_files_refresh: Instant::now() - Duration::from_secs(10),
             view: View::Tasks, detail: Detail::Status, theme: Theme::System,
             sort: Sort::Name, descending: false, add_open: false, settings_open: false,
-            pending_delete: None, url: String::new(), connections: 8, notice: None, connected: false,
+            pending_delete: None, url: String::new(), connections: 8,
+            edit_connection_task: None, edit_connections: 1, notice: None, connected: false,
         }
     }
 
@@ -56,6 +59,10 @@ impl AppState {
                 BridgeMessage::Event(DaemonEvent::DetailedQueue { tasks }) => {
                     self.connected = true;
                     self.tasks = tasks;
+                }
+                BridgeMessage::Event(DaemonEvent::ConnectionsChanged { task_id, requested }) => {
+                    if let Some(task) = self.tasks.iter_mut().find(|task| task.url == task_id) { task.requested_connections = Some(requested); }
+                    self.notice = Some(format!("Requested maximum set to {requested} workers."));
                 }
                 BridgeMessage::Event(DaemonEvent::TaskFailed { error, .. }) => self.notice = Some(error),
                 BridgeMessage::Event(DaemonEvent::TaskStateChanged { state, .. }) => {

@@ -56,6 +56,10 @@ impl AppState {
     }
 
     fn task_details(&mut self, ui: &mut egui::Ui, task: &DownloadInfo) {
+        if self.edit_connection_task.as_deref() != Some(task.url.as_str()) {
+            self.edit_connection_task = Some(task.url.clone());
+            self.edit_connections = task.requested_connections.unwrap_or(1);
+        }
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.detail, Detail::Status, "Download status");
             ui.selectable_value(&mut self.detail, Detail::Network, "Network & splits");
@@ -114,7 +118,18 @@ impl AppState {
                 ui.label("Active counts are workers assigned to ranges, not a count of TCP sockets. Counts are sampled and may be lower during startup, throttling, or when work is limited.");
                 if let Some(note) = &task.connection_note { ui.label(note); }
                 unavailable(ui, "Configure speed limit", "Not yet supported in the GUI.");
-                unavailable(ui, "Configure connections", "Changing connections during a download is not implemented yet.");
+                ui.horizontal(|ui| {
+                    ui.label("New maximum");
+                    ui.add_enabled(task.live_connections_supported, egui::DragValue::new(&mut self.edit_connections).range(1..=32));
+                    let can_change = self.connected && task.live_connections_supported && matches!(task.state.as_str(), "downloading" | "paused");
+                    if ui.add_enabled(can_change, egui::Button::new("Configure connections"))
+                        .on_disabled_hover_text("Available for active or paused split tasks; single-stream conversion is not yet supported.").clicked() {
+                        self.send(ClientRequest::SetConnections { task_id: task.url.clone(), count: self.edit_connections });
+                    }
+                });
+                if !task.live_connections_supported && matches!(task.state.as_str(), "downloading" | "paused") {
+                    ui.label("Live changes require a split task; single-stream conversion is not yet supported.");
+                }
             }
             Detail::Actions => {
                 ui.heading("Post-download actions");
@@ -220,7 +235,7 @@ impl AppState {
                 }
                 ui.separator();
                 ui.heading("Download engine");
-                ui.label("Choose 1–32 connections when adding a download; runtime changes are not yet supported.");
+                ui.label("Choose 1–32 connections when adding a download. Live changes currently require a split task.");
                 ui.label("Theme selection lasts for this session.");
             });
             self.settings_open = open;

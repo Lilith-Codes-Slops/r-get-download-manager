@@ -134,6 +134,12 @@ impl SegmentMap {
         }).collect();
         Ok(Self { segments, rejected: false })
     }
+    pub fn stealable_slots(&self) -> usize {
+        let available = self.segments.iter().filter(|s| matches!(s.status, Status::Active(_)))
+            .map(|s| ((s.end - s.in_flight.unwrap_or(s.start + s.downloaded)) / MIN_SEGMENT).saturating_sub(1) as usize)
+            .sum::<usize>();
+        available.min(MAX_SEGMENTS.saturating_sub(self.segments.len()))
+    }
     pub fn active_count(&self) -> u8 { self.segments.iter().filter(|s| matches!(s.status, Status::Active(_))).count() as u8 }
     pub fn segment_count(&self) -> u16 { self.segments.len() as u16 }
     pub fn note_rejection(&mut self) { self.rejected = true; }

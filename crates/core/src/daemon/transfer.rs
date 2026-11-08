@@ -72,6 +72,7 @@ pub(super) async fn download_file(url: &str, connections: u8, tasks: Arc<Mutex<B
             if connections > 1 && !split {
                 task.connection_note = Some("Using one stream: the resource is too small or lacks verified range support.".into());
             }
+            task.live_connections_supported = split;
             if split {
                 if let Some(info) = &resume { task.segment_count = Some((info.total / (1024 * 1024)).min(connections as u64) as u16); }
             }
