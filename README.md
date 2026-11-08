@@ -174,7 +174,8 @@ and accepted TCP connections (including the probe) for that measurement:
 cargo test -p downloader-core --lib split::connection_tests::reports_connection_reuse --locked -- --nocapture
 ```
 
-The measurement is local and workload-specific: response cancellation, steals,
+In one local run, the test observed 5 range requests over 2 TCP connections,
+including the probe. This is workload-specific: response cancellation, steals,
 server policies and HTTP version can all change connection reuse. A shared
 `reqwest::Client` permits pooling but does not guarantee reuse.
 
