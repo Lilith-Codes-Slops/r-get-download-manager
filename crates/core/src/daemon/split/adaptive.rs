@@ -69,6 +69,7 @@ pub(super) async fn supervise(mut inputs: Inputs) -> Result<(), String> {
     let mut timer = tokio::time::interval(INTERVAL);
     timer.tick().await;
     let mut previous_bytes: u64 = inputs.map.lock().await.records().iter().map(|s| s.downloaded).sum();
+    let mut last_sample = Instant::now();
     let mut try_steal = false;
     loop {
         if *inputs.stop.borrow() && first_error.is_none() { first_error = Some("split stopped".into()); }
@@ -148,9 +149,15 @@ pub(super) async fn supervise(mut inputs: Inputs) -> Result<(), String> {
                 } else { inputs.desired = None; }
             },
             _ = timer.tick() => {
-                let bytes: u64 = inputs.map.lock().await.records().iter().map(|s| s.downloaded).sum();
+                let now = Instant::now();
+                let elapsed = now.duration_since(last_sample).as_secs_f64();
+                last_sample = now;
+                let mut map = inputs.map.lock().await;
+                let bytes: u64 = map.records().iter().map(|s| s.downloaded).sum();
                 let delta = bytes.saturating_sub(previous_bytes);
                 previous_bytes = bytes;
+                if elapsed > 0.0 && map.active_count() > 0 { map.note_goodput(delta as f64 / elapsed); }
+                drop(map);
                 if delta > 0 { rejections = 0; }
                 if aimd.sample(delta, Instant::now()) { try_steal = true; }
             }

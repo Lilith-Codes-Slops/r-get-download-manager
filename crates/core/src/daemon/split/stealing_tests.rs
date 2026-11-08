@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::watch;
 
-const TOTAL: u64 = 8 * 1024 * 1024;
+// Large enough for stealing even in the highest latency bucket.
+const TOTAL: u64 = 32 * 1024 * 1024;
 
 async fn body(stream: &mut tokio::net::TcpStream, mut start: u64, end: u64) -> bool {
     while start < end {

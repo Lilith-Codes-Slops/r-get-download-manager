@@ -28,7 +28,7 @@ impl AdaptiveSizer {
 
     /// Accept only finite, nonnegative samples; no measurement is different from zero throughput.
     /// Call on segment completion or a measurement interval; rejections use `reject` immediately.
-    pub fn observe(&mut self, goodput_bps: Option<f64>, rtt_ms: Option<f64>) {
+    pub fn observe(&mut self, goodput_bps: Option<f64>, rtt_ms: Option<f64>) -> bool {
         let goodput = goodput_bps.filter(|v| v.is_finite() && *v >= 0.0);
         let rtt = rtt_ms.filter(|v| v.is_finite() && *v >= 0.0);
         if let Some(value) = rtt { self.recent_rtt_ms = Some(ema(self.recent_rtt_ms, value)); }
@@ -47,6 +47,7 @@ impl AdaptiveSizer {
         } else if (goodput.is_some() || rtt.is_some()) && self.recent_rtt_ms.is_some_and(|v| v > 200.0) {
             self.set((self.target * 7 / 10).max(2 * MIB), Reason::Rtt);
         }
+        slowdown
     }
 
     pub fn reject(&mut self) {

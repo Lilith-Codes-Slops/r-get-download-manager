@@ -6,8 +6,10 @@ pub(super) mod live;
 #[cfg(feature = "checkpoint-test-hooks")]
 mod test_hooks;
 mod adaptive;
-#[cfg(test)]
 mod adaptive_sizer;
+mod steal_floor;
+#[cfg(test)]
+mod steal_floor_tests;
 mod runner;
 pub(super) mod segments;
 mod worker;

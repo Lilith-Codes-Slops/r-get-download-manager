@@ -12,6 +12,7 @@ struct Segment { start: u64, end: u64, downloaded: u64, status: Status, hash: bl
 // Indices are stable: stealing appends a segment, never inserts/removes one.
 pub(in crate::daemon) struct SegmentMap {
     segments: Vec<Segment>, rejected: Option<u16>, changes: std::sync::Arc<tokio::sync::Notify>,
+    sizer: super::adaptive_sizer::AdaptiveSizer, floor: super::steal_floor::StealFloor,
 }
 
 impl SegmentMap {
@@ -29,7 +30,8 @@ impl SegmentMap {
             segments.push(Segment { start, end, downloaded: 0, status: Status::Pending, hash: blake3::Hasher::new(), in_flight: None });
             start = end;
         }
-        Ok(Self { segments, rejected: None, changes: std::sync::Arc::new(tokio::sync::Notify::new()) })
+        Ok(Self { segments, rejected: None, changes: std::sync::Arc::new(tokio::sync::Notify::new()),
+            sizer: super::adaptive_sizer::AdaptiveSizer::new(None), floor: super::steal_floor::StealFloor::default() })
     }
 
     pub fn claim(&mut self, owner: usize) -> Option<(usize, u64, u64)> {
@@ -41,20 +43,23 @@ impl SegmentMap {
         Some(work)
     }
 
-    /// Only steal unwritten work. Both halves must retain at least 1 MiB.
+    /// Transfer only unreserved, unwritten work; the donor retains at least 1 MiB.
     pub fn steal(&mut self, owner: usize) -> Option<(usize, u64, u64)> {
         if self.segments.len() >= MAX_SEGMENTS || self.segments.iter().any(|s| s.status == Status::Active(owner)) { return None; }
+        let floor = self.floor.decision(self.sizer.recent_rtt_ms);
         let (index, _) = self.segments.iter().enumerate()
             .filter(|(_, s)| matches!(s.status, Status::Active(_)))
             .map(|(i, s)| (i, s.end - s.in_flight.unwrap_or(s.start + s.downloaded)))
-            .filter(|(_, remaining)| *remaining >= 2 * MIN_SEGMENT)
+            .filter(|(_, remaining)| *remaining > floor && *remaining >= floor + MIN_SEGMENT)
             .max_by_key(|(_, remaining)| *remaining)?;
         let source = &mut self.segments[index];
         // A reserved write is owned by the donor until it joins; only the
         // suffix beyond that reservation can be split.
         let remaining_start = source.in_flight.unwrap_or(source.start + source.downloaded);
         let old_end = source.end;
-        let midpoint = remaining_start + (old_end - remaining_start) / 2;
+        let remaining = old_end - remaining_start;
+        let transferred = (remaining / 2).max(floor).min(remaining - MIN_SEGMENT);
+        let midpoint = old_end - transferred;
         source.end = midpoint;
         let new_index = self.segments.len();
         self.segments.push(Segment { start: midpoint, end: old_end, downloaded: 0,
@@ -146,18 +151,27 @@ impl SegmentMap {
             start: record.start, end: record.end, downloaded: record.downloaded,
             status: if record.downloaded == record.end - record.start { Status::Done } else { Status::Pending }, hash, in_flight: None,
         }).collect();
-        Ok(Self { segments, rejected: None, changes: std::sync::Arc::new(tokio::sync::Notify::new()) })
+        Ok(Self { segments, rejected: None, changes: std::sync::Arc::new(tokio::sync::Notify::new()),
+            sizer: super::adaptive_sizer::AdaptiveSizer::new(None), floor: super::steal_floor::StealFloor::default() })
     }
     pub fn stealable_slots(&self) -> usize {
+        let floor = self.floor.current(self.sizer.recent_rtt_ms);
         let available = self.segments.iter().filter(|s| matches!(s.status, Status::Active(_)))
-            .map(|s| ((s.end - s.in_flight.unwrap_or(s.start + s.downloaded)) / MIN_SEGMENT).saturating_sub(1) as usize)
+            .map(|s| (s.end - s.in_flight.unwrap_or(s.start + s.downloaded)).saturating_sub(MIN_SEGMENT) / floor)
+            .map(|count| count.min(MAX_SEGMENTS as u64) as usize)
             .sum::<usize>();
         available.min(MAX_SEGMENTS.saturating_sub(self.segments.len()))
     }
     pub fn active_count(&self) -> u8 { self.segments.iter().filter(|s| matches!(s.status, Status::Active(_))).count() as u8 }
     pub fn segment_count(&self) -> u16 { self.segments.len() as u16 }
     pub fn changes(&self) -> std::sync::Arc<tokio::sync::Notify> { self.changes.clone() }
-    pub fn note_rejection(&mut self, status: u16) { self.rejected = Some(status); self.changes.notify_one(); }
+    pub fn note_rtt(&mut self, rtt_ms: f64) { self.sizer.observe(None, Some(rtt_ms)); }
+    pub fn note_goodput(&mut self, bps: f64) {
+        if self.sizer.observe(Some(bps), None) { self.floor.relax(); }
+    }
+    pub fn note_rejection(&mut self, status: u16) {
+        self.rejected = Some(status); self.sizer.reject(); self.floor.relax(); self.changes.notify_one();
+    }
     pub fn was_rejected(&self) -> bool { self.rejected.is_some() }
     pub fn rejection_status(&self) -> Option<u16> { self.rejected }
     pub fn pending_count(&self) -> usize { self.segments.iter().filter(|segment| segment.status == Status::Pending).count() }

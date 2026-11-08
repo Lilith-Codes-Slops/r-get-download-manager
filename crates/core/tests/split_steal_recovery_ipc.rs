@@ -4,7 +4,8 @@ use downloader_ipc::{ClientRequest, DaemonEvent, FrameDecoder, FrameEncoder};
 use std::{io::{Read, Write}, net::{TcpListener, TcpStream}, os::unix::net::UnixStream,
     path::PathBuf, process::{Child, Command, Stdio}, sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
     time::{Duration, Instant}};
-const TOTAL: u64 = 8 * 1024 * 1024;
+// Large enough for stealing even in the highest latency bucket.
+const TOTAL: u64 = 32 * 1024 * 1024;
 
 struct Daemon { root: PathBuf, process: Option<Child> }
 impl Daemon {

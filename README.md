@@ -90,9 +90,10 @@ transit. Unavailable telemetry from older daemons is shown as unknown. Split pro
 when the event stream is unavailable the GUI falls back to queue samples. Live connection changes are available only for split tasks; existing
 single-stream tasks cannot yet be converted to split mode. When a known-length
 resource advertises byte ranges and a strong ETag, the daemon probes an exact
-range and starts with segments of at least 1 MiB; idle workers may steal half
-of a sufficiently large unfinished range. Each resulting remaining half is at
-least 1 MiB. Adaptive concurrency starts with up to two workers, increases on
+range and starts with segments of at least 1 MiB. Idle workers may steal an
+unwritten suffix when it meets a response-latency-dependent floor (2, 4 or
+8 MiB; 1 MiB before measurement or temporarily after congestion). The donor
+retains at least 1 MiB of unreserved work. Adaptive concurrency starts with up to two workers, increases on
 healthy recent throughput up to the requested maximum, and reduces on a sharp
 slowdown or an HTTP 429/503 response. It may run with one worker when a server
 limits connections; repeated 429/503 responses at one worker eventually fail

@@ -1,11 +1,20 @@
 # Adaptive segment sizing: implementation status
 
-**Not enabled in the live engine.** `split/adaptive_sizer.rs` contains a pure,
-policy prototype with unit tests; the tests have not been run in this sandbox. It does not control initial partitions or
-steals, collect live measurements, persist host history, or expose telemetry.
-Existing transfers and v2 checkpoint layouts are unchanged. In particular, the
-policy's 1 MiB/s definition of "high goodput" and 25% EMA weight are provisional
-engineering choices, not measured optima.
+The adaptive **target size is not enabled** for live partitioning or stealing,
+and host history is not persisted. The pure target-size policy has unit tests;
+its 1 MiB/s definition of "high goodput" and 25% EMA weight are provisional.
+
+The separate latency-aware **steal floor** uses the same per-task sizer's
+response-header latency EMA. With a valid observation, the floor is 2 MiB below
+50 ms, 4 MiB from 50 to below 200 ms, and 8 MiB at 200 ms or above; before an
+observation the legacy 1 MiB floor is used. Response-header latency includes
+server and network delays and is not a direct measurement of network RTT.
+HTTP 429/503 or a sharp drop in sampled committed goodput sets a 1 MiB floor for
+the next four steal decisions. Capacity inspection does not consume a decision.
+The donor retains at least 1 MiB beyond its committed and in-flight prefix.
+Goodput sampling runs at roughly two-second intervals; rate limiting, local disk
+or server stalls can be mistaken for slowdown. State resets when the daemon
+reconstructs the map; no latency or target history is persisted.
 
 ## Integration constraints
 

@@ -52,6 +52,7 @@ async fn receive_range(ctx: &mut Context, segment: usize, mut offset: u64, reque
         .header(reqwest::header::ACCEPT_ENCODING, "identity")
         .header(reqwest::header::RANGE, format!("bytes={offset}-{}", requested_end - 1))
         .header(reqwest::header::IF_RANGE, ctx.info.etag.as_str());
+    let started = std::time::Instant::now();
     let response = tokio::select! {
         result = request.send() => result.map_err(|e| e.to_string())?,
         _ = ctx.stop.changed() => return Err(Failure::Fatal("split stopped".into())),
@@ -65,6 +66,7 @@ async fn receive_range(ctx: &mut Context, segment: usize, mut offset: u64, reque
         return Err(Failure::Rejected);
     }
     crate::daemon::range::validate_bounded(&response, &ctx.info, offset, requested_end)?;
+    ctx.map.lock().await.note_rtt(started.elapsed().as_secs_f64() * 1000.0);
     let mut body = response.bytes_stream();
     loop {
         if *ctx.stop.borrow() { return Err(Failure::Fatal("split stopped".into())); }
