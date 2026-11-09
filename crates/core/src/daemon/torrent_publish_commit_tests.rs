@@ -7,8 +7,8 @@ use std::{collections::BTreeMap, fs::{self, File}, path::PathBuf, sync::{atomic:
 use tokio::sync::Mutex;
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-struct Lab { root: PathBuf, downloads: PathBuf, store: Persistence, tasks: Tasks, area: StageArea, stage: StageRecord }
-async fn setup() -> Lab {
+pub(super) struct Lab { pub root: PathBuf, pub downloads: PathBuf, pub store: Persistence, pub tasks: Tasks, pub area: StageArea, pub stage: StageRecord }
+pub(super) async fn setup() -> Lab {
     let root = std::env::temp_dir().join(format!("rget-publish-commit-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     fs::create_dir(&root).unwrap(); let downloads = root.join("Downloads"); fs::create_dir(&downloads).unwrap();
     let store = Persistence::new(root.join("state/queue.sqlite3"));
@@ -21,7 +21,7 @@ async fn setup() -> Lab {
     store.save(&tasks, &BandwidthLimiter::new()).await.unwrap();
     Lab { root, downloads, store, tasks, area, stage }
 }
-fn rename(lab: &Lab) {
+pub(super) fn rename(lab: &Lab) {
     let stage = lab.area.verify(&lab.stage).unwrap(); let root = File::open(&lab.downloads).unwrap();
     directory_publish::publish_exact(&stage, "payload", &root, "bundle").unwrap();
 }

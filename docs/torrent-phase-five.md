@@ -413,3 +413,10 @@ missing or changed destination remains unresolved; it is not treated as proof
 of successful deletion. A separate isolated keep-files transaction removes a
 stopped task from the list while retaining its files and marking a detached
 staging row retained. Neither operation is connected to the IPC remove command.
+
+The remove command now routes stopped, recorded multi-file tasks through the
+new keep/delete operations; legacy HTTP and single-file torrent removal retains
+its prior path. It refuses active tracked tasks and does not yet delete failed
+or canceled multi-file stages through IPC. Multi-file downloads remain disabled,
+and lifecycle integration must still ensure a future active worker is stopped
+before removal. Startup removal replay remains conservative for missing paths.

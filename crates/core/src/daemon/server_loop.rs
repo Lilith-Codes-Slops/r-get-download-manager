@@ -206,7 +206,7 @@ impl ServerLoop {
                                                 ClientRequest::Resume { task_id } => super::control::set_paused(&tasks, &controls, task_id, false).await,
                                                 ClientRequest::Cancel { task_id } => super::task_removal::cancel(&tasks, &controls, task_id).await,
                                                 ClientRequest::RemoveTask { task_id, delete_file } => {
-                                                    super::task_removal::remove(&tasks, &controls, &limiter, task_id, delete_file).await
+                                                    super::torrent_remove_dispatch::remove(&tasks, &controls, &limiter, &store, task_id, delete_file).await
                                                 }
                                                 ClientRequest::SetConnections { task_id, count } => super::control::set_connections(&tasks, &controls, task_id, count).await,
                                                 ClientRequest::SetLimit { task_id, kbps } => {

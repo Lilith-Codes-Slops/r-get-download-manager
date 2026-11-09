@@ -132,3 +132,6 @@ mod torrent_remove_recovery;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_remove_keep;
+
+#[cfg(target_os = "linux")]
+mod torrent_remove_dispatch;
