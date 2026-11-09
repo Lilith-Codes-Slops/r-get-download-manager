@@ -420,3 +420,9 @@ its prior path. It refuses active tracked tasks and does not yet delete failed
 or canceled multi-file stages through IPC. Multi-file downloads remain disabled,
 and lifecycle integration must still ensure a future active worker is stopped
 before removal. Startup removal replay remains conservative for missing paths.
+
+The isolated multi-file resolver now rejects magnets before calling librqbit.
+In locked librqbit v9.1.0, the raw peer metadata reader and its connector are
+private, while the public list-only magnet API validates first and computes an
+unchecked length sum. No supported pre-validation hook was found. Local
+metainfo preflight remains available; multi-file download ingress is still off.

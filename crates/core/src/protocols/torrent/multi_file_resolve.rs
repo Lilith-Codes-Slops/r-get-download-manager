@@ -13,11 +13,10 @@ fn invalid(message: impl Into<String>) -> MetadataError { MetadataError::Invalid
 
 /// Resolve without requesting payload storage. Local bytes are preflighted
 /// before librqbit sees them. The exact returned bytes and both info-hashes
-/// are checked again before returning any manifest. Magnet metadata is first
-/// validated by librqbit internally, before this function sees its raw bytes;
-/// upstream's unchecked length sum remains a limitation for untrusted magnets.
-/// Never use this result to allocate staging or start a download until that
-/// upstream limitation and the lifecycle integration are addressed.
+/// are checked again before returning any manifest. Magnet resolution is
+/// deliberately rejected: librqbit validates peer metadata before exposing raw
+/// bytes, and its length calculation can overflow. This resolver is isolated
+/// and does not enable staging or multi-file transfers.
 pub async fn resolve(session: &Arc<Session>, source: PreparedSource, expected_hash: &str) -> Result<ResolvedMultiFile, MetadataError> {
     if expected_hash.len() != 40 || !expected_hash.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(invalid("invalid v1 info-hash"));
@@ -31,13 +30,7 @@ pub async fn resolve(session: &Arc<Session>, source: PreparedSource, expected_ha
             if parsed.info_hash.as_string() != expected_hash { return Err(invalid("metainfo info-hash changed")); }
             AddTorrent::from_bytes(bytes)
         }
-        PreparedSource::Magnet(uri) => {
-            // Reuse the bounded magnet parser and reject selective indices
-            // before librqbit can expand potentially hostile `so` ranges.
-            let prepared = super::task_identity::prepare(&super::source::TorrentSource::Magnet(uri.clone())).await?;
-            if prepared.info_hash != expected_hash { return Err(invalid("magnet info-hash changed")); }
-            AddTorrent::from_url(uri)
-        },
+        PreparedSource::Magnet(_) => return Err(invalid("multi-file magnet metadata resolution is disabled: raw metadata cannot be preflighted before engine validation")),
     };
     let opts = AddTorrentOptions { list_only: true, ..Default::default() };
     let result = tokio::time::timeout(Duration::from_secs(60), session.add_torrent(add, Some(opts))).await

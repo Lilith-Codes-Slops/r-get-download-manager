@@ -24,6 +24,9 @@ async fn local_list_only_preflights_and_never_creates_payload_files() {
     assert!(multi_file_resolve::resolve(&engine, PreparedSource::Metainfo(bytes), "0000000000000000000000000000000000000000").await.is_err());
     let unsafe_bytes = metainfo(b".."); let unsafe_hash = librqbit::torrent_from_bytes(&unsafe_bytes).unwrap().info_hash.as_string();
     assert!(multi_file_resolve::resolve(&engine, PreparedSource::Metainfo(unsafe_bytes), &unsafe_hash).await.is_err());
+    let magnet = format!("magnet:?xt=urn:btih:{hash}");
+    let result = multi_file_resolve::resolve(&engine, PreparedSource::Magnet(magnet), &hash).await;
+    assert!(matches!(result, Err(super::metadata::MetadataError::Invalid(message)) if message.contains("disabled")));
     assert!(fs::read_dir(&root).unwrap().next().is_none());
     engine.stop().await; fs::remove_dir_all(root).unwrap();
 }
