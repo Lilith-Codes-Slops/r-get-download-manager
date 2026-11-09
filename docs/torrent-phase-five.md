@@ -373,3 +373,16 @@ and the v1 piece verifier, then rechecks identity and layout. Missing metadata i
 reported separately and invalid metadata or mismatched pieces fail closed. This
 remains observation only: it neither updates tasks nor performs automatic crash
 replay, and callers must exclude concurrent filesystem writers.
+
+Startup now attempts a narrow publication crash-window reconciliation before
+loading the queue: only an exact journaled destination with valid durable
+proof, manifest, info-hash and matching v1 piece hashes is completed. It tries
+to sync both rename parents and persists any sync failure as a warning. It
+never retries a rename; source-present, missing-data, modified, and ambiguous
+cases remain untouched. Completion is atomic with intent removal, followed by
+owned-stage cleanup; cleanup errors retain the record. This path assumes the
+singleton lock and no concurrent external writers. Multi-file downloads and
+full remove/keep/delete integration remain disabled.
+A second startup pass can remove an empty, identity-verified retained stage
+whose task is already durably completed and has no outstanding publication
+intent. It never removes a retained stage that still has a payload.

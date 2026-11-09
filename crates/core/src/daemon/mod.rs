@@ -111,3 +111,9 @@ mod torrent_recovery_info_tests;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_recovery_content;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_publication_recovery;
+
+#[cfg(all(test, target_os = "linux", target_env = "gnu", feature = "torrent"))]
+mod torrent_publication_recovery_tests;

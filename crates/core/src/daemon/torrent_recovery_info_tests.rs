@@ -1,7 +1,7 @@
 use super::{bandwidth::BandwidthLimiter, torrent_manifest_store_tests::{manifest, setup}, torrent_stage_store as stages};
 use std::fs;
 
-fn recovery_metainfo() -> Vec<u8> {
+pub(super) fn recovery_metainfo() -> Vec<u8> {
     let mut bytes = b"d8:announce27:https://example.test/secret4:infod5:filesl".to_vec();
     bytes.extend_from_slice(b"d6:lengthi3e4:pathl3:dir4:fileee");
     bytes.extend_from_slice(b"d6:lengthi0e4:pathl5:emptyee");
