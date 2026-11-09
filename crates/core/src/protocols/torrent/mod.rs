@@ -35,3 +35,6 @@ pub mod state;
 pub mod stall_detector;
 pub mod picker_capabilities;
 pub mod task_identity;
+pub mod multi_file_resolve;
+#[cfg(test)]
+mod multi_file_resolve_tests;

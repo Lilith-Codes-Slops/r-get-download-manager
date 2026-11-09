@@ -323,3 +323,12 @@ record state can be proven; otherwise they leave the reservation or stage for
 inspection. If an awaiting caller is aborted, the blocking operation keeps the
 lock until it ends; an abandoned successful stage remains recorded for startup
 recovery. This allocator is isolated and does not yet start a torrent engine.
+
+An isolated list-only multi-file resolver now preflights local bytes before
+librqbit, rechecks the returned bytes and v1 hash, and compares the engine's
+file list against the validated manifest. It does not allocate staging or start
+payload storage. Magnet input is bounded and selective indices are rejected,
+but librqbit's magnet resolver validates received metadata *before* rGet can
+preflight its raw bytes; its unchecked length sum remains an unresolved risk.
+This resolver is not wired into ingress and magnet resolution has not been
+verified end-to-end. Multi-file downloads remain disabled.
