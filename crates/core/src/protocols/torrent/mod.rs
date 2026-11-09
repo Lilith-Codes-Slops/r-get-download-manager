@@ -8,6 +8,11 @@ pub mod diagnostics;
 pub mod directory_publish;
 pub mod file_priorities;
 pub mod multi_file_layout;
+pub mod staging_manifest;
+#[cfg(target_os = "linux")]
+pub mod staging_tree;
+#[cfg(all(test, target_os = "linux"))]
+mod staging_tree_tests;
 pub mod transport_options;
 pub mod webseed_support;
 pub mod metadata;

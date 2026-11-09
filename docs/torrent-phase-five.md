@@ -91,3 +91,28 @@ storage, safe directory publication and multi-file downloads are not implemented
 The user reported Phase 4 queue unit tests green; live limit-one promotion and
 queued-cancellation tests remain outstanding and can run in parallel. Phase 3
 induced stall/recovery and Phase 4 seed/upload verification remain deferred.
+
+## Staging groundwork (not integrated)
+
+An isolated manifest validator rejects empty or unsafe components, duplicate
+paths, file/directory prefix conflicts, inconsistent total lengths, overflow,
+and excessive file/component/path counts. Legitimate zero-length files are
+allowed. This validator does not yet extract paths from librqbit metadata or
+check filesystem-specific aliases. The daemon still rejects multi-file torrents.
+
+A Linux staging-area helper creates a private `.rget-staging` parent and fresh
+mode-0700 task directories using anchored descriptors and no-follow opens. It
+checks parent ownership and permissions, writes a synced ownership marker,
+and returns a serializable task/name/device/inode record. Verification
+rechecks those values and rejects changed, non-private or symlinked directories
+and markers. The record is **not yet persisted by the daemon**, and the helper
+is not used by the download path. Setup cleanup removes only an empty directory;
+if a marker or unknown content remains, it is left for inspection. This does
+not provide recursive cleanup, crash recovery, payload verification or a
+complete hostile-same-user isolation guarantee. No rename is called by this
+helper. These new tests have not been compiled or run in the sandbox.
+
+The plan requests both keeping a tree after validation failure for inspection
+and cleaning it on every pre-rename failure. Those instructions need a consistent
+policy before wiring cleanup; for now nothing is automatically deleted through
+this new helper. Multi-file publication remains disabled.
