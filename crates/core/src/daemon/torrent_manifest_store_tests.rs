@@ -67,3 +67,35 @@ async fn durable_identity_or_state_change_cannot_be_overwritten() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn manifest_and_reservation_commit_together_before_stage_creation() {
+    use std::time::Duration;
+    let (root, store, tasks) = setup().await;
+    let reservation = store.save_manifest_and_reserve(&tasks, "task", "abc", &manifest()).await.unwrap();
+    let saved = store.load().await.unwrap().tasks.remove("task").unwrap();
+    assert_eq!(saved.torrent.unwrap().root_name.as_deref(), Some("bundle"));
+    let entries = stages::load(&store.database_path()).unwrap();
+    assert_eq!(entries.len(), 1); assert_eq!(entries[0].name, reservation.name);
+    assert_eq!(entries[0].state, stages::State::Reserved);
+    assert!(!root.join(".rget-staging").exists());
+    assert!(tokio::time::timeout(Duration::from_millis(25), super::torrent_lifecycle::global().lock("task")).await.is_err());
+    drop(reservation);
+    let _guard = tokio::time::timeout(Duration::from_secs(1), super::torrent_lifecycle::global().lock("task")).await.unwrap().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn reservation_failure_rolls_back_manifest_and_releases_guard() {
+    use std::time::Duration;
+    let (root, store, tasks) = setup().await;
+    stages::load(&store.database_path()).unwrap();
+    let conn = super::persistence::open(&store.database_path()).unwrap();
+    conn.execute_batch("CREATE TRIGGER reject_reservation BEFORE INSERT ON rget_torrent_stages_v1 BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap(); drop(conn);
+    assert!(store.save_manifest_and_reserve(&tasks, "task", "abc", &manifest()).await.is_err());
+    assert!(stages::load(&store.database_path()).unwrap().is_empty());
+    assert!(tasks.lock().await["task"].torrent.as_ref().unwrap().files.is_none());
+    assert!(store.load().await.unwrap().tasks["task"].torrent.as_ref().unwrap().files.is_none());
+    let _guard = tokio::time::timeout(Duration::from_secs(1), super::torrent_lifecycle::global().lock("task")).await.unwrap().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}

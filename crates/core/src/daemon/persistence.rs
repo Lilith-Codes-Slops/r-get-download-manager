@@ -24,11 +24,11 @@ pub(super) struct SavedState {
 pub(super) struct Persistence {
     path: PathBuf,
     // Serialize capture AND commit, so an older snapshot cannot commit last.
-    pub(super) gate: Mutex<()>,
+    pub(super) gate: std::sync::Arc<Mutex<()>>,
 }
 
 impl Persistence {
-    pub fn new(path: PathBuf) -> Self { Self { path, gate: Mutex::new(()) } }
+    pub fn new(path: PathBuf) -> Self { Self { path, gate: std::sync::Arc::new(Mutex::new(())) } }
     #[cfg(target_os = "linux")]
     pub(super) fn database_path(&self) -> PathBuf { self.path.clone() }
 

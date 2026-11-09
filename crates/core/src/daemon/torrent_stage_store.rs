@@ -28,7 +28,7 @@ fn open(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-fn valid(task_id: &str, name: &str, created_at: i64) -> Result<()> {
+pub(super) fn valid(task_id: &str, name: &str, created_at: i64) -> Result<()> {
     validate_component(name)?;
     if task_id.is_empty() || task_id.len() > 512 || !name.starts_with("task-") || created_at <= 0 {
         return Err("invalid staging reservation".into());

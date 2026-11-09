@@ -303,3 +303,14 @@ The isolated pre-stage manifest transaction also rechecks the durable task's
 metadata state, source, info-hash, creation identity and existing manifest before
 updating it. A stale in-memory task cannot overwrite a changed durable task.
 It still requires the shared lifecycle guard, and ingress is not wired to it.
+
+A guarded pre-stage operation now writes the validated manifest and exact stage
+reservation in the same SQLite transaction. It returns the process-local task
+lock to the caller and performs no filesystem allocation. Failure rolls back
+both writes. This is still an isolated primitive: no ingress, allocation, cancel,
+removal, or recovery path uses it yet, so it does not enable multi-file torrents.
+If the awaiting caller is canceled after the SQLite operation starts, the
+blocking operation retains its task and persistence guards until it finishes;
+any committed reservation is left for conservative recovery rather than being
+silently discarded. This path must be integrated with cancellation-aware
+allocation and the existing reservation crash-window rules before use.
