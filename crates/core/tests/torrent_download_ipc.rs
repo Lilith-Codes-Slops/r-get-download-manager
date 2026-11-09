@@ -164,3 +164,20 @@ fn torrent_transition_subscription_is_opt_in() {
     assert_eq!(event, DaemonEvent::TorrentEventsReady);
     drop(stream); drop(f); let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn local_multifile_is_validated_before_allocating_a_stage() {
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("rget-multi-preflight-{}-{nonce}", std::process::id()));
+    std::fs::create_dir_all(root.join("Downloads")).unwrap();
+    let source = root.join("bundle.torrent");
+    let mut torrent = b"d4:infod5:filesld6:lengthi3e4:pathl1:aeee4:name6:bundle12:piece lengthi16384e6:pieces20:".to_vec();
+    torrent.extend_from_slice(&[0; 20]); torrent.extend_from_slice(b"ee");
+    std::fs::write(&source, torrent).unwrap();
+    let f = Fixture::start(root.clone());
+    let response = f.request(ClientRequest::AddTask { url: source.to_str().unwrap().into(), mirrors: vec![],
+        connections: 1, extract: false, category: None, not_before: None });
+    assert!(matches!(response, DaemonEvent::TaskFailed { error, .. } if error.contains("multi-file torrents are not enabled")));
+    assert!(std::fs::read_dir(root.join("Downloads")).unwrap().next().is_none());
+    drop(f); let _ = std::fs::remove_dir_all(root);
+}

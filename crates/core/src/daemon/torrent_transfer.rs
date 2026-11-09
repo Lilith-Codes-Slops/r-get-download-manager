@@ -19,7 +19,14 @@ pub(super) async fn add(source: String, connections: u8, tasks: Tasks, controls:
         Err(_) => return DaemonEvent::TaskFailed { task_id: source, error: "metadata timeout".into() },
     };
     match &prepared.source {
-        task_identity::PreparedSource::Metainfo(bytes) => crate::protocols::torrent::webseed_support::log_metainfo(bytes),
+        task_identity::PreparedSource::Metainfo(bytes) => {
+            crate::protocols::torrent::webseed_support::log_metainfo(bytes);
+            match crate::protocols::torrent::multi_file_metadata::preflight_local(bytes) {
+                Ok(None) => {},
+                Ok(Some(_)) => return DaemonEvent::TaskFailed { task_id: source, error: "multi-file torrents are not enabled until staging recovery and cleanup are implemented".into() },
+                Err(error) => return DaemonEvent::TaskFailed { task_id: source, error: format!("invalid multi-file metadata: {error}") },
+            }
+        },
         task_identity::PreparedSource::Magnet(_) => tracing::info!("webseed declarations unavailable from magnet metadata; P2P only"),
     }
     let mut guard = tasks.lock().await;

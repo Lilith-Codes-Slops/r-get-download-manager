@@ -129,3 +129,18 @@ prevent concurrent modifications; it does not hash file contents. Verification
 failure does not remove anything. Neither this helper nor the payload creation
 helper is integrated into the daemon, and the new tests have not been run in
 the sandbox. Multi-file publication remains disabled.
+
+## Metadata preflight groundwork
+
+Local multi-file metainfo is now preflighted from the locked librqbit raw info
+model before a staging directory is created. The preflight checks paths,
+attributes, checked total length and piece-hash count, rejects lossy or
+non-UTF-8 names, and confirms the engine's decoded layout matches. Valid
+multi-file requests are still rejected with an explicit message: recording a
+manifest in a task, durable ownership and cleanup are not yet integrated.
+Magnet metadata remains subject to the existing single-file-only resolver and
+may allocate an empty staging directory before rejection; it does not start a
+payload download. These changes have not been compiled or run in the sandbox.
+
+The latest user-reported workspace run was green after the staging verifier;
+the no-default-features result for that increment was not reported.
