@@ -154,6 +154,18 @@ async fn destination_collision_keeps_existing_tree_and_owned_stage() {
     let stage = lab.stage(); assert_eq!(fs::read(stage.join("payload/dir/a")).unwrap(), b"abc");
     drop(daemon); let restarted = Daemon::start(&lab.home, None);
     assert!(restarted.task(&id).unwrap().state.starts_with("failed:")); assert!(stage.exists());
+    assert!(matches!(restarted.request(ClientRequest::RemoveTask { task_id: id, delete_file: true }), DaemonEvent::TaskStateChanged { state, .. } if state == "removed"));
+    assert!(!stage.exists()); assert_eq!(fs::read(lab.home.join("Downloads/bundle/sentinel")).unwrap(), b"safe");
+    drop(restarted); lab.finish().await;
+
+    let lab = Lab::new().await; fs::create_dir_all(lab.home.join("Downloads/bundle")).unwrap();
+    fs::write(lab.home.join("Downloads/bundle/sentinel"), b"safe").unwrap();
+    let daemon = Daemon::start(&lab.home, None); let id = daemon.add(&lab.source);
+    assert!(daemon.terminal(&id).state.starts_with("failed:")); let stage = lab.stage(); drop(daemon);
+    let restarted = Daemon::start(&lab.home, None);
+    assert!(matches!(restarted.request(ClientRequest::RemoveTask { task_id: id, delete_file: false }), DaemonEvent::TaskStateChanged { state, .. } if state == "removed"));
+    assert!(stage.exists()); assert_eq!(fs::read(stage.join("payload/dir/a")).unwrap(), b"abc");
+    assert_eq!(fs::read(lab.home.join("Downloads/bundle/sentinel")).unwrap(), b"safe");
     drop(restarted); lab.finish().await;
 }
 

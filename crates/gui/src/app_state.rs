@@ -145,6 +145,12 @@ fn add_request(url: String, connections: u8) -> ClientRequest {
 fn auto_renamed(task: &DownloadInfo) -> bool {
     matches!((&task.suggested_filename, &task.filename), (Some(original), Some(actual)) if original != actual)
 }
+fn torrent_display(task: &DownloadInfo) -> (Option<&str>, Option<usize>) {
+    match &task.torrent {
+        Some(torrent) => (torrent.root_name.as_deref(), torrent.files.as_ref().map(Vec::len)),
+        None => (None, None),
+    }
+}
 fn count(value: Option<u8>) -> String { value.map(|n| n.to_string()).unwrap_or_else(|| "Unknown".into()) }
 fn unavailable(ui: &mut egui::Ui, label: &str, reason: &str) {
     ui.add_enabled(false, egui::Button::new(label)).on_hover_text(reason);
@@ -192,6 +198,13 @@ mod tests {
         assert!(!auto_renamed(&task));
         task.filename = None;
         assert!(!auto_renamed(&task));
+    }
+    #[test]
+    fn torrent_display_uses_persisted_root_and_file_count() {
+        let task: DownloadInfo = serde_json::from_str(r#"{"url":"task","state":"downloading","filename":null,"downloaded":0,"total":null,"speed_bps":0,"final_path":null,"torrent":{"source":"file.torrent","info_hash":"hash","created_at":1,"root_name":"bundle","files":[{"path":"a","length":3,"priority":1},{"path":"empty","length":0,"priority":1}]}}"#).unwrap();
+        assert_eq!(torrent_display(&task), (Some("bundle"), Some(2)));
+        let mut legacy = task; legacy.torrent.as_mut().unwrap().root_name = None; legacy.torrent.as_mut().unwrap().files = None;
+        assert_eq!(torrent_display(&legacy), (None, None));
     }
     #[test]
     fn formats_transfer_values() {

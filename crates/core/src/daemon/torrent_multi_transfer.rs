@@ -15,6 +15,12 @@ pub(super) struct PendingPublication(pub String);
 impl std::fmt::Display for PendingPublication { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "published directory needs reconciliation: {}", self.0) } }
 impl std::error::Error for PendingPublication {}
 
+/// No removal or retry is safe in this process if the barrier did not drain.
+#[derive(Debug)]
+pub(super) struct StorageQuiescenceFailed(pub String);
+impl std::fmt::Display for StorageQuiescenceFailed { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "storage quiescence not established: {}", self.0) } }
+impl std::error::Error for StorageQuiescenceFailed {}
+
 pub(super) async fn run(id: &str, connections: u8, tasks: &Tasks, store: &Persistence,
     limiter: &Arc<BandwidthLimiter>, mut control: watch::Receiver<TransferControl>, prepared: Prepared) -> Result<()> {
     let PreparedSource::Metainfo(bytes) = prepared.source else { return Err("multi-file magnets are deferred".into()); };
@@ -49,8 +55,10 @@ pub(super) async fn run(id: &str, connections: u8, tasks: &Tasks, store: &Persis
     // barrier drains admitted calls and permanently rejects future storage I/O.
     session.stop().await;
     let closer = gate.clone();
-    if let Err(error) = tokio::task::spawn_blocking(move || closer.close_and_wait()).await? {
-        return Err(format!("storage quiescence failed: {error}; stage retained at {}", stage_path.display()).into());
+    match tokio::task::spawn_blocking(move || closer.close_and_wait()).await {
+        Ok(Ok(())) => {},
+        Ok(Err(error)) => return Err(StorageQuiescenceFailed(format!("{error}; stage retained at {}", stage_path.display())).into()),
+        Err(error) => return Err(StorageQuiescenceFailed(format!("barrier task failed: {error}; stage retained at {}", stage_path.display())).into()),
     }
     #[cfg(feature = "torrent-test-hooks")]
     {

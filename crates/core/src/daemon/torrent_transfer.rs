@@ -83,12 +83,13 @@ pub(super) async fn add(source: String, connections: u8, tasks: Tasks, controls:
             let mut guard = tasks.lock().await;
             if let Some(task) = guard.get_mut(&task_id) {
                 task.speed_bps = 0; task.active_connections = None;
-                if *rx.borrow() == TransferControl::Canceled { task.state = "canceled".into(); }
-                else if let Err(error) = result {
-                    if error.downcast_ref::<super::torrent_multi_transfer::PendingPublication>().is_some() {
-                        task.connection_note = Some(error.to_string());
-                    } else { task.state = format!("failed: {error}"); }
-                }
+                if let Err(error) = result {
+                    if error.downcast_ref::<super::torrent_multi_transfer::StorageQuiescenceFailed>().is_some() {
+                        task.state = "quiescence-unknown".into(); task.connection_note = Some(error.to_string());
+                    } else if *rx.borrow() == TransferControl::Canceled { task.state = "canceled".into(); }
+                    else if error.downcast_ref::<super::torrent_multi_transfer::PendingPublication>().is_some() { task.connection_note = Some(error.to_string()); }
+                    else { task.state = format!("failed: {error}"); }
+                } else if *rx.borrow() == TransferControl::Canceled { task.state = "canceled".into(); }
             }
         }
         drop(permit);

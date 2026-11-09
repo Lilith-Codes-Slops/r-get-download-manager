@@ -473,3 +473,24 @@ Run the dedicated tests serially:
 ```sh
 cargo test -p downloader-core --features torrent-test-hooks --test torrent_fault_ipc --locked -- --test-threads=1
 ```
+
+Acceptance review: a failed collision can leave a source-present publication
+intent. Keep/delete now abandon that intent only for a stopped unpublished task
+whose durable identity still matches and whose exact staged payload is proven
+present; a destination match or ambiguous observation still fails closed. This
+keeps the existing destination untouched. The GUI status now includes the
+validated root and file count when available.
+
+A public-network check is available as the ignored `torrent_public_ipc` test.
+Set `RGET_PUBLIC_TORRENT` to an existing local v1 multi-file `.torrent` with
+reachable peers, then run the ignored test with `--nocapture`. It creates an
+isolated temporary daemon home, displays the expected root/count, downloads,
+checks the reported identity, and makes a second v1 piece-verification pass
+using the project's recovery verifier. On success it removes the isolated test
+home; on failure it prints and leaves that directory for inspection. Network
+availability, remote seeders and any metainfo size or feature restrictions can
+prevent completion. Public-network acceptance is still pending until it passes.
+If the storage barrier itself fails or its blocking worker panics, the task is
+now marked `quiescence-unknown`, even when cancel was requested. Both removal
+modes refuse while that daemon is running; a restart ends its engine tasks and
+then applies conservative durable recovery. This is not a task-join guarantee.

@@ -6,7 +6,7 @@ impl AppState {
             ui.heading(RichText::new("rGet").strong().color(Color32::from_rgb(99, 165, 255)));
             ui.add_space(16.0);
             if ui.button("+ Add URL").clicked() { self.add_open = true; }
-            unavailable(ui, "Add file", "Torrent and Metalink are not implemented.");
+            unavailable(ui, "Add file", "File picker is not available; use Add URL to enter a local .torrent path.");
             unavailable(ui, "Pause all", "Not yet supported.");
             unavailable(ui, "Resume all", "Not yet supported.");
             unavailable(ui, "Cancel all", "Not yet supported.");
@@ -37,7 +37,8 @@ impl AppState {
             if self.tasks.is_empty() { ui.add_space(24.0); ui.label("No downloads yet. Add a URL to get started."); }
             for task in &self.tasks {
                 let selected = self.selected_task.as_deref() == Some(task.url.as_str());
-                let name = task.filename.as_deref().unwrap_or_else(|| task.url.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(&task.url));
+                let name = task.filename.as_deref().or_else(|| task.torrent.as_ref().and_then(|torrent| torrent.root_name.as_deref()))
+                    .unwrap_or_else(|| task.url.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(&task.url));
                 ui.horizontal(|ui| {
                     if ui.selectable_label(selected, RichText::new(name).strong()).clicked() { self.selected_task = Some(task.url.clone()); }
                     if auto_renamed(task) {
@@ -80,6 +81,9 @@ impl AppState {
                 ui.label(RichText::new(task.torrent.as_ref().map(|t| t.source.as_str()).unwrap_or(&task.url)).small());
                 egui::Grid::new("details_grid").num_columns(2).spacing([24.0, 6.0]).show(ui, |ui| {
                     metric(ui, "Status", &task.state);
+                    let (root, files) = torrent_display(task);
+                    if let Some(root) = root { metric(ui, "Torrent root", root); }
+                    if let Some(files) = files { metric(ui, "Torrent files", &files.to_string()); }
                     if let Some(m) = task.torrent.as_ref().and_then(|t| t.metrics.as_ref()) {
                         metric(ui, "Torrent stalls", &format!("{}{}", m.stall_count, if m.stalled { " (stalled)" } else { "" }));
                         metric(ui, "First verified piece", &m.time_to_first_piece_ms.map(|ms| format!("{ms} ms")).unwrap_or_else(|| "Unknown".into()));

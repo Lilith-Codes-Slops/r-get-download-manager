@@ -15,6 +15,7 @@ fn ensure_task(conn: &rusqlite::Connection, task: &DownloadInfo) -> Result<()> {
 }
 fn remove(path: &Path, root: &Path, task: &DownloadInfo) -> Result<()> {
     let conn = torrent_remove_completed::open(path)?; ensure_task(&conn, task)?;
+    super::torrent_abandon_intent::abandon_source(path, root, task)?;
     if torrent_publish_intent::has_intent(path, &task.url)? || torrent_published_store::load(path, &task.url)?.is_some() {
         return Err("published or journaled torrent requires reconciliation".into());
     }

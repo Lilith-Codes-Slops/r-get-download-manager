@@ -147,3 +147,6 @@ mod torrent_stage_content;
 
 #[cfg(all(target_os = "linux", feature = "torrent-test-hooks"))]
 mod torrent_test_hooks;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_abandon_intent;

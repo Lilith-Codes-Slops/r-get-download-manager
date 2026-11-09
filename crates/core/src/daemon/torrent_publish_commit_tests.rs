@@ -164,7 +164,7 @@ async fn remove_from_list_keeps_published_and_detached_stage() {
     let lab = setup().await; let database = lab.store.database_path();
     let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap(); rename(&lab);
     lab.store.commit_torrent_publication(&lab.tasks, &lab.downloads, &intent, None).await.unwrap();
-    lab.store.forget_torrent_keep_files(&lab.tasks, "task").await.unwrap();
+    lab.store.forget_torrent_keep_files(&lab.tasks, "task", Some(&lab.downloads)).await.unwrap();
     assert!(lab.tasks.lock().await.get("task").is_none());
     assert!(lab.downloads.join("bundle").is_dir()); assert!(lab.area.verify(&lab.stage).is_ok());
     assert_eq!(stages::load(&database).unwrap()[0].state, stages::State::Retained);
@@ -182,7 +182,7 @@ async fn keep_files_refuses_pending_removal_intent() {
     lab.store.commit_torrent_publication(&lab.tasks, &lab.downloads, &intent, None).await.unwrap();
     let unexpected = lab.downloads.join(".rget-staging").join(&lab.stage.name).join("unexpected"); fs::write(&unexpected, b"keep").unwrap();
     assert!(lab.store.remove_completed_torrent(&lab.tasks, "task", &lab.downloads).await.is_err());
-    assert!(lab.store.forget_torrent_keep_files(&lab.tasks, "task").await.is_err());
+    assert!(lab.store.forget_torrent_keep_files(&lab.tasks, "task", Some(&lab.downloads)).await.is_err());
     assert_eq!(lab.tasks.lock().await["task"].state, "completed");
     assert!(lab.downloads.join("bundle").exists()); assert!(unexpected.exists());
     fs::remove_dir_all(lab.root).unwrap();
@@ -191,9 +191,13 @@ async fn keep_files_refuses_pending_removal_intent() {
 #[tokio::test]
 async fn unfinished_removal_cleans_only_owned_stage_and_rejects_journal() {
     let lab = setup().await; let database = lab.store.database_path();
-    lab.tasks.lock().await.get_mut("task").unwrap().state = "failed: verification".into();
+    {
+        let mut tasks = lab.tasks.lock().await; let task = tasks.get_mut("task").unwrap();
+        task.state = "failed: verification".into(); task.torrent.as_mut().unwrap().stage_name = Some(lab.stage.name.clone());
+    }
     lab.store.save(&lab.tasks, &BandwidthLimiter::new()).await.unwrap();
     let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap();
+    rename(&lab); // A destination match is ambiguous for a failed task; never abandon it.
     assert!(lab.store.remove_unfinished_torrent(&lab.tasks, "task", &lab.downloads).await.is_err());
     assert_eq!(journal::load(&database).unwrap(), vec![intent]); assert!(lab.area.verify(&lab.stage).is_ok());
     fs::remove_dir_all(lab.root).unwrap();
@@ -203,5 +207,56 @@ async fn unfinished_removal_cleans_only_owned_stage_and_rejects_journal() {
     lab.store.save(&lab.tasks, &BandwidthLimiter::new()).await.unwrap();
     lab.store.remove_unfinished_torrent(&lab.tasks, "task", &lab.downloads).await.unwrap();
     assert!(stages::load(&database).unwrap().is_empty()); assert!(!lab.tasks.lock().await.contains_key("task"));
+    fs::remove_dir_all(lab.root).unwrap();
+}
+
+#[tokio::test]
+async fn stopped_source_intent_allows_safe_keep_or_delete() {
+    for delete in [false, true] {
+        let lab = setup().await; let database = lab.store.database_path();
+        let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap();
+        fs::create_dir(lab.downloads.join("bundle")).unwrap(); fs::write(lab.downloads.join("bundle/keep"), b"unrelated").unwrap();
+        {
+            let mut tasks = lab.tasks.lock().await; let task = tasks.get_mut("task").unwrap();
+            task.state = "failed: collision".into(); task.torrent.as_mut().unwrap().stage_name = Some(lab.stage.name.clone());
+        }
+        lab.store.save(&lab.tasks, &BandwidthLimiter::new()).await.unwrap();
+        if delete { lab.store.remove_unfinished_torrent(&lab.tasks, "task", &lab.downloads).await.unwrap(); }
+        else { lab.store.forget_torrent_keep_files(&lab.tasks, "task", Some(&lab.downloads)).await.unwrap(); }
+        assert!(!lab.tasks.lock().await.contains_key("task")); assert!(journal::load(&database).unwrap().is_empty());
+        assert_eq!(fs::read(lab.downloads.join("bundle/keep")).unwrap(), b"unrelated");
+        assert_eq!(lab.area.verify(&intent.stage).is_ok(), !delete);
+        assert_eq!(stages::load(&database).unwrap().len(), if delete { 0 } else { 1 });
+        fs::remove_dir_all(lab.root).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn stale_task_cannot_abandon_publication_intent() {
+    let lab = setup().await; let database = lab.store.database_path();
+    let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap();
+    {
+        let mut tasks = lab.tasks.lock().await; let task = tasks.get_mut("task").unwrap();
+        task.state = "failed: collision".into(); task.torrent.as_mut().unwrap().stage_name = Some(lab.stage.name.clone());
+    }
+    assert!(lab.store.forget_torrent_keep_files(&lab.tasks, "task", Some(&lab.downloads)).await.is_err());
+    assert_eq!(journal::load(&database).unwrap(), vec![intent]); assert!(lab.area.verify(&lab.stage).is_ok());
+    fs::remove_dir_all(lab.root).unwrap();
+}
+
+#[tokio::test]
+async fn replaced_staged_payload_never_abandons_intent() {
+    let lab = setup().await; let database = lab.store.database_path();
+    let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap();
+    let stage_dir = lab.downloads.join(".rget-staging").join(&lab.stage.name);
+    fs::rename(stage_dir.join("payload"), stage_dir.join("original")).unwrap(); fs::create_dir(stage_dir.join("payload")).unwrap();
+    {
+        let mut tasks = lab.tasks.lock().await; let task = tasks.get_mut("task").unwrap();
+        task.state = "failed: collision".into(); task.torrent.as_mut().unwrap().stage_name = Some(lab.stage.name.clone());
+    }
+    lab.store.save(&lab.tasks, &BandwidthLimiter::new()).await.unwrap();
+    assert!(lab.store.forget_torrent_keep_files(&lab.tasks, "task", Some(&lab.downloads)).await.is_err());
+    assert!(lab.store.remove_unfinished_torrent(&lab.tasks, "task", &lab.downloads).await.is_err());
+    assert_eq!(journal::load(&database).unwrap(), vec![intent]); assert!(stage_dir.join("original").is_dir());
     fs::remove_dir_all(lab.root).unwrap();
 }

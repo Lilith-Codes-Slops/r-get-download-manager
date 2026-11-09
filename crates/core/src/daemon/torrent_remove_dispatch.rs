@@ -36,7 +36,7 @@ async fn remove_at_root(tasks: &Tasks, controls: &Controls, limiter: &Arc<Bandwi
                     let Some(root) = root else { return failed(id, "HOME is not set"); };
                     if state == "completed" { store.remove_completed_torrent(tasks, &id, root).await }
                     else { store.remove_unfinished_torrent(tasks, &id, root).await }
-                } else { store.forget_torrent_keep_files(tasks, &id).await };
+                } else { store.forget_torrent_keep_files(tasks, &id, root).await };
                 return match result {
                     Ok(()) => {
                         controls.lock().await.remove(&id); limiter.remove(&id).await;
@@ -65,6 +65,7 @@ async fn wait_stopped(tasks: &Tasks, controls: &Controls, id: &str, initial: &st
         let state = tasks.lock().await.get(id).map(|task| task.state.clone()).ok_or("torrent task not found")?;
         if state == "completed" || state == "canceled" || state.starts_with("failed:") { return Ok(state); }
         if state == "finalizing" { return Err("torrent is publishing; retry removal after it finishes".into()); }
+        if state == "quiescence-unknown" { return Err("torrent storage did not quiesce; restart the daemon before removal".into()); }
         if tokio::time::Instant::now() >= deadline { return Err("timed out waiting for torrent to stop; task was not removed".into()); }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
@@ -92,6 +93,20 @@ mod tests {
             assert!(!lab.tasks.lock().await.contains_key("task"));
             std::fs::remove_dir_all(lab.root).unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn unknown_quiescence_refuses_both_removal_modes() {
+        let lab = torrent_publish_commit_tests::setup().await;
+        lab.tasks.lock().await.get_mut("task").unwrap().state = "quiescence-unknown".into();
+        let controls: Controls = Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::new()));
+        let limiter = Arc::new(BandwidthLimiter::new());
+        for delete in [false, true] {
+            let event = remove_at_root(&lab.tasks, &controls, &limiter, &lab.store, "task".into(), delete, Some(&lab.downloads)).await;
+            assert!(matches!(event, DaemonEvent::TaskFailed { error, .. } if error.contains("did not quiesce")));
+            assert!(lab.tasks.lock().await.contains_key("task")); assert!(lab.area.verify(&lab.stage).is_ok());
+        }
+        std::fs::remove_dir_all(lab.root).unwrap();
     }
 
     #[tokio::test]
