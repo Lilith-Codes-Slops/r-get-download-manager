@@ -93,3 +93,6 @@ mod torrent_publish_proof_tests;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_publish_recovery_evidence;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_lifecycle;

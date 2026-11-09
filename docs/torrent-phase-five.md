@@ -287,3 +287,14 @@ identity and layout inspection. Its outcomes are observations only, not
 permission to replay, publish, delete, or complete a task. A matching layout
 cannot detect same-size edits, and source presence does not rule out a separate
 collision at the destination. Automatic reconciliation remains disabled.
+
+## Lifecycle lock groundwork
+
+A process-wide per-task async lock registry is available for future multi-file
+operations. Locks for different tasks do not block one another; canceled waiters
+cannot replace a live lock. It is **not wired into** transfer, cancel, removal,
+or recovery yet and therefore does not currently serialize those paths.
+Integration must use the same registry everywhere, include persistence and
+filesystem operations in the protected scope, and never wait for a worker while
+holding a guard the worker needs to finish. These are process-local locks, not
+protection from unrelated processes or hostile same-user filesystem changes.
