@@ -9,9 +9,7 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 pub struct ServerLoop { pool: IpcConnectionPool }
 impl ServerLoop {
-    pub fn new(pool: IpcConnectionPool) -> Self {
-        Self { pool }
-    }
+    pub fn new(pool: IpcConnectionPool) -> Self { Self { pool } }
     pub async fn run(&self, mut rx: mpsc::Receiver<()>) {
         let endpoint = match EndpointPathResolver::resolve() {
             Ok(e) => e,
@@ -31,6 +29,7 @@ impl ServerLoop {
                 Ok(path) => Arc::new(super::persistence::Persistence::new(path)),
                 Err(e) => { eprintln!("failed to configure persistent state: {e}"); return; }
             };
+            #[cfg(feature = "torrent")] super::torrent_settings::log_config(&store).await;
             let saved = match store.load().await {
                 Ok(saved) => saved,
                 Err(e) => { eprintln!("failed to load persistent state: {e}"); return; }

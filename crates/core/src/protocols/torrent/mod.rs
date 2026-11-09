@@ -7,6 +7,7 @@ pub mod concurrency_queue;
 pub mod metadata;
 pub mod metrics;
 pub mod session;
+pub mod settings;
 pub mod source;
 pub mod state;
 pub mod stall_detector;

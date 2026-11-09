@@ -54,3 +54,6 @@ mod torrent_events;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_queue;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_settings;

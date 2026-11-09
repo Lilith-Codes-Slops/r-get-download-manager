@@ -105,7 +105,7 @@ impl Persistence {
     }
 }
 
-fn open(path: &Path) -> StoreResult<Connection> {
+pub(super) fn open(path: &Path) -> StoreResult<Connection> {
     let parent = path.parent().ok_or("state database has no parent directory")?;
     std::fs::create_dir_all(parent)?;
     #[cfg(unix)]

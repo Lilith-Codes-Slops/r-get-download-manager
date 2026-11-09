@@ -46,11 +46,28 @@ The current code does not implement or claim focused unchoke allocation.
 
 ## Verification still required
 
-The queue and cancellation paths have automated tests, but they have not yet
-been compiled or run in the current environment. After running the workspace
-tests, verify manually in an isolated lab with `RGET_TORRENT_MAX_ACTIVE=1`:
+The user reported the queue and cancellation unit tests passing with both
+workspace and no-default-feature test runs. A live queue test is still needed.
+After running the workspace tests, verify manually in an isolated lab with `RGET_TORRENT_MAX_ACTIVE=1`:
 start a deliberately slow authorized torrent, add another, confirm the second
 stays queued, and cancel or finish the first. Confirm the second starts. Repeat
 by canceling the queued task and ensure no session or partial is created for
 it. Record results; do not infer a pass from the unit tests alone. Public-swarm,
 upload and seed behavior remain unverified.
+
+## Settings groundwork and upload decision
+
+Phase 4 settings have a versioned SQLite row, defaults and validation, but no
+user-facing settings control yet. The loaded settings are logged as **not
+applied**. In particular, the active download queue still uses its existing
+default and `RGET_TORRENT_MAX_ACTIVE`, not the stored limit. Upload remains
+engine-disabled, regardless of the stored upload switch or caps. The check
+and seed limits are not enforced. The settings storage and startup logging
+have not been compiled or tested in this environment.
+
+The locked engine's upload scheduler calls its own torrent and session
+limiters; it has no public external payload-permit hook. A missing rate limit
+means unlimited, not zero, and replacing the rate limiter does not revoke
+previously acquired/in-flight work. The user chose to defer the shared upload
+architecture decision. Do not enable upload or claim a global cap until a
+separate safe design has been selected and verified.
