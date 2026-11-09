@@ -39,3 +39,7 @@ pub mod multi_file_resolve;
 #[cfg(test)]
 mod multi_file_resolve_tests;
 pub mod recovery_metadata;
+#[cfg(target_os = "linux")]
+pub mod recovery_piece_verify;
+#[cfg(all(test, target_os = "linux"))]
+mod recovery_piece_verify_tests;

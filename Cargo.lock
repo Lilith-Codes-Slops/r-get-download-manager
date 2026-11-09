@@ -1426,6 +1426,7 @@ dependencies = [
  "libc",
  "librqbit",
  "librqbit-bencode",
+ "librqbit-sha1-wrapper",
  "nix 0.31.3",
  "reqwest 0.12.28",
  "rusqlite",

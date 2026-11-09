@@ -20,10 +20,15 @@ pub fn from_metainfo(bytes: &[u8], expected_hash: &str, manifest: &ValidatedMani
 /// Re-parse stored bytes and verify they still match the expected v1 hash and
 /// manifest. This does not check payload content or authorize crash recovery.
 pub fn validate_info(info: &[u8], expected_hash: &str, manifest: &ValidatedManifest) -> io::Result<()> {
-    if info.len() > MAX_INFO_BYTES - 8 { return Err(invalid("info dictionary too large")); }
-    let mut wrapped = Vec::with_capacity(info.len() + 8);
-    wrapped.extend_from_slice(b"d4:info"); wrapped.extend_from_slice(info); wrapped.push(b'e');
+    let wrapped = wrap_info(info)?;
     let extracted = from_metainfo(&wrapped, expected_hash, manifest)?;
     if extracted != info { return Err(invalid("info dictionary encoding mismatch")); }
     Ok(())
+}
+
+pub(super) fn wrap_info(info: &[u8]) -> io::Result<Vec<u8>> {
+    if info.len() > MAX_INFO_BYTES - 8 { return Err(invalid("info dictionary too large")); }
+    let mut wrapped = Vec::with_capacity(info.len() + 8);
+    wrapped.extend_from_slice(b"d4:info"); wrapped.extend_from_slice(info); wrapped.push(b'e');
+    Ok(wrapped)
 }

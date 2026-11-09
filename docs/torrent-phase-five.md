@@ -358,3 +358,11 @@ info-dictionary fields may still be sensitive. The stored bytes can be
 revalidated against the info-hash and manifest, but no payload hash check or
 automatic reconciliation is wired yet. Metadata retention/removal policy still
 needs integration before this path is used by downloads.
+
+An isolated, descriptor-relative recovery verifier now checks v1 SHA-1 piece
+hashes in metadata file order, including cross-file pieces, empty files and a
+short final piece. It first validates the stored info-hash and manifest, checks
+the exact tree before and after reading, and rejects symlinks and hardlinks.
+The caller must establish destination identity and exclude concurrent writes.
+This is a content inspection primitive only: it is not wired to startup replay,
+does not adopt or delete anything, and does not enable multi-file downloads.
