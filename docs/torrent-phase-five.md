@@ -18,13 +18,18 @@ The following is a source inspection, not a runtime verification:
   rGet currently rejects all multi-file metadata.
 * **File priorities:** `AddTorrentOptions::only_files` and
   `Session::update_only_files` expose selection, but source inspection found no
-  normal/high per-file priority API. Selection is not priority. rGet does not
-  yet store per-file priorities or enable selection.
+  normal/high per-file priority API. Selection is not priority. rGet records
+  the validated single-file name, size and normal priority in its task identity;
+  it does not apply priorities or enable selection. Multi-file records await
+  safe multi-file integration.
 * **Webseeds:** no BEP 17/19 payload source or webseed option was found in the
   locked librqbit source. The torrent metadata model does not expose `url-list`
-  or `httpseeds`. rGet does not currently extract or count those URLs; it must
-  not report that it has enabled or even detected them. There is no custom
-  HTTP range downloader.
+  or `httpseeds`. rGet now counts declared byte strings in original local
+  metainfo and logs that they are skipped; the count is not URL validation.
+  It deliberately does not log or store potentially sensitive URLs. Magnet
+  metadata cannot establish whether outer metainfo webseed declarations exist,
+  so their count is unknown. Invalid declarations are reported as unknown and
+  do not block P2P downloads. There is no custom HTTP range downloader.
 * **Diagnostics:** live snapshots expose accepted fetched bytes, verified
   bytes/piece count, and aggregate peer counts. rGet samples time to first
   verified piece and derives stall episodes itself. The examined snapshot does
@@ -71,9 +76,10 @@ No multi-file publisher is enabled until these cases are implemented and tested.
 
 A completion log summarizes the existing sampled first-piece and stall metrics;
 unknown counters stay unknown. Version-gated transport capability logging and
-preliminary component/naming helpers are included. File priority storage,
-webseed detection, safe directory publication and multi-file downloads are
-not implemented. No Phase 5 exit criterion is claimed complete.
+preliminary component/naming helpers are included. Single-file default priority
+records and local-metainfo webseed declaration counts have been added but have
+not been compiled or tested in the current environment. Multi-file priority
+storage, safe directory publication and multi-file downloads are not implemented. No Phase 5 exit criterion is claimed complete.
 
 The user reported Phase 4 queue unit tests green; live limit-one promotion and
 queued-cancellation tests remain outstanding and can run in parallel. Phase 3

@@ -18,6 +18,10 @@ pub(super) async fn add(source: String, connections: u8, tasks: Tasks, controls:
         Ok(Err(error)) => return DaemonEvent::TaskFailed { task_id: source, error: error.to_string() },
         Err(_) => return DaemonEvent::TaskFailed { task_id: source, error: "metadata timeout".into() },
     };
+    match &prepared.source {
+        task_identity::PreparedSource::Metainfo(bytes) => crate::protocols::torrent::webseed_support::log_metainfo(bytes),
+        task_identity::PreparedSource::Magnet(_) => tracing::info!("webseed declarations unavailable from magnet metadata; P2P only"),
+    }
     let mut guard = tasks.lock().await;
     let duplicate = guard.values().find(|task| {
         task.torrent.as_ref().and_then(|torrent| torrent.info_hash.as_deref()) == Some(prepared.info_hash.as_str())
@@ -47,7 +51,7 @@ pub(super) async fn add(source: String, connections: u8, tasks: Tasks, controls:
     };
     let task = DownloadInfo { url: id.clone(), state: "queued".into(), filename: None,
         downloaded: 0, total: None, speed_bps: 0, final_path: None, destination_path: None,
-        suggested_filename: None, torrent: Some(TorrentIdentity { source, info_hash: Some(prepared.info_hash.clone()), stage_name: None, seed, created_at, metrics: None }),
+        suggested_filename: None, torrent: Some(TorrentIdentity { source, info_hash: Some(prepared.info_hash.clone()), stage_name: None, seed, created_at, metrics: None, files: None }),
         resume_supported: false, partial_name: None, requested_connections: Some(connections),
         active_connections: None, segment_count: None, connection_note: Some("Torrent: pause, resume and speed limits are not available".into()),
         live_connections_supported: false };
@@ -167,7 +171,10 @@ async fn download(session: &Arc<Session>, root: &Path, stage: &Path, id: &str, c
         task.suggested_filename = Some(filename.clone());
         task.filename = proposed.file_name().map(|s| s.to_string_lossy().into_owned());
         task.total = meta.info.info().length;
-        if let Some(identity) = &mut task.torrent { identity.metrics = Some(metrics.snapshot.clone()); }
+        if let Some(identity) = &mut task.torrent {
+            identity.metrics = Some(metrics.snapshot.clone());
+            identity.files = Some(crate::protocols::torrent::file_priorities::single_file(&filename, meta.info.info().length.ok_or("single file length missing")?));
+        }
         task.state = "peers".into();
     }
     super::progress_events::notify();

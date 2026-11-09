@@ -5,8 +5,10 @@
 
 pub mod concurrency_queue;
 pub mod diagnostics;
+pub mod file_priorities;
 pub mod multi_file_layout;
 pub mod transport_options;
+pub mod webseed_support;
 pub mod metadata;
 pub mod metrics;
 pub mod session;

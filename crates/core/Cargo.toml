@@ -30,6 +30,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 async-trait = { workspace = true }
 librqbit = { workspace = true, optional = true, features = ["disable-upload"] }
+librqbit-bencode = { version = "=9.1.0", optional = true }
 nix = { version = "0.31.3", features = ["fs"] }
 libc = "0.2.191"
 futures-util = "0.3"
@@ -38,5 +39,5 @@ futures-util = "0.3"
 default = ["torrent"]
 # Explicitly opt in to daemon-kill integration-test hooks; never use in production.
 checkpoint-test-hooks = []
-torrent = ["librqbit"]
+torrent = ["librqbit", "librqbit-bencode"]
 http3 = []

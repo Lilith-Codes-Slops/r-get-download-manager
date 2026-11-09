@@ -105,6 +105,9 @@ async fn torrent_file_and_magnet_download_from_local_tracker_without_clobbering(
     let first = f.completed(&first_id).await;
     assert_eq!(first.torrent.as_ref().unwrap().source, file_source);
     assert!(!first.torrent.as_ref().unwrap().seed);
+    let files = first.torrent.as_ref().unwrap().files.as_ref().expect("recorded files");
+    assert_eq!(files.len(), 1); assert_eq!(files[0].path, "fixture.bin");
+    assert_eq!(files[0].length, 3); assert_eq!(files[0].priority, 1);
     let metrics = first.torrent.as_ref().unwrap().metrics.as_ref().expect("torrent metrics");
     assert!(metrics.metadata_fetch_ms.is_some());
     assert!(metrics.time_to_first_piece_ms.is_some());
@@ -112,9 +115,12 @@ async fn torrent_file_and_magnet_download_from_local_tracker_without_clobbering(
     assert_eq!(first.filename.as_deref(), Some("fixture.bin"));
     assert_eq!(std::fs::read(lab.join("Downloads/fixture.bin")).unwrap(), b"abc");
     assert_eq!(f.add(&magnet), first_id, "duplicate magnet should reuse completed task");
+    f.request(ClientRequest::SetLimit { task_id: None, kbps: 0 }); // Persist before the test kills the daemon.
     drop(f);
     let f = Fixture::start(lab.clone());
     assert_eq!(f.add(&magnet), first_id, "identity should persist across restart");
+    let restored = f.completed(&first_id).await;
+    assert_eq!(restored.torrent.unwrap().files.unwrap()[0].priority, 1);
     assert!(matches!(f.request(ClientRequest::RemoveTask { task_id: first_id.clone(), delete_file: false }), DaemonEvent::TaskStateChanged { .. }));
     assert_eq!(std::fs::read(lab.join("Downloads/fixture.bin")).unwrap(), b"abc");
     let second_id = f.add(&magnet);

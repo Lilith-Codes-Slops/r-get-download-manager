@@ -57,6 +57,17 @@ pub struct TorrentIdentity {
     /// Best-effort observation for the current attempt, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics: Option<TorrentMetrics>,
+    /// Validated files discovered for this attempt; absent for older records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<TorrentFile>>,
+}
+
+/// File priorities are stored only; the current engine integration does not apply them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TorrentFile {
+    pub path: String,
+    pub length: u64,
+    pub priority: u8,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,9 +229,13 @@ mod tests {
     #[test]
     fn torrent_identity_roundtrips_and_seed_is_persisted() {
         let identity = TorrentIdentity { source: "magnet:?xt=test".into(), info_hash: Some("hash".into()),
-            stage_name: Some(".rget-torrent-test".into()), seed: true, created_at: 123, metrics: None };
+            stage_name: Some(".rget-torrent-test".into()), seed: true, created_at: 123, metrics: None, files: None };
         let json = serde_json::to_string(&identity).unwrap();
         assert_eq!(serde_json::from_str::<TorrentIdentity>(&json).unwrap(), identity);
+        let mut with_files = identity.clone();
+        with_files.files = Some(vec![TorrentFile { path: "a.bin".into(), length: 3, priority: 1 }]);
+        assert_eq!(serde_json::from_str::<TorrentIdentity>(&serde_json::to_string(&with_files).unwrap()).unwrap(), with_files);
+        assert_eq!(serde_json::from_str::<TorrentIdentity>(&json).unwrap().files, None);
     }
 
     #[test]
