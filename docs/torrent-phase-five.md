@@ -256,3 +256,14 @@ caller must serialize it against reservation and task lifecycle operations and
 invoke it only with the validated librqbit-extracted manifest. Automatic
 publication-intent recovery and completed-stage cleanup remain unfinished. The
 new tests have not been compiled or run in the sandbox.
+
+## Published-tree inspection groundwork
+
+An isolated read-only inspection reconstructs a validated manifest from a
+persisted task, checks the exact journaled destination identity, and walks its
+layout and lengths without following symlinks. It rechecks the journaled
+identity afterwards. It does not adopt the destination, change task state,
+delete anything, or prove content hashes: same-size content changes remain
+undetectable. It must run under exclusive lifecycle control. Automatic intent
+replay is not wired in, and multi-file downloads are still disabled. The new
+tests have not been compiled or run in this sandbox.

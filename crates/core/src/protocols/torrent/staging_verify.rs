@@ -26,7 +26,7 @@ fn opened(parent: &File, name: &str, directory: bool) -> io::Result<File> {
     Ok(File::from(openat(parent, name, flags, Mode::empty()).map_err(err)?))
 }
 
-fn walk(dir: &File, expected: &BTreeMap<String, Node>, device: u64) -> io::Result<()> {
+fn walk(dir: &File, expected: &BTreeMap<String, Node>, device: u64, sync: bool) -> io::Result<()> {
     let mut listing = Dir::openat(dir, ".", OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC, Mode::empty()).map_err(err)?;
     let mut found = BTreeSet::new();
     for entry in listing.iter() {
@@ -42,16 +42,17 @@ fn walk(dir: &File, expected: &BTreeMap<String, Node>, device: u64) -> io::Resul
         match node {
             Node::File(length) => {
                 if !meta.is_file() || meta.nlink() != 1 || meta.len() != *length { return Err(invalid("staged file type, links, or length mismatch")); }
-                file.sync_all()?;
+                if sync { file.sync_all()?; }
             }
             Node::Directory(children) => {
                 if !meta.is_dir() { return Err(invalid("staged path is not a directory")); }
-                walk(&file, children, device)?;
+                walk(&file, children, device, sync)?;
             }
         }
     }
     if found.len() != expected.len() { return Err(invalid("staging tree is missing files or directories")); }
-    dir.sync_all()
+    if sync { dir.sync_all()?; }
+    Ok(())
 }
 
 /// Verify exactly the manifest entries, reject extra entries and symlinks,
@@ -67,6 +68,20 @@ pub fn verify_and_sync(area: &StageArea, record: &StageRecord, manifest: &Valida
     }
     let mut entries = BTreeMap::new();
     for item in manifest.files() { add(&mut entries, &item.components, item.length)?; }
-    walk(&payload, &entries, record.device)?;
+    walk(&payload, &entries, record.device, true)?;
     stage.sync_all()
+}
+
+/// Recheck a journaled destination without modifying or syncing it. This is
+/// evidence for recovery only: it checks layout and sizes, not piece hashes.
+/// The caller must already have checked its recorded device/inode, must hold
+/// exclusive lifecycle control, and must not mark a task complete on this alone.
+pub fn verify_published_readonly(payload: &File, manifest: &ValidatedManifest, device: u64) -> io::Result<()> {
+    let metadata = payload.metadata()?;
+    if !metadata.is_dir() || metadata.dev() != device || metadata.uid() != geteuid().as_raw() || metadata.mode() & 0o077 != 0 {
+        return Err(invalid("published root device, owner or permissions mismatch"));
+    }
+    let mut entries = BTreeMap::new();
+    for item in manifest.files() { add(&mut entries, &item.components, item.length)?; }
+    walk(payload, &entries, device, false)
 }
