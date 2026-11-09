@@ -22,7 +22,7 @@ impl Fixture {
         state.prior_states.insert(url.into(), "paused".into());
         state.checkpoints.insert(url.into(), record);
         state.tasks.insert(url.into(), DownloadInfo { url: url.into(), state: "failed: interrupted".into(),
-            filename: None, downloaded: 0, total: None, speed_bps: 0, final_path: None, destination_path: None, suggested_filename: None,
+            filename: None, downloaded: 0, total: None, speed_bps: 0, final_path: None, destination_path: None, suggested_filename: None, torrent: None,
             resume_supported: false, partial_name: Some(".rget-1-1.part".into()), requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false });
         Self { dir, partial, sidecar, state }
     }

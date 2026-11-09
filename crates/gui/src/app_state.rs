@@ -80,7 +80,8 @@ impl AppState {
                     self.notice = Some(format!("Requested maximum set to {requested} workers."));
                 }
                 BridgeMessage::Event(DaemonEvent::TaskFailed { error, .. }) => self.notice = Some(error),
-                BridgeMessage::Event(DaemonEvent::TaskStateChanged { state, .. }) => {
+                BridgeMessage::Event(DaemonEvent::TaskStateChanged { task_id, state, .. }) => {
+                    if state.starts_with("existing:") { self.selected_task = Some(task_id); self.view = View::Tasks; }
                     self.notice = Some(format!("Task: {state}."));
                 }
                 BridgeMessage::Event(_) => {}

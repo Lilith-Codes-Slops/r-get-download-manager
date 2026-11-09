@@ -28,10 +28,10 @@ impl Fixture {
         FrameEncoder::write_frame(&mut stream, &request).unwrap();
         FrameDecoder::read_frame(&mut stream).unwrap()
     }
-    fn add(&self, source: &str) {
+    fn add(&self, source: &str) -> String {
         let response = self.request(ClientRequest::AddTask { url: source.into(), mirrors: vec![],
             connections: 1, extract: false, category: None, not_before: None });
-        assert!(matches!(response, DaemonEvent::TaskStateChanged { .. }), "{response:?}");
+        match response { DaemonEvent::TaskStateChanged { task_id, .. } => task_id, other => panic!("{other:?}") }
     }
     async fn completed(&self, source: &str) -> DownloadInfo {
         let deadline = Instant::now() + Duration::from_secs(45);
@@ -97,16 +97,30 @@ async fn torrent_file_and_magnet_download_from_local_tracker_without_clobbering(
         }
     });
     let f = Fixture::start(lab.clone());
-    let file_source = source_path.to_str().unwrap(); f.add(file_source);
-    let first = f.completed(file_source).await;
-    assert_eq!(first.filename.as_deref(), Some("fixture.bin"));
-    assert_eq!(std::fs::read(lab.join("Downloads/fixture.bin")).unwrap(), b"abc");
+    let file_source = source_path.to_str().unwrap(); let first_id = f.add(file_source);
+    assert_ne!(first_id, file_source);
     let tracker_encoded = tracker_url.replace(':', "%3A").replace('/', "%2F");
     let magnet = format!("magnet:?xt=urn:btih:{}&tr={tracker_encoded}", handle.info_hash().as_string());
-    f.add(&magnet);
-    let second = f.completed(&magnet).await;
+    assert_eq!(f.add(&magnet), first_id, "duplicate should reuse even while metadata is pending");
+    let first = f.completed(&first_id).await;
+    assert_eq!(first.torrent.as_ref().unwrap().source, file_source);
+    assert!(!first.torrent.as_ref().unwrap().seed);
+    assert_eq!(first.filename.as_deref(), Some("fixture.bin"));
+    assert_eq!(std::fs::read(lab.join("Downloads/fixture.bin")).unwrap(), b"abc");
+    assert_eq!(f.add(&magnet), first_id, "duplicate magnet should reuse completed task");
+    drop(f);
+    let f = Fixture::start(lab.clone());
+    assert_eq!(f.add(&magnet), first_id, "identity should persist across restart");
+    assert!(matches!(f.request(ClientRequest::RemoveTask { task_id: first_id.clone(), delete_file: false }), DaemonEvent::TaskStateChanged { .. }));
+    assert_eq!(std::fs::read(lab.join("Downloads/fixture.bin")).unwrap(), b"abc");
+    let second_id = f.add(&magnet);
+    assert_ne!(second_id, first_id);
+    let second = f.completed(&second_id).await;
     assert_eq!(second.filename.as_deref(), Some("fixture (1).bin"));
     assert_eq!(std::fs::read(lab.join("Downloads/fixture (1).bin")).unwrap(), b"abc");
+    assert_eq!(std::fs::read(lab.join("Downloads/fixture.bin")).unwrap(), b"abc");
+    assert!(matches!(f.request(ClientRequest::RemoveTask { task_id: second_id, delete_file: true }), DaemonEvent::TaskStateChanged { .. }));
+    assert!(!lab.join("Downloads/fixture (1).bin").exists());
     assert_eq!(std::fs::read(lab.join("Downloads/fixture.bin")).unwrap(), b"abc");
     drop(f); quit.store(true, Ordering::Relaxed); tracker.join().unwrap();
     seed.stop().await;
@@ -121,17 +135,9 @@ fn malformed_metainfo_fails_without_touching_existing_downloads() {
     std::fs::write(root.join("Downloads/sentinel"), b"keep").unwrap();
     let bad = root.join("invalid.torrent"); std::fs::write(&bad, b"not bencode").unwrap();
     let f = Fixture::start(root.clone());
-    let source = bad.to_str().unwrap(); f.add(source);
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        if let DaemonEvent::DetailedQueue { tasks } = f.request(ClientRequest::GetDetailedQueue) {
-            if let Some(task) = tasks.iter().find(|task| task.url == source) {
-                if task.state.starts_with("failed:") { break; }
-            }
-        }
-        assert!(Instant::now() < deadline, "invalid torrent did not fail");
-        thread::sleep(Duration::from_millis(50));
-    }
+    let response = f.request(ClientRequest::AddTask { url: bad.to_str().unwrap().into(), mirrors: vec![],
+        connections: 1, extract: false, category: None, not_before: None });
+    assert!(matches!(response, DaemonEvent::TaskFailed { .. }), "{response:?}");
     assert_eq!(std::fs::read(root.join("Downloads/sentinel")).unwrap(), b"keep");
     drop(f); let _ = std::fs::remove_dir_all(root);
 }

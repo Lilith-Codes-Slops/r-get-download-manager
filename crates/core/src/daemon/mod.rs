@@ -45,3 +45,6 @@ mod torrent_transfer;
 
 #[cfg(target_os = "linux")]
 mod torrent_transfer_dispatch;
+
+#[cfg(target_os = "linux")]
+mod torrent_cleanup;

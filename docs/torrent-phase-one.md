@@ -21,7 +21,8 @@ these explicit limitations:
 - Enable librqbit's `disable-upload` feature and configure it on every session,
   and stop the session before publication. The integration configures both;
   zero upload and stop-on-complete still require live verification.
-- Local discovery, webseeds, multiple files and seeding remain out of scope.
+- Webseeds, multiple files and seeding remain out of scope. Phase 2 enables
+  local discovery; it still needs live verification.
   Public-torrent/manual-network verification remains outstanding.
 
 Outstanding work includes live verification, stronger transition delivery,
@@ -71,16 +72,20 @@ until after peer discovery.
 
 Torrent staging directories are private `.rget-torrent-*` directories under
 Downloads. Failed/canceled/interrupted transfers may leave them intact for
-inspection; they are not automatically resumed or removed by task deletion.
+inspection; they are not automatically resumed. Explicit delete removes only
+stages with a matching task ownership marker and no unrecognized entries.
 No stage should be deleted based solely on a displayed path. A restart marks
 incomplete torrents failed and never feeds them into HTTP checkpoint recovery.
-Retry starts from scratch. Phase 2 will address identity, cleanup and recovery.
+To retry a task with a retained stage, remove it with keep or delete first;
+a new add starts from scratch. Fast-resume recovery remains deferred.
 
 Torrent pause/resume, torrent speed limiting and live connection changes are not
 implemented. The current connection value is passed as the maximum peer count
 for a newly started torrent; it is not an HTTP split-worker count. HTTP speed
-limits do not limit torrent traffic. Duplicate adds by the same source reuse an
-active task, but info-hash deduplication is not implemented. General progress
+limits do not limit torrent traffic. New torrent tasks use stable IDs and duplicate v1 info-hashes reuse a task;
+legacy records without an identity field are recognized by source only. General progress
 updates are sampled, so intermediate torrent states can be coalesced rather
 than all being visible. Tracker/DHT behavior, rejection and re-request of a
 corrupt piece, zero upload and real public-swarm completion remain unverified.
+
+See [torrent-phase-two.md](torrent-phase-two.md) for identity, cleanup, discovery and remaining limitations.

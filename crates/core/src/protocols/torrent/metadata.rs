@@ -4,9 +4,7 @@
 use super::source::TorrentSource;
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session};
 use std::{path::{Component, Path}, sync::Arc, time::Duration};
-use tokio::io::AsyncReadExt;
 
-const MAX_METAINFO_BYTES: u64 = 8 * 1024 * 1024;
 const METADATA_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, thiserror::Error)]
@@ -28,20 +26,19 @@ pub async fn resolve(session: &Arc<Session>, source: &TorrentSource) -> Result<L
 }
 
 async fn resolve_inner(session: &Arc<Session>, source: &TorrentSource) -> Result<ListOnlyResponse, MetadataError> {
+    let prepared = super::task_identity::prepare(source).await?;
+    resolve_prepared_inner(session, prepared.source).await
+}
+
+pub async fn resolve_prepared(session: &Arc<Session>, source: super::task_identity::PreparedSource) -> Result<ListOnlyResponse, MetadataError> {
+    tokio::time::timeout(METADATA_TIMEOUT, resolve_prepared_inner(session, source)).await.map_err(|_| MetadataError::Timeout)?
+}
+
+async fn resolve_prepared_inner(session: &Arc<Session>, source: super::task_identity::PreparedSource) -> Result<ListOnlyResponse, MetadataError> {
+    use super::task_identity::PreparedSource;
     let add = match source {
-        TorrentSource::Magnet(uri) => AddTorrent::from_url(uri.as_str()),
-        TorrentSource::MetainfoFile(path) => {
-            let file = tokio::fs::File::open(path).await?;
-            if !file.metadata().await?.is_file() {
-                return Err(MetadataError::Invalid("metainfo must be a regular file".into()));
-            }
-            let mut bytes = Vec::new();
-            file.take(MAX_METAINFO_BYTES + 1).read_to_end(&mut bytes).await?;
-            if bytes.len() as u64 > MAX_METAINFO_BYTES {
-                return Err(MetadataError::Invalid("metainfo exceeds 8 MiB".into()));
-            }
-            AddTorrent::from_bytes(bytes)
-        }
+        PreparedSource::Magnet(uri) => AddTorrent::from_url(uri),
+        PreparedSource::Metainfo(bytes) => AddTorrent::from_bytes(bytes),
     };
     let opts = AddTorrentOptions { list_only: true, ..Default::default() };
     let result = session.add_torrent(add, Some(opts)).await
@@ -67,7 +64,7 @@ fn validate_single_file(response: &ListOnlyResponse) -> Result<(), MetadataError
         return Err(MetadataError::Invalid("symlink and padding files are unsupported".into()));
     }
     let name = response.info.name().ok_or_else(|| MetadataError::Invalid("missing file name".into()))?;
-    if !safe_name(&name) {
+    if name == ".rget-owner" || !safe_name(&name) {
         return Err(MetadataError::Invalid("unsafe file name".into()));
     }
     Ok(())
@@ -122,7 +119,7 @@ mod tests {
         tokio::fs::create_dir_all(&root).await.unwrap();
         let path = root.join("large.torrent");
         let f = tokio::fs::File::create(&path).await.unwrap();
-        f.set_len(MAX_METAINFO_BYTES + 1).await.unwrap();
+        f.set_len(8 * 1024 * 1024 + 1).await.unwrap();
         drop(f);
         let mut options = super::super::session::download_only_options();
         options.dht = None;

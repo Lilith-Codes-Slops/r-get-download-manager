@@ -77,12 +77,14 @@ async fn unlink_if_present(path: &Path) -> Result<(), String> {
 }
 
 async fn remove_owned_files(task: &DownloadInfo) -> Result<(), String> {
-    if task.final_path.is_none() && task.partial_name.is_none() { return Ok(()); }
+    if task.final_path.is_none() && task.partial_name.is_none() && task.torrent.as_ref().and_then(|t| t.stage_name.as_ref()).is_none() { return Ok(()); }
     let root = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join("Downloads");
     remove_files_in(task, &root).await
 }
 
 async fn remove_files_in(task: &DownloadInfo, root: &Path) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    super::torrent_cleanup::remove_stage(task, root).await?;
     if let Some(final_path) = &task.final_path {
         let name = task.filename.as_deref().filter(|name| single_name(name)).ok_or("unsafe or missing final filename")?;
         let expected = root.join(name);
@@ -114,7 +116,7 @@ mod tests {
         tokio::fs::write(&path, b"unrelated").await.unwrap();
         let mut task = DownloadInfo { url: "https://example.test".into(), state: "failed".into(),
             filename: Some("existing.bin".into()), downloaded: 0, total: None, speed_bps: 0,
-            final_path: None, destination_path: None, suggested_filename: None, resume_supported: false, partial_name: None, requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false };
+            final_path: None, destination_path: None, suggested_filename: None, torrent: None, resume_supported: false, partial_name: None, requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false };
         remove_files_in(&task, &root).await.unwrap();
         assert_eq!(tokio::fs::read(&path).await.unwrap(), b"unrelated");
         task.final_path = Some(root.join("../outside").to_string_lossy().into_owned());

@@ -41,7 +41,7 @@ async fn run_resume_test(mode: u8) {
     let tasks: Tasks = Arc::new(Mutex::new(BTreeMap::new()));
     tasks.lock().await.insert(url.clone(), DownloadInfo {
         url: url.clone(), state: "downloading".into(), filename: None, downloaded: 0,
-        total: Some(12), speed_bps: 0, final_path: None, destination_path: None, suggested_filename: None, resume_supported: true, partial_name: None,
+        total: Some(12), speed_bps: 0, final_path: None, destination_path: None, suggested_filename: None, torrent: None, resume_supported: true, partial_name: None,
      requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false });
     let controls: Controls = Arc::new(Mutex::new(BTreeMap::new()));
     let (tx, mut rx) = watch::channel(TransferControl::Running);

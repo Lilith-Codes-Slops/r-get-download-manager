@@ -16,12 +16,13 @@ pub async fn run(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
     let event = ipc_client::roundtrip(&req)?;
     println!("{event:?}");
+    let task_id = match &event { DaemonEvent::TaskStateChanged { task_id, .. } => task_id.as_str(), _ => return Ok(()) };
     // The server response determines the filename asynchronously. Do not
     // wait indefinitely or claim that a planned name is a published file.
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         if let Ok(DaemonEvent::DetailedQueue { tasks }) = ipc_client::roundtrip(&ClientRequest::GetDetailedQueue) {
-            if let Some(task) = tasks.iter().find(|task| task.url == url) {
+            if let Some(task) = tasks.iter().find(|task| task.url == task_id) {
                 if let Some(path) = task.final_path.as_deref() { println!("Saved to: {path}"); return Ok(()); }
                 if let Some(path) = task.destination_path.as_deref().or(task.filename.as_deref()) {
                     println!("Destination (may change): {path}"); return Ok(());

@@ -77,7 +77,7 @@ impl AppState {
         ui.separator();
         egui::ScrollArea::vertical().id_salt("details").show(ui, |ui| match self.detail {
             Detail::Status => {
-                ui.label(RichText::new(&task.url).small());
+                ui.label(RichText::new(task.torrent.as_ref().map(|t| t.source.as_str()).unwrap_or(&task.url)).small());
                 egui::Grid::new("details_grid").num_columns(2).spacing([24.0, 6.0]).show(ui, |ui| {
                     metric(ui, "Status", &task.state);
                     if auto_renamed(task) { if let Some(name) = &task.suggested_filename { metric(ui, "Original suggestion", name); } }
@@ -113,7 +113,7 @@ impl AppState {
                         self.pending_delete = Some(task.url.clone());
                     }
                     if (task.state.starts_with("failed:") || task.state == "canceled") && ui.button("Retry").clicked() {
-                        self.send(add_request(task.url.clone(), task.requested_connections.unwrap_or(1)));
+                        self.send(add_request(task.torrent.as_ref().map(|t| t.source.clone()).unwrap_or_else(|| task.url.clone()), task.requested_connections.unwrap_or(1)));
                     }
                 });
             }

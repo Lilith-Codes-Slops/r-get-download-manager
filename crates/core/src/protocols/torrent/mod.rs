@@ -7,3 +7,4 @@ pub mod metadata;
 pub mod session;
 pub mod source;
 pub mod state;
+pub mod task_identity;

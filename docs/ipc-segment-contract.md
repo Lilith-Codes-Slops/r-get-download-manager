@@ -129,3 +129,15 @@ response- or URL-derived filename before collision handling. Compare it with
 still a planned name and may change at publication. If the suggestion is absent
 (for example, from an older daemon or task record), do not guess from the
 filename. The optional field is carried in queue and progress snapshots.
+
+### Torrent identity
+
+For new torrent tasks, `DownloadInfo.url` is the stable opaque task key used in
+queue updates and control requests, not the magnet or local pathname. The
+optional `torrent` object contains the original `source`, v1 `info_hash`,
+creation time, stored `seed` flag and owned `stage_name` when available. Older
+HTTP and torrent records can omit it. The seed flag is not a seeding control in
+the current download-only engine. An `AddTask` response for a duplicate uses
+the existing `task_id` and an `existing: ...` state. Clients must use the
+returned ID for subsequent controls. Legacy records lacking an info-hash can
+only be matched by identical source.
