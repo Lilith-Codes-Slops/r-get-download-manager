@@ -61,3 +61,28 @@ async fn failure_to_commit_evidence_leaves_unproven_intent_for_inspection() {
     assert!(!proof::is_verified(&path, &entries[0], &task).unwrap());
     assert!(payload(&lab).join("dir/a").exists()); fs::remove_dir_all(lab.root).unwrap();
 }
+
+#[cfg(target_env = "gnu")]
+#[tokio::test]
+async fn recovery_classification_requires_evidence_and_never_changes_task() {
+    use super::torrent_publish_recovery_evidence::{classify, Evidence};
+    use crate::protocols::torrent::directory_publish;
+    let lab = setup().await; let path = lab.store.database_path(); let task = lab.tasks.lock().await["task"].clone();
+    let root = File::open(&lab.downloads).unwrap(); write_payload(&lab);
+    let intent = journal::begin(&path, &lab.area, &lab.stage, "bundle").unwrap();
+    assert_eq!(classify(&path, &lab.area, &root, &intent, &task).unwrap(), Evidence::Unproven);
+    // Simulate an old unproven intent being removed by an operator; this is not
+    // an automatic recovery procedure.
+    let conn = super::persistence::open(&path).unwrap();
+    conn.execute("DELETE FROM rget_torrent_publish_intents_v1 WHERE task_id=?1", [&intent.stage.task_id]).unwrap(); drop(conn);
+    let intent = proof::begin_verified(&path, &lab.area, &lab.stage, "bundle", &task).unwrap();
+    assert_eq!(classify(&path, &lab.area, &root, &intent, &task).unwrap(), Evidence::VerifiedSourcePresent);
+    directory_publish::publish_exact(&lab.area.verify(&lab.stage).unwrap(), "payload", &root, "bundle").unwrap();
+    assert_eq!(classify(&path, &lab.area, &root, &intent, &task).unwrap(), Evidence::VerifiedDestinationLayout);
+    fs::write(lab.downloads.join("bundle/dir/a"), b"wrong length").unwrap();
+    assert!(classify(&path, &lab.area, &root, &intent, &task).is_err());
+    assert_eq!(lab.tasks.lock().await["task"].state, "finalizing");
+    assert_eq!(journal::load(&path).unwrap(), vec![intent]);
+    assert!(lab.downloads.join("bundle/dir/a").exists());
+    fs::remove_dir_all(lab.root).unwrap();
+}

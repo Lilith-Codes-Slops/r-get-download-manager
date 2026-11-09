@@ -281,3 +281,9 @@ still stop/join a successfully completed engine and exclude concurrent writes.
 
 This operation and automatic replay are not connected to multi-file downloads.
 No test has been compiled or run in the sandbox for this increment.
+
+An isolated recovery-evidence classifier combines the durable evidence with
+identity and layout inspection. Its outcomes are observations only, not
+permission to replay, publish, delete, or complete a task. A matching layout
+cannot detect same-size edits, and source presence does not rule out a separate
+collision at the destination. Automatic reconciliation remains disabled.
