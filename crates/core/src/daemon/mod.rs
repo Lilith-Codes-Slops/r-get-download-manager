@@ -102,3 +102,6 @@ mod torrent_stage_allocate;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_stage_publish;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_stage_complete;

@@ -3,7 +3,7 @@ use super::{control::Tasks, persistence::Persistence, torrent_publish_intent::{s
 use crate::protocols::torrent::staging_tree::StageArea;
 use downloader_ipc::DownloadInfo;
 use rusqlite::params;
-use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt, path::Path};
+use std::{fs::{File, OpenOptions}, os::unix::fs::{MetadataExt, OpenOptionsExt}, path::Path};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -27,7 +27,7 @@ impl Persistence {
         completed.torrent.as_mut().ok_or("torrent identity missing")?.publication_warning = warning;
         let database = self.database_path(); let root = root.to_owned(); let intent = intent.clone();
         let record = completed.clone();
-        tokio::task::spawn_blocking(move || commit(&database, &root, &intent, &record)).await??;
+        tokio::task::spawn_blocking(move || commit(&database, &root, &intent, &record, None)).await??;
         tasks.insert(completed.url.clone(), completed);
         Ok(())
     }
@@ -35,8 +35,12 @@ impl Persistence {
 
 /// Commit queue completion and clear the exact intent in one SQLite transaction.
 /// Stage ownership is retained until a separate, verified cleanup succeeds.
-fn commit(database: &Path, root: &Path, intent: &Intent, completed: &DownloadInfo) -> Result<()> {
+pub(super) fn commit(database: &Path, root: &Path, intent: &Intent, completed: &DownloadInfo, expected_root: Option<&File>) -> Result<()> {
     let root_file = OpenOptions::new().read(true).custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC).open(root)?;
+    if let Some(expected) = expected_root {
+        let a = root_file.metadata()?; let b = expected.metadata()?;
+        if a.dev() != b.dev() || a.ino() != b.ino() { return Err("download root identity changed".into()); }
+    }
     let area = StageArea::open_existing(&root_file)?;
     if torrent_publish_intent::inspect(&area, &root_file, intent)? != Observation::DestinationMatches {
         return Err("publication destination is not proven to match intent".into());
@@ -51,6 +55,15 @@ fn commit(database: &Path, root: &Path, intent: &Intent, completed: &DownloadInf
         WHERE i.task_id=?1 AND i.stage_name=?2 AND i.stage_device=?3 AND i.stage_inode=?4 AND i.destination=?5 AND i.payload_device=?6 AND i.payload_inode=?7 AND s.state='retained')",
         params![intent.stage.task_id, intent.stage.name, intent.stage.device.to_string(), intent.stage.inode.to_string(), intent.destination, intent.payload_device.to_string(), intent.payload_inode.to_string()], |row| row.get(0))?;
     if !matched { return Err("staging identity or publication intent changed".into()); }
+    let json: String = tx.query_row("SELECT info FROM rget_queue_v1 WHERE url=?1", [&intent.stage.task_id], |row| row.get(0))?;
+    let durable: DownloadInfo = serde_json::from_str(&json)?;
+    let old = durable.torrent.as_ref().ok_or("durable torrent identity missing")?;
+    let new = completed.torrent.as_ref().ok_or("torrent identity missing")?;
+    if durable.url != intent.stage.task_id || durable.state != "finalizing" || old.source != new.source
+        || old.info_hash != new.info_hash || old.created_at != new.created_at || old.stage_name != new.stage_name
+        || old.root_name != new.root_name || old.files != new.files {
+        return Err("durable torrent identity or state changed before completion".into());
+    }
     let count = tx.execute("UPDATE rget_queue_v1 SET info=?1 WHERE url=?2", params![serde_json::to_string(completed)?, intent.stage.task_id])?;
     if count != 1 { return Err("durable torrent task missing".into()); }
     let removed = tx.execute("DELETE FROM rget_torrent_publish_intents_v1 WHERE task_id=?1", [&intent.stage.task_id])?;

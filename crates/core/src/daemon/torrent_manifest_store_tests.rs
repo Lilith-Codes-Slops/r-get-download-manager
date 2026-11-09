@@ -206,3 +206,68 @@ async fn verification_failure_and_collision_keep_owned_stage() {
     assert_eq!(super::torrent_publish_intent::load(&store.database_path()).unwrap().len(), 1);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(target_env = "gnu")]
+#[tokio::test]
+async fn guarded_completion_preserves_warning_and_cleans_recorded_stage() {
+    let (root, store, tasks, stage) = publication_lab().await; fill_stage(&root, &stage);
+    let task = tasks.lock().await["task"].clone();
+    let mut published = stage.publish_exact(task, "bundle".into()).await.unwrap();
+    published.sync_warning = Some("injected sync warning".into());
+    let report = published.complete(&store, &tasks, &root.join("Downloads")).await.unwrap();
+    assert!(report.cleanup_warning.is_none());
+    let task = tasks.lock().await["task"].clone(); assert_eq!(task.state, "completed");
+    assert_eq!(task.torrent.unwrap().publication_warning.as_deref(), Some("injected sync warning"));
+    assert!(root.join("Downloads/bundle/dir/file").is_file());
+    assert!(stages::load(&store.database_path()).unwrap().is_empty());
+    assert!(super::torrent_publish_intent::load(&store.database_path()).unwrap().is_empty());
+    let restored = store.load().await.unwrap().tasks.remove("task").unwrap();
+    assert_eq!(restored.state, "completed"); assert_eq!(restored.torrent.unwrap().publication_warning.as_deref(), Some("injected sync warning"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_env = "gnu")]
+#[tokio::test]
+async fn completion_failure_preserves_destination_intent_and_stage() {
+    let (root, store, tasks, stage) = publication_lab().await; fill_stage(&root, &stage);
+    let task = tasks.lock().await["task"].clone();
+    let published = stage.publish_exact(task, "bundle".into()).await.unwrap();
+    let conn = super::persistence::open(&store.database_path()).unwrap();
+    conn.execute_batch("CREATE TRIGGER reject_completion BEFORE UPDATE ON rget_queue_v1 BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap(); drop(conn);
+    assert!(published.complete(&store, &tasks, &root.join("Downloads")).await.is_err());
+    assert_eq!(tasks.lock().await["task"].state, "finalizing");
+    assert!(root.join("Downloads/bundle/dir/file").is_file());
+    assert_eq!(stages::load(&store.database_path()).unwrap()[0].state, stages::State::Retained);
+    assert_eq!(super::torrent_publish_intent::load(&store.database_path()).unwrap().len(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_env = "gnu")]
+#[tokio::test]
+async fn cleanup_failure_leaves_completion_and_owned_stage_record() {
+    let (root, store, tasks, stage) = publication_lab().await; fill_stage(&root, &stage);
+    let stage_path = root.join("Downloads/.rget-staging").join(&stage.record.name);
+    let task = tasks.lock().await["task"].clone();
+    let published = stage.publish_exact(task, "bundle".into()).await.unwrap();
+    fs::write(stage_path.join("unexpected"), b"keep").unwrap();
+    let report = published.complete(&store, &tasks, &root.join("Downloads")).await.unwrap();
+    assert!(report.cleanup_warning.is_some()); assert_eq!(tasks.lock().await["task"].state, "completed");
+    assert_eq!(stages::load(&store.database_path()).unwrap()[0].state, stages::State::Retained);
+    assert!(super::torrent_publish_intent::load(&store.database_path()).unwrap().is_empty());
+    assert!(stage_path.join("unexpected").is_file()); assert!(root.join("Downloads/bundle/dir/file").is_file());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_env = "gnu")]
+#[tokio::test]
+async fn completion_refuses_replaced_download_root() {
+    let (root, store, tasks, stage) = publication_lab().await; fill_stage(&root, &stage);
+    let task = tasks.lock().await["task"].clone();
+    let published = stage.publish_exact(task, "bundle".into()).await.unwrap();
+    fs::rename(root.join("Downloads"), root.join("original")).unwrap(); fs::create_dir(root.join("Downloads")).unwrap();
+    assert!(published.complete(&store, &tasks, &root.join("Downloads")).await.is_err());
+    assert_eq!(tasks.lock().await["task"].state, "finalizing");
+    assert!(root.join("original/bundle/dir/file").is_file());
+    assert_eq!(super::torrent_publish_intent::load(&store.database_path()).unwrap().len(), 1);
+    fs::remove_dir_all(root).unwrap();
+}

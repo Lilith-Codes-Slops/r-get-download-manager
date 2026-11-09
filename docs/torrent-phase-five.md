@@ -342,3 +342,11 @@ caller must have stopped and joined a successfully finished engine and persisted
 finalizing state. This operation does not complete the task or clean the stage;
 completion, recovery and download ingress remain unwired. Checks are not piece
 hash verification and do not protect against concurrent same-user writes.
+
+A guarded published stage can now invoke the isolated completion transaction,
+then clean its owned staging record. The transaction rechecks durable identity
+and finalizing state and checks that the destination root still matches the
+opened allocation root. Rename success is not reversed on a completion error;
+the intent remains for reconciliation. Cleanup failure after commit leaves the
+completed task and retained stage record, returning a warning. This sequence is
+still not connected to torrent downloads or automatic crash reconciliation.

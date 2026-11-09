@@ -57,3 +57,17 @@ async fn database_failure_keeps_intent_and_does_not_claim_completion() {
     assert_eq!(stages::load(&database).unwrap().len(), 1); assert!(lab.downloads.join("bundle").is_dir());
     fs::remove_dir_all(lab.root).unwrap();
 }
+
+#[tokio::test]
+async fn stale_durable_task_is_not_overwritten_by_completion() {
+    let lab = setup().await; let database = lab.store.database_path();
+    let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap(); rename(&lab);
+    let mut durable = lab.tasks.lock().await["task"].clone(); durable.state = "canceled".into();
+    let conn = super::persistence::open(&database).unwrap();
+    conn.execute("UPDATE rget_queue_v1 SET info=?1 WHERE url=?2", rusqlite::params![serde_json::to_string(&durable).unwrap(), "task"]).unwrap(); drop(conn);
+    assert!(lab.store.commit_torrent_publication(&lab.tasks, &lab.downloads, &intent, None).await.is_err());
+    assert_eq!(lab.tasks.lock().await["task"].state, "finalizing");
+    assert_eq!(journal::load(&database).unwrap(), vec![intent]);
+    assert!(lab.downloads.join("bundle").is_dir());
+    fs::remove_dir_all(lab.root).unwrap();
+}
