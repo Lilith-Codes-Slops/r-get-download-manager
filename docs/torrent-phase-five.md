@@ -298,3 +298,8 @@ Integration must use the same registry everywhere, include persistence and
 filesystem operations in the protected scope, and never wait for a worker while
 holding a guard the worker needs to finish. These are process-local locks, not
 protection from unrelated processes or hostile same-user filesystem changes.
+
+The isolated pre-stage manifest transaction also rechecks the durable task's
+metadata state, source, info-hash, creation identity and existing manifest before
+updating it. A stale in-memory task cannot overwrite a changed durable task.
+It still requires the shared lifecycle guard, and ingress is not wired to it.

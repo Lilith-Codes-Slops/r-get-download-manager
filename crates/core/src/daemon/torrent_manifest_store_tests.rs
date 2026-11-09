@@ -39,3 +39,31 @@ async fn wrong_identity_or_existing_reservation_never_mutates_task() {
     let restored = store.load().await.unwrap().tasks.remove("task").unwrap(); assert!(restored.torrent.unwrap().files.is_none());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn durable_identity_or_state_change_cannot_be_overwritten() {
+    let (root, store, tasks) = setup().await;
+    let original = tasks.lock().await["task"].clone();
+    for change in 0..6 {
+        let mut durable = original.clone();
+        match change {
+            0 => durable.state = "canceled".into(),
+            1 => durable.torrent.as_mut().unwrap().source = "other.torrent".into(),
+            2 => durable.torrent.as_mut().unwrap().info_hash = Some("other".into()),
+            3 => durable.torrent.as_mut().unwrap().root_name = Some("other".into()),
+            4 => durable.torrent.as_mut().unwrap().created_at += 1,
+            _ => durable.torrent.as_mut().unwrap().stage_name = Some("task-existing".into()),
+        }
+        let conn = super::persistence::open(&store.database_path()).unwrap();
+        conn.execute("UPDATE rget_queue_v1 SET info=?1 WHERE url=?2", rusqlite::params![serde_json::to_string(&durable).unwrap(), "task"]).unwrap();
+        drop(conn);
+        assert!(store.save_torrent_manifest(&tasks, "task", "abc", &manifest()).await.is_err());
+        assert!(tasks.lock().await["task"].torrent.as_ref().unwrap().files.is_none());
+        let conn = super::persistence::open(&store.database_path()).unwrap();
+        let json: String = conn.query_row("SELECT info FROM rget_queue_v1 WHERE url=?1", ["task"], |row| row.get(0)).unwrap();
+        let after: DownloadInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(after.state, durable.state);
+        assert_eq!(after.torrent.unwrap(), durable.torrent.unwrap());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
