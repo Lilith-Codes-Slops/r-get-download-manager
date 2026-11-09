@@ -44,7 +44,7 @@ async fn only_exact_synced_tree_and_durable_manifest_get_evidence() {
         crate::protocols::torrent::directory_publish::publish_exact(&stage_dir, "payload", &destination, "bundle").unwrap();
         lab.store.commit_torrent_publication(&lab.tasks, &lab.downloads, &intent, None).await.unwrap();
         let conn = super::persistence::open(&path).unwrap();
-        let count: u64 = conn.query_row("SELECT COUNT(*) FROM rget_torrent_publish_proofs_v1", [], |row| row.get(0)).unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM rget_torrent_publish_proofs_v1", [], |row| row.get(0)).unwrap();
         assert_eq!(count, 0); assert!(journal::load(&path).unwrap().is_empty());
     }
     fs::remove_dir_all(lab.root).unwrap();
