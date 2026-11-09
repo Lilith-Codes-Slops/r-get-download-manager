@@ -52,6 +52,15 @@ impl StageArea {
         Ok(Self { parent })
     }
 
+    /// Open an existing staging parent without creating anything. Recovery must
+    /// not manufacture a missing parent or follow a symlink in its place.
+    pub fn open_existing(download_root: &File) -> io::Result<Self> {
+        if !download_root.metadata()?.is_dir() { return Err(invalid("download root is not a directory")); }
+        let parent = open_dir(download_root, PARENT)?;
+        private_dir(&parent)?;
+        Ok(Self { parent })
+    }
+
     /// Generate a candidate without touching the filesystem. Persist a
     /// reservation for this exact name before calling `create_reserved`.
     pub fn candidate_name() -> String {

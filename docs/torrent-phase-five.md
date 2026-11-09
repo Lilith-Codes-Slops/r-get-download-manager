@@ -155,8 +155,9 @@ from an interrupted stage. Row mutation checks the exact task/name/identity;
 unknown, malformed or mismatched records fail closed. The staging helper can
 create an exact reserved name and will not adopt an existing one.
 
-These functions are **not connected** to daemon startup, downloads, or remove.
-There is no recursive cleanup or publication transaction yet. In particular, a
+The record store is not yet connected to downloads or remove. A conservative
+startup recovery pass is now connected; see below. There is no publication
+transaction yet. In particular, a
 crash after `mkdir` but before inode confirmation leaves a reserved row without
 a proven inode; it must not be blindly deleted or adopted. Reconciliation for
 that interval and the rename/database crash window must be designed before any
@@ -171,8 +172,9 @@ hardlinks, unexpected root entries, foreign ownership and cross-device entries
 before deleting. A separate store wrapper requires an exact durable row; it
 keeps retained verification failures unless explicitly requested for deletion,
 and leaves the row in place when cleanup reports an error. These paths are not
-wired into cancel, remove, shutdown or startup. No automatic crash cleanup is
-claimed yet, and an unconfirmed reservation cannot authorize deletion.
+wired into cancel, remove or shutdown. Startup recovery can clean only the
+restricted proven-owned cases below; an unconfirmed reservation cannot
+authorize deletion.
 
 The tree must be exclusively controlled after the engine is joined: inode
 rechecks cannot eliminate races from a malicious same-user process concurrently
@@ -180,3 +182,21 @@ replacing entries. Cleanup can be partial if a later unlink or sync fails. In
 particular, if final directory removal fails after marker deletion, the row is
 kept but automatic ownership verification may need manual reconciliation.
 The tests have not been compiled or run in this sandbox.
+
+## Conservative startup recovery
+
+After acquiring the daemon lock and before accepting tasks, startup scans the
+staging table. A `staging` row with a matching ownership record and still-present
+payload can be cleaned; the row is removed only after cleanup succeeds.
+`retained` rows, unconfirmed reservations, missing payloads, unrecorded trees,
+and ownership or cleanup failures are left intact. A missing payload is
+ambiguous because a future publisher might have renamed it before recording the
+destination. Missing or unsafe staging parents are not created by recovery.
+
+Before the future download path can use this recovery, it MUST durably mark a
+stage `retained` before verification begins and keep it that way through
+publication: otherwise a crash between failed verification and persisting
+retention could incorrectly delete evidence. Publication intent and atomic
+queue/record reconciliation are still required to handle the rename-to-database
+crash window. No multi-file task creates these rows yet. The recovery pass and
+tests have not been compiled or run in this sandbox.

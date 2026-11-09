@@ -30,6 +30,7 @@ impl ServerLoop {
                 Err(e) => { eprintln!("failed to configure persistent state: {e}"); return; }
             };
             #[cfg(feature = "torrent")] super::torrent_settings::log_config(&store).await;
+            #[cfg(feature = "torrent")] super::torrent_stage_recovery::startup(&store).await;
             let saved = match store.load().await {
                 Ok(saved) => saved,
                 Err(e) => { eprintln!("failed to load persistent state: {e}"); return; }

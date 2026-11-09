@@ -60,3 +60,8 @@ mod torrent_settings;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_stage_store;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_stage_recovery;
+#[cfg(all(test, target_os = "linux", feature = "torrent"))]
+mod torrent_stage_recovery_tests;
