@@ -45,3 +45,5 @@ returned an error, not whether it returned `Ok(false)` for a hash mismatch.
 Sampling also cannot prove all unsampled data is intact. Do not enable
 `fastresume` until its integrity behavior and crash-safety are resolved and
 tested. This does not block the remaining Phase 1 download integration.
+
+The future observation and picker scope is recorded in [torrent-phase-three.md](torrent-phase-three.md); it is not implemented yet.
