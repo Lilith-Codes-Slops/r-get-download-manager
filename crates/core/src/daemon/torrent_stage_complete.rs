@@ -37,6 +37,8 @@ impl PublishedStage {
                 return Err("published destination is not proven to match".into());
             }
             torrent_publish_commit::commit(&database, &root, &self.intent, &completed, Some(&self.stage.root))?;
+            #[cfg(feature = "torrent-test-hooks")]
+            super::torrent_test_hooks::pause("after-completion")?;
             tasks.insert(completed.url.clone(), completed);
             // Once completion is durable, a cleanup failure is only a warning.
             // Keep the retained row on failure for later reconciliation.

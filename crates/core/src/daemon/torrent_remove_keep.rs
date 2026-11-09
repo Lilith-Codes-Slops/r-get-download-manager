@@ -17,9 +17,14 @@ fn forget(database: &Path, task: &DownloadInfo) -> Result<()> {
     tx.execute("DELETE FROM rget_checkpoints_v1 WHERE url=?1", [&task.url])?;
     tx.execute("DELETE FROM rget_split_checkpoints_v2 WHERE url=?1", [&task.url])?;
     if tx.execute("DELETE FROM rget_queue_v1 WHERE url=?1", [&task.url])? != 1 { return Err("durable torrent task missing".into()); }
+    #[cfg(feature = "torrent-test-hooks")]
+    super::torrent_test_hooks::pause("keep-before-commit")?;
     // Ownership, recovery-info and stage rows intentionally remain: forgetting
     // a task must not authorize deletion of its files or detached stage.
-    tx.commit()?; Ok(())
+    tx.commit()?;
+    #[cfg(feature = "torrent-test-hooks")]
+    super::torrent_test_hooks::pause("keep-after-commit")?;
+    Ok(())
 }
 
 impl Persistence {

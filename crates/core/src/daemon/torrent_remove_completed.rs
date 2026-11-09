@@ -80,6 +80,8 @@ pub(super) fn execute(path: &Path, root: &Path, task: &DownloadInfo, resume: boo
             return Err("removal intent or task identity changed".into());
         }
     } else { begin(path, task, &record, &proof)?; }
+    #[cfg(feature = "torrent-test-hooks")]
+    if !resume { super::torrent_test_hooks::pause("delete-intent")?; }
     if let Some(stage) = torrent_stage_store::load(path)?.into_iter().find(|row| row.task_id == task.url) {
         let area = StageArea::open_existing(&root_file)?;
         torrent_stage_store::cleanup_recorded(path, &area, &stage.task_id, &stage.name, true)?;

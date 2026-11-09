@@ -41,5 +41,7 @@ futures-util = "0.3"
 default = ["torrent"]
 # Explicitly opt in to daemon-kill integration-test hooks; never use in production.
 checkpoint-test-hooks = []
+# Explicitly enable deterministic torrent daemon fault injection for tests only.
+torrent-test-hooks = ["torrent"]
 torrent = ["librqbit", "librqbit-bencode", "librqbit-sha1-wrapper", "anyhow"]
 http3 = []

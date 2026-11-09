@@ -52,6 +52,14 @@ pub(super) async fn run(id: &str, connections: u8, tasks: &Tasks, store: &Persis
     if let Err(error) = tokio::task::spawn_blocking(move || closer.close_and_wait()).await? {
         return Err(format!("storage quiescence failed: {error}; stage retained at {}", stage_path.display()).into());
     }
+    #[cfg(feature = "torrent-test-hooks")]
+    {
+        let rejected = crate::protocols::torrent::gated_storage::probe_late_write(gate.clone());
+        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            super::torrent_test_hooks::late_write(rejected)?;
+            super::torrent_test_hooks::pause("after-barrier")
+        }).await??;
+    }
     if let Err(error) = outcome { return Err(cleanup(stage, &stage_path, error.to_string()).await.into()); }
     let canceled = *control.borrow() == TransferControl::Canceled;
     if canceled { return Err(cleanup(stage, &stage_path, "torrent canceled".into()).await.into()); }
@@ -62,6 +70,14 @@ pub(super) async fn run(id: &str, connections: u8, tasks: &Tasks, store: &Persis
         let task = guard.get_mut(id).ok_or("torrent task removed")?; task.state = "finalizing".into(); task.speed_bps = 0;
     }
     if let Err(error) = store.save(tasks, limiter).await { return Err(cleanup(stage, &stage_path, format!("could not persist finalizing state: {error}")).await.into()); }
+    // Refuse publication into a detached directory if Downloads was replaced
+    // after allocation. Like the tree checks, this assumes exclusive control
+    // of the root while publication runs.
+    use std::os::unix::fs::MetadataExt;
+    let reopened = open_root(&root).await?; let current = reopened.metadata()?; let original = stage.root.metadata()?;
+    if current.dev() != original.dev() || current.ino() != original.ino() {
+        return Err(format!("download root changed; stage retained at {}", stage_path.display()).into());
+    }
     let task = tasks.lock().await.get(id).cloned().ok_or("torrent task removed")?;
     let published = stage.publish_with_piece_verification(task, manifest.root_name().to_owned()).await
         .map_err(|e| format!("publication failed: {e}; stage retained at {}", stage_path.display()))?;

@@ -76,3 +76,23 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
+
+/// Test-only late write against the same gate used by the live session. The
+/// delegated sentinel must not be invoked after the barrier closes.
+#[cfg(feature = "torrent-test-hooks")]
+pub(crate) fn probe_late_write(gate: StorageGate) -> bool {
+    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    struct Probe(Arc<AtomicBool>);
+    impl TorrentStorage for Probe {
+        fn init(&mut self, _: &ManagedTorrentShared, _: &TorrentMetadata) -> anyhow::Result<()> { Ok(()) }
+        fn pread_exact(&self, _: usize, _: u64, _: &mut [u8]) -> anyhow::Result<()> { self.0.store(true, Ordering::SeqCst); Ok(()) }
+        fn pwrite_all(&self, _: usize, _: u64, _: &[u8]) -> anyhow::Result<()> { self.0.store(true, Ordering::SeqCst); Ok(()) }
+        fn remove_file(&self, _: usize, _: &Path) -> anyhow::Result<()> { self.0.store(true, Ordering::SeqCst); Ok(()) }
+        fn remove_directory_if_empty(&self, _: &Path) -> anyhow::Result<()> { self.0.store(true, Ordering::SeqCst); Ok(()) }
+        fn ensure_file_length(&self, _: usize, _: u64) -> anyhow::Result<()> { self.0.store(true, Ordering::SeqCst); Ok(()) }
+        fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> { Ok(Box::new(Probe(self.0.clone()))) }
+    }
+    let touched = Arc::new(AtomicBool::new(false));
+    let storage = GatedStorage { inner: Box::new(Probe(touched.clone())), gate };
+    storage.pwrite_all(0, 0, b"late").is_err() && !touched.load(Ordering::SeqCst)
+}

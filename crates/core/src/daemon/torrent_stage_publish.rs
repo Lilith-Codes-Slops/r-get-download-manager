@@ -51,5 +51,7 @@ fn publish(stage: AllocatedStage, task: &DownloadInfo, destination: &str, verify
     }
     let parent = stage.area.verify(&stage.record)?;
     let published = directory_publish::publish_exact(&parent, "payload", &stage.root, &intent.destination)?;
+    #[cfg(feature = "torrent-test-hooks")]
+    super::torrent_test_hooks::pause("after-rename")?;
     Ok(PublishedStage { stage, intent, sync_warning: published.sync_error.map(|e| e.to_string()) })
 }

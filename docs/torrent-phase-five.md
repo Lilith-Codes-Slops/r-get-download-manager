@@ -459,3 +459,17 @@ stage is marked retained before this check, so a mismatch leaves it for
 inspection. This is distinct from librqbit's download-time verification and
 still assumes exclusive control of the staging tree during verification and
 publication. The added integration and mismatch test need a fresh test run.
+
+The opt-in `torrent-test-hooks` feature enables daemon fault-injection markers
+used only by `torrent_fault_ipc`: crash after rename and durable completion,
+post-barrier corruption and missing-file checks, collision and root replacement,
+interrupted delete/keep transactions, concurrent tasks and cancellation. The
+late-write probe uses the live gate and the actual delegated-storage wrapper with
+a sentinel delegate; it is not proof that engine tasks have joined. Local test
+seeders serve the fixtures, while the daemon remains download-only. These hooks
+are not compiled into normal builds and must not be enabled in production.
+Run the dedicated tests serially:
+
+```sh
+cargo test -p downloader-core --features torrent-test-hooks --test torrent_fault_ipc --locked -- --test-threads=1
+```
