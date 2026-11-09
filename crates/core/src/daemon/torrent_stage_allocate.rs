@@ -11,6 +11,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 #[allow(dead_code)]
 pub(super) struct AllocatedStage {
     pub area: StageArea,
+    pub root: File,
     pub record: StageRecord,
     pub payload: File,
     pub reservation: ManifestReservation,
@@ -56,5 +57,5 @@ fn allocate(reservation: ManifestReservation, root: File) -> Result<AllocatedSta
                 cleanup.err().map(|e| e.to_string()).unwrap_or_else(|| "completed".into())).into());
         }
     };
-    Ok(AllocatedStage { area, record, payload, reservation })
+    Ok(AllocatedStage { area, root, record, payload, reservation })
 }

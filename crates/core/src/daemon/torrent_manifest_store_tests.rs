@@ -148,3 +148,61 @@ async fn failed_confirmation_cleans_proven_stage_but_keeps_reservation() {
     assert!(!stage.exists()); assert_eq!(stages::load(&store.database_path()).unwrap()[0].state, stages::State::Reserved);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(target_env = "gnu")]
+async fn publication_lab() -> (PathBuf, Persistence, Tasks, super::torrent_stage_allocate::AllocatedStage) {
+    use std::fs::File;
+    let (root, store, tasks) = setup().await;
+    let hash = "0123456789abcdef0123456789abcdef01234567";
+    tasks.lock().await.get_mut("task").unwrap().torrent.as_mut().unwrap().info_hash = Some(hash.into());
+    store.save(&tasks, &BandwidthLimiter::new()).await.unwrap();
+    let downloads = root.join("Downloads"); fs::create_dir(&downloads).unwrap();
+    let reservation = store.save_manifest_and_reserve(&tasks, "task", hash, &manifest()).await.unwrap();
+    let stage = reservation.allocate(File::open(&downloads).unwrap()).await.unwrap();
+    tasks.lock().await.get_mut("task").unwrap().state = "finalizing".into();
+    store.save(&tasks, &BandwidthLimiter::new()).await.unwrap();
+    (root, store, tasks, stage)
+}
+
+#[cfg(target_env = "gnu")]
+fn fill_stage(root: &std::path::Path, stage: &super::torrent_stage_allocate::AllocatedStage) {
+    let payload = root.join("Downloads/.rget-staging").join(&stage.record.name).join("payload");
+    fs::create_dir(payload.join("dir")).unwrap(); fs::write(payload.join("dir/file"), b"abc").unwrap();
+    fs::write(payload.join("empty"), b"").unwrap();
+}
+
+#[cfg(target_env = "gnu")]
+#[tokio::test]
+async fn guarded_publish_retains_verifies_and_journals_before_rename() {
+    let (root, store, tasks, stage) = publication_lab().await; fill_stage(&root, &stage);
+    let task = tasks.lock().await["task"].clone();
+    let published = stage.publish_exact(task, "bundle".into()).await.unwrap();
+    assert!(root.join("Downloads/bundle/dir/file").is_file());
+    assert_eq!(stages::load(&store.database_path()).unwrap()[0].state, stages::State::Retained);
+    assert_eq!(super::torrent_publish_intent::load(&store.database_path()).unwrap(), vec![published.intent.clone()]);
+    assert!(super::torrent_publish_proof::is_verified(&store.database_path(), &published.intent, &tasks.lock().await["task"]).unwrap());
+    assert_eq!(tasks.lock().await["task"].state, "finalizing");
+    drop(published); fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_env = "gnu")]
+#[tokio::test]
+async fn verification_failure_and_collision_keep_owned_stage() {
+    let (root, store, tasks, stage) = publication_lab().await;
+    let name = stage.record.name.clone(); let task = tasks.lock().await["task"].clone();
+    assert!(stage.publish_exact(task, "bundle".into()).await.is_err());
+    assert_eq!(stages::load(&store.database_path()).unwrap()[0].state, stages::State::Retained);
+    assert!(super::torrent_publish_intent::load(&store.database_path()).unwrap().is_empty());
+    assert!(root.join("Downloads/.rget-staging").join(name).join("payload").is_dir());
+    fs::remove_dir_all(root).unwrap();
+
+    let (root, store, tasks, stage) = publication_lab().await; fill_stage(&root, &stage);
+    let name = stage.record.name.clone(); fs::create_dir(root.join("Downloads/bundle")).unwrap();
+    let task = tasks.lock().await["task"].clone();
+    assert!(stage.publish_exact(task, "bundle".into()).await.is_err());
+    assert!(root.join("Downloads/bundle").is_dir());
+    assert!(root.join("Downloads/.rget-staging").join(name).join("payload/dir/file").is_file());
+    assert_eq!(stages::load(&store.database_path()).unwrap()[0].state, stages::State::Retained);
+    assert_eq!(super::torrent_publish_intent::load(&store.database_path()).unwrap().len(), 1);
+    fs::remove_dir_all(root).unwrap();
+}

@@ -39,7 +39,7 @@ pub(super) fn begin_verified(path: &Path, area: &StageArea, stage: &StageRecord,
     let json: String = conn.query_row("SELECT info FROM rget_queue_v1 WHERE url=?1", [&stage.task_id], |row| row.get(0))?;
     let durable: DownloadInfo = serde_json::from_str(&json)?;
     // Ensure the exact metadata is already durable before touching the tree.
-    if durable.url != task.url || durable.torrent.as_ref().map(|t| (&t.source, &t.info_hash, &t.root_name, &t.files))
+    if task.state != "finalizing" || durable.state != "finalizing" || durable.url != task.url || durable.torrent.as_ref().map(|t| (&t.source, &t.info_hash, &t.root_name, &t.files))
         != task.torrent.as_ref().map(|t| (&t.source, &t.info_hash, &t.root_name, &t.files)) {
         return Err("durable manifest differs from task".into());
     }
@@ -50,7 +50,7 @@ pub(super) fn begin_verified(path: &Path, area: &StageArea, stage: &StageRecord,
     let mut conn = open(path)?; let tx = conn.transaction()?;
     let json: String = tx.query_row("SELECT info FROM rget_queue_v1 WHERE url=?1", [&stage.task_id], |row| row.get(0))?;
     let durable: DownloadInfo = serde_json::from_str(&json)?;
-    if fingerprint(&durable, &intent)? != expected { return Err("durable manifest changed before proof commit".into()); }
+    if durable.state != "finalizing" || fingerprint(&durable, &intent)? != expected { return Err("durable task or manifest changed before proof commit".into()); }
     let rows = tx.execute("INSERT INTO rget_torrent_publish_proofs_v1(task_id,fingerprint)
         SELECT i.task_id,?1 FROM rget_torrent_publish_intents_v1 i JOIN rget_torrent_stages_v1 s ON s.task_id=i.task_id
         WHERE i.task_id=?2 AND i.stage_name=?3 AND i.stage_device=?4 AND i.stage_inode=?5 AND i.destination=?6 AND i.payload_device=?7 AND i.payload_inode=?8

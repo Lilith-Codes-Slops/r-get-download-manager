@@ -332,3 +332,13 @@ but librqbit's magnet resolver validates received metadata *before* rGet can
 preflight its raw bytes; its unchecked length sum remains an unresolved risk.
 This resolver is not wired into ingress and magnet resolution has not been
 verified end-to-end. Multi-file downloads remain disabled.
+
+An isolated guarded publication sequence now marks the stage retained before
+verification, checks and syncs its manifest layout, journals one exact name and
+performs no-replace rename against the same opened download root used for stage
+allocation. Collisions and unsupported no-replace retain the stage and journal;
+post-rename sync failures are returned as warnings, not rename failures. The
+caller must have stopped and joined a successfully finished engine and persisted
+finalizing state. This operation does not complete the task or clean the stage;
+completion, recovery and download ingress remain unwired. Checks are not piece
+hash verification and do not protect against concurrent same-user writes.
