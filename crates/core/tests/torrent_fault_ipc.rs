@@ -11,7 +11,13 @@ impl Daemon {
     fn start(root: &Path, point: Option<&str>) -> Self {
         fs::create_dir_all(root.join("run")).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_downloader-core"));
+        // Force two active slots and clear inherited hooks. Otherwise a shell
+        // with RGET_TORRENT_MAX_ACTIVE=1 serializes the concurrency test, and
+        // leftover fault variables can pause an ostensibly hook-free restart.
         command.env("HOME", root).env("XDG_RUNTIME_DIR", root.join("run")).env("XDG_STATE_HOME", root.join("state"))
+            .env("RGET_TORRENT_MAX_ACTIVE", "2")
+            .env_remove("RGET_TORRENT_TEST_DIR").env_remove("RGET_TORRENT_TEST_POINT")
+            .env_remove("RGET_TEST_CHECKPOINT_HOOK").env_remove("RGET_TEST_CHECKPOINT_MARKER").env_remove("RGET_TEST_WRITE_BLOCK")
             .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         if let Some(point) = point {
             let hooks = root.join("hooks"); let _ = fs::remove_dir_all(&hooks); fs::create_dir_all(&hooks).unwrap();
@@ -227,7 +233,17 @@ async fn concurrent_distinct_torrents_same_root_do_not_interfere() {
     tokio::time::timeout(Duration::from_secs(15), handle.wait_until_initialized()).await.unwrap().unwrap(); assert!(handle.stats().finished);
     let daemon = Daemon::start(&lab.home, Some("after-barrier")); let first = daemon.add(&lab.source); let second = daemon.add(&source);
     assert_ne!(first, second); let hooks = lab.home.join("hooks");
-    wait(|| fs::read_dir(&hooks).map(|entries| entries.filter_map(Result::ok).filter(|e| e.file_name().to_string_lossy().starts_with("ready-")).count() >= 2).unwrap_or(false), "both storage barriers");
+    let ready = || fs::read_dir(&hooks).map(|entries| entries.filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("ready-")).count()).unwrap_or(0);
+    let deadline = Instant::now() + Duration::from_secs(60); let mut report = Instant::now();
+    while ready() < 2 {
+        if report.elapsed() >= Duration::from_secs(5) {
+            eprintln!("barriers: {}; first={:?}; second={:?}", ready(), daemon.task(&first), daemon.task(&second));
+            report = Instant::now();
+        }
+        assert!(Instant::now() < deadline, "timed out: both storage barriers; first={:?}; second={:?}", daemon.task(&first), daemon.task(&second));
+        thread::sleep(Duration::from_millis(50));
+    }
     daemon.release(); let a = daemon.terminal(&first); let b = daemon.terminal(&second);
     assert!((a.state == "completed" && b.state.starts_with("failed:")) || (b.state == "completed" && a.state.starts_with("failed:")), "{a:?} {b:?}");
     assert_eq!(fs::read(lab.home.join("Downloads/bundle/dir/a")).unwrap(), b"abc");

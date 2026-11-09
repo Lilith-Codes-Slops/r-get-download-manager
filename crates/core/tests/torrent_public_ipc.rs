@@ -11,6 +11,9 @@ impl Daemon {
         fs::create_dir_all(root.join("run")).unwrap();
         let child = Command::new(env!("CARGO_BIN_EXE_downloader-core"))
             .env("HOME", &root).env("XDG_RUNTIME_DIR", root.join("run")).env("XDG_STATE_HOME", root.join("state"))
+            .env("RGET_TORRENT_MAX_ACTIVE", "1")
+            .env_remove("RGET_TORRENT_TEST_DIR").env_remove("RGET_TORRENT_TEST_POINT")
+            .env_remove("RGET_TEST_CHECKPOINT_HOOK").env_remove("RGET_TEST_CHECKPOINT_MARKER").env_remove("RGET_TEST_WRITE_BLOCK")
             .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
         let daemon = Self { root, child }; let deadline = Instant::now() + Duration::from_secs(20);
         while UnixStream::connect(daemon.root.join("run/rget.sock")).is_err() {
@@ -32,6 +35,26 @@ impl Daemon {
 }
 impl Drop for Daemon { fn drop(&mut self) { let _ = self.child.kill(); let _ = self.child.wait(); } }
 
+#[derive(serde::Deserialize, Default)]
+struct V2Info {
+    #[serde(rename = "meta version", default)] meta_version: Option<serde::de::IgnoredAny>,
+    #[serde(rename = "file tree", default)] file_tree: Option<serde::de::IgnoredAny>,
+}
+#[derive(serde::Deserialize)]
+struct V2Metainfo {
+    #[serde(rename = "meta version", default)] meta_version: Option<serde::de::IgnoredAny>,
+    #[serde(rename = "piece layers", default)] piece_layers: Option<serde::de::IgnoredAny>,
+    #[serde(default)] info: V2Info,
+}
+/// Reject v2/hybrid markers before any download. The v1 parser ignores these
+/// unknown fields, so it alone cannot prove that a torrent is v1-only.
+fn assert_v1_only(bytes: &[u8]) {
+    let flags: V2Metainfo = librqbit_bencode::from_bytes(bytes).expect("cannot inspect bencoded metainfo");
+    assert!(flags.meta_version.is_none() && flags.piece_layers.is_none()
+        && flags.info.meta_version.is_none() && flags.info.file_tree.is_none(),
+        "v2 or hybrid torrents are unsupported; acceptance requires v1-only metainfo");
+}
+
 /// This test needs real external peers; it is not an automated default test.
 /// The torrent source must be a local file, not a magnet or HTTP URL.
 #[test]
@@ -41,7 +64,10 @@ fn public_multifile_download_and_verify_all_v1_pieces() {
     let source = fs::canonicalize(&source).expect("cannot open torrent file");
     assert!(source.is_file() && source.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("torrent")));
     let bytes = fs::read(&source).expect("cannot read torrent file");
-    let manifest = multi_file_metadata::preflight_local(&bytes).expect("invalid or unsupported metadata").expect("torrent is not multi-file");
+    assert_v1_only(&bytes);
+    let manifest = multi_file_metadata::preflight_local(&bytes).expect("invalid or unsupported metadata")
+        .expect("torrent is not multi-file; acceptance requires a v1 multi-file .torrent");
+    assert!(manifest.files().len() >= 2, "acceptance requires at least two files in the torrent");
     let parsed = librqbit::torrent_from_bytes(&bytes).expect("cannot parse metainfo"); let hash = parsed.info_hash.as_string();
     let info = recovery_metadata::from_metainfo(&bytes, &hash, &manifest).expect("cannot validate exact info dictionary");
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
@@ -72,4 +98,11 @@ fn public_multifile_download_and_verify_all_v1_pieces() {
     recovery_piece_verify::verify(&payload, device, &manifest, &info, &hash).expect("post-publication v1 piece verification failed");
     println!("completed: {} ({} files); all v1 pieces verified", path.display(), manifest.files().len());
     drop(daemon); fs::remove_dir_all(&root).expect("failed to remove isolated test home");
+}
+
+#[test]
+fn v1_only_guard_accepts_v1_and_rejects_v2_markers() {
+    assert_v1_only(b"d4:infod5:filesleee");
+    assert!(std::panic::catch_unwind(|| assert_v1_only(b"d12:meta versioni2e4:infod5:filesleee")).is_err());
+    assert!(std::panic::catch_unwind(|| assert_v1_only(b"d4:infod9:file treed5:filesleeee")).is_err());
 }

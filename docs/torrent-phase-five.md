@@ -494,3 +494,10 @@ If the storage barrier itself fails or its blocking worker panics, the task is
 now marked `quiescence-unknown`, even when cancel was requested. Both removal
 modes refuse while that daemon is running; a restart ends its engine tasks and
 then applies conservative durable recovery. This is not a task-join guarantee.
+The fault suite now forces two active torrent slots and clears inherited test
+hook variables for each isolated daemon, so a shell exporting
+`RGET_TORRENT_MAX_ACTIVE=1` cannot serialize the concurrent-barrier test. The
+public acceptance test likewise isolates its daemon and rejects single-file,
+one-entry and v2/hybrid metainfo before contacting the network. An ordinary ISO
+torrent with `length` and `name` is single-file even when its release page
+contains several download options.
