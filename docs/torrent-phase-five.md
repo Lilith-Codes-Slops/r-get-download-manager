@@ -441,3 +441,14 @@ A local librqbit-to-librqbit smoke test exercises the delegated filesystem
 storage, stops the downloader, closes the gate, and checks the resulting v1
 multi-file pieces. It uses direct localhost peers, not a tracker, and does not
 exercise daemon ingress, cancellation, crashes, or prove all engine tasks joined.
+
+The daemon now routes validated local multi-file metainfo through durable
+manifest/reservation, owned staging, librqbit's gated filesystem storage,
+storage quiescence, exact no-replace publication and transactional completion.
+The user approved the storage barrier as a substitute for an engine-task join;
+`Session::stop()` still does not promise those tasks have joined. Multi-file
+magnets remain disabled. Cancel and remove signal and wait without the lifecycle
+guard; stopped unpublished tasks can delete only verified-owned stages, while
+journaled or ambiguous cases fail closed. This path and its new local-tracker
+IPC tests have not yet been compiled or run in this environment; the public
+multi-file acceptance test is still outstanding.

@@ -171,13 +171,100 @@ fn local_multifile_is_validated_before_allocating_a_stage() {
     let root = std::env::temp_dir().join(format!("rget-multi-preflight-{}-{nonce}", std::process::id()));
     std::fs::create_dir_all(root.join("Downloads")).unwrap();
     let source = root.join("bundle.torrent");
-    let mut torrent = b"d4:infod5:filesld6:lengthi3e4:pathl1:aeee4:name6:bundle12:piece lengthi16384e6:pieces20:".to_vec();
+    let mut torrent = b"d4:infod5:filesld6:lengthi3e4:pathl2:..eee4:name6:bundle12:piece lengthi16384e6:pieces20:".to_vec();
     torrent.extend_from_slice(&[0; 20]); torrent.extend_from_slice(b"ee");
     std::fs::write(&source, torrent).unwrap();
     let f = Fixture::start(root.clone());
     let response = f.request(ClientRequest::AddTask { url: source.to_str().unwrap().into(), mirrors: vec![],
         connections: 1, extract: false, category: None, not_before: None });
-    assert!(matches!(response, DaemonEvent::TaskFailed { error, .. } if error.contains("multi-file torrents are not enabled")));
+    assert!(matches!(response, DaemonEvent::TaskFailed { error, .. } if error.contains("invalid multi-file metadata")));
     assert!(std::fs::read_dir(root.join("Downloads")).unwrap().next().is_none());
     drop(f); let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(target_env = "gnu")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn local_multifile_publishes_and_removes_over_ipc() {
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("rget-multi-ipc-{}-{nonce}", std::process::id()));
+    let seed_root = root.join("seed"); let payload = seed_root.join("bundle"); let lab = root.join("lab");
+    std::fs::create_dir_all(payload.join("dir")).unwrap();
+    std::fs::write(payload.join("dir/a"), b"abc").unwrap(); std::fs::write(payload.join("empty"), b"").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap(); listener.set_nonblocking(true).unwrap();
+    let tracker_url = format!("http://{}/announce", listener.local_addr().unwrap());
+    let mut torrent = format!("d8:announce{}:{}4:infod5:filesld6:lengthi3e4:pathl3:dir1:aee", tracker_url.len(), tracker_url).into_bytes();
+    torrent.extend_from_slice(b"d6:lengthi0e4:pathl5:emptyeee4:name6:bundle12:piece lengthi16384e6:pieces20:");
+    torrent.extend_from_slice(&[0xa9,0x99,0x3e,0x36,0x47,0x06,0x81,0x6a,0xba,0x3e,0x25,0x71,0x78,0x50,0xc2,0x6c,0x9c,0xd0,0xd8,0x9d]);
+    torrent.extend_from_slice(b"ee");
+    let source = root.join("multi.torrent"); std::fs::write(&source, &torrent).unwrap();
+    let seed = Session::new_with_opts(seed_root, SessionOptions {
+        dht: None, disable_trackers: true, disable_local_service_discovery: true,
+        listen: Some(ListenerOptions { mode: ListenerMode::TcpOnly, listen_addr: ([127,0,0,1], 0).into(), ..Default::default() }),
+        ..Default::default()
+    }).await.unwrap();
+    let peer_port = seed.listen_addr().unwrap().port();
+    let handle = seed.add_torrent(AddTorrent::from_bytes(torrent), Some(AddTorrentOptions {
+        overwrite: true, output_folder: Some(payload.to_str().unwrap().into()), ..Default::default()
+    })).await.unwrap().into_handle().unwrap();
+    tokio::time::timeout(Duration::from_secs(15), handle.wait_until_initialized()).await.unwrap().unwrap();
+    assert!(handle.stats().finished);
+    let quit = Arc::new(AtomicBool::new(false)); let done = quit.clone();
+    let tracker = thread::spawn(move || while !done.load(Ordering::Relaxed) {
+        match listener.accept() { Ok((stream, _)) => tracker_reply(stream, peer_port),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(10)), Err(_) => break }
+    });
+    let f = Fixture::start(lab.clone());
+    let id = f.add(source.to_str().unwrap()); let completed = f.completed(&id).await;
+    let identity = completed.torrent.unwrap(); assert_eq!(identity.root_name.as_deref(), Some("bundle"));
+    assert_eq!(identity.files.unwrap().len(), 2); assert_eq!(std::fs::read(lab.join("Downloads/bundle/dir/a")).unwrap(), b"abc");
+    assert!(matches!(f.request(ClientRequest::RemoveTask { task_id: id, delete_file: true }), DaemonEvent::TaskStateChanged { state, .. } if state == "removed"));
+    assert!(!lab.join("Downloads/bundle").exists());
+    let id = f.add(source.to_str().unwrap()); f.completed(&id).await;
+    assert!(matches!(f.request(ClientRequest::RemoveTask { task_id: id, delete_file: false }), DaemonEvent::TaskStateChanged { state, .. } if state == "removed"));
+    assert_eq!(std::fs::read(lab.join("Downloads/bundle/dir/a")).unwrap(), b"abc");
+    // A later download must fail closed instead of replacing the kept tree.
+    let collision_id = f.add(source.to_str().unwrap()); let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        if let DaemonEvent::DetailedQueue { tasks } = f.request(ClientRequest::GetDetailedQueue) {
+            if let Some(task) = tasks.into_iter().find(|task| task.url == collision_id) {
+                if task.state.starts_with("failed:") { assert!(task.state.contains("publication failed")); break; }
+                assert_ne!(task.state, "completed");
+            }
+        }
+        assert!(Instant::now() < deadline, "collision did not fail"); tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(std::fs::read(lab.join("Downloads/bundle/dir/a")).unwrap(), b"abc");
+    drop(f); quit.store(true, Ordering::Relaxed); tracker.join().unwrap(); seed.stop().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn local_multifile_cancel_drains_and_cleans_owned_stage() {
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("rget-multi-cancel-{}-{nonce}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut bytes = b"d4:infod5:filesld6:lengthi3e4:pathl1:aeee4:name6:bundle12:piece lengthi16384e6:pieces20:".to_vec();
+    bytes.extend_from_slice(&[0; 20]); bytes.extend_from_slice(b"ee");
+    let source = root.join("cancel.torrent"); std::fs::write(&source, bytes).unwrap();
+    let f = Fixture::start(root.clone()); let id = f.add(source.to_str().unwrap());
+    let deadline = Instant::now() + Duration::from_secs(25);
+    let stage = loop {
+        if let DaemonEvent::DetailedQueue { tasks } = f.request(ClientRequest::GetDetailedQueue) {
+            if let Some(task) = tasks.into_iter().find(|task| task.url == id) {
+                assert!(!task.state.starts_with("failed:"), "{task:?}");
+                if let Some(name) = task.torrent.and_then(|torrent| torrent.stage_name) { break name; }
+            }
+        }
+        assert!(Instant::now() < deadline, "stage not created"); tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert!(matches!(f.request(ClientRequest::Cancel { task_id: id.clone() }), DaemonEvent::TaskStateChanged { .. }));
+    let deadline = Instant::now() + Duration::from_secs(25);
+    loop {
+        if let DaemonEvent::DetailedQueue { tasks } = f.request(ClientRequest::GetDetailedQueue) {
+            if tasks.into_iter().any(|task| task.url == id && task.state == "canceled") { break; }
+        }
+        assert!(Instant::now() < deadline, "torrent did not cancel"); tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(!root.join("Downloads/.rget-staging").join(stage).exists());
+    assert!(!root.join("Downloads/bundle").exists()); drop(f); let _ = std::fs::remove_dir_all(root);
 }

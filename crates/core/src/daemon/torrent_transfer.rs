@@ -18,17 +18,16 @@ pub(super) async fn add(source: String, connections: u8, tasks: Tasks, controls:
         Ok(Err(error)) => return DaemonEvent::TaskFailed { task_id: source, error: error.to_string() },
         Err(_) => return DaemonEvent::TaskFailed { task_id: source, error: "metadata timeout".into() },
     };
-    match &prepared.source {
+    let multi_file = match &prepared.source {
         task_identity::PreparedSource::Metainfo(bytes) => {
             crate::protocols::torrent::webseed_support::log_metainfo(bytes);
             match crate::protocols::torrent::multi_file_metadata::preflight_local(bytes) {
-                Ok(None) => {},
-                Ok(Some(_)) => return DaemonEvent::TaskFailed { task_id: source, error: "multi-file torrents are not enabled until staging recovery and cleanup are implemented".into() },
+                Ok(manifest) => manifest.is_some(),
                 Err(error) => return DaemonEvent::TaskFailed { task_id: source, error: format!("invalid multi-file metadata: {error}") },
             }
         },
-        task_identity::PreparedSource::Magnet(_) => tracing::info!("webseed declarations unavailable from magnet metadata; P2P only"),
-    }
+        task_identity::PreparedSource::Magnet(_) => { tracing::info!("webseed declarations unavailable from magnet metadata; P2P only"); false },
+    };
     let mut guard = tasks.lock().await;
     let duplicate = guard.values().find(|task| {
         task.torrent.as_ref().and_then(|torrent| torrent.info_hash.as_deref()) == Some(prepared.info_hash.as_str())
@@ -73,7 +72,11 @@ pub(super) async fn add(source: String, connections: u8, tasks: Tasks, controls:
         let acquired = super::torrent_queue::wait_for_slot(&task_id, &tasks, &ticket, &mut receiver).await;
         drop(ticket);
         let (result, permit) = match acquired {
-            Ok(permit) => (run(&task_id, connections, &tasks, rx.clone(), prepared).await, Some(permit)),
+            Ok(permit) => {
+                let result = if multi_file { super::torrent_multi_transfer::run(&task_id, connections, &tasks, &store, &limiter, rx.clone(), prepared).await }
+                    else { run(&task_id, connections, &tasks, rx.clone(), prepared).await };
+                (result, Some(permit))
+            },
             Err(error) => (Err(error), None),
         };
         {
@@ -81,7 +84,11 @@ pub(super) async fn add(source: String, connections: u8, tasks: Tasks, controls:
             if let Some(task) = guard.get_mut(&task_id) {
                 task.speed_bps = 0; task.active_connections = None;
                 if *rx.borrow() == TransferControl::Canceled { task.state = "canceled".into(); }
-                else if let Err(error) = result { task.state = format!("failed: {error}"); }
+                else if let Err(error) = result {
+                    if error.downcast_ref::<super::torrent_multi_transfer::PendingPublication>().is_some() {
+                        task.connection_note = Some(error.to_string());
+                    } else { task.state = format!("failed: {error}"); }
+                }
             }
         }
         drop(permit);
@@ -106,8 +113,6 @@ async fn run(id: &str, connections: u8, tasks: &Tasks, mut control: watch::Recei
     picker_capabilities::log();
     let database = Persistence::default_path()?;
     let state = database.parent().ok_or("state database has no directory")?;
-    // Only one active task owns a hash; separate folders also prevent different
-    // sessions from racing over librqbit's process-wide DHT temp filename.
     let cache = state.join("torrent-dht").join(&prepared.info_hash).join("dht.json");
     let session = match Session::new_with_opts(stage.clone(), with_discovery(cache)).await {
         Ok(session) => session,
@@ -118,12 +123,10 @@ async fn run(id: &str, connections: u8, tasks: &Tasks, mut control: watch::Recei
         }
     };
     let result = download(&session, &root, &stage, id, connections, tasks, &mut control, prepared).await;
-    // Always stop the session, including on errors/cancel, before publication.
     session.stop().await;
     let staged = match result {
         Ok(staged) => staged,
         Err(error) => {
-            // Leave the owned staging directory for explicit removal or inspection.
             return Err(format!("{error}; incomplete data, if any, is retained in {}", stage.display()).into());
         }
     };
@@ -147,7 +150,6 @@ async fn run(id: &str, connections: u8, tasks: &Tasks, mut control: watch::Recei
             crate::protocols::torrent::diagnostics::log_completion(id, metrics);
         }
     }
-    // Publication succeeded. Failure to remove the staging link must not undo it.
     if let Err(error) = tokio::fs::remove_file(&staged).await { eprintln!("torrent staging cleanup: {error}"); }
     if let Err(error) = tokio::fs::remove_file(stage.join(super::torrent_cleanup::MARKER)).await { eprintln!("torrent marker cleanup: {error}"); }
     if let Err(error) = tokio::fs::remove_dir(&stage).await { eprintln!("torrent staging directory cleanup: {error}"); }
@@ -195,7 +197,7 @@ async fn download(session: &Arc<Session>, root: &Path, stage: &Path, id: &str, c
     Ok(stage.join(filename))
 }
 
-async fn monitor(handle: &Arc<ManagedTorrent>, id: &str, tasks: &Tasks,
+pub(super) async fn monitor(handle: &Arc<ManagedTorrent>, id: &str, tasks: &Tasks,
     control: &mut watch::Receiver<TransferControl>, metrics: &mut MetricsTracker) -> Result<()> {
     let mut timer = tokio::time::interval(Duration::from_millis(500));
     let mut no_peers_since = Instant::now();
@@ -215,7 +217,6 @@ async fn monitor(handle: &Arc<ManagedTorrent>, id: &str, tasks: &Tasks,
             update_metrics(tasks, id, metrics).await;
             return Err(format!("torrent engine: {error}").into());
         }
-        // Initialization reports checking progress, not downloaded data.
         let bytes = if matches!(stats.state, librqbit::TorrentStatsState::Live) { stats.progress_bytes } else { 0 };
         let live = stats.live.as_ref();
         let peers = live.map(|live| live.snapshot.peer_stats.live).unwrap_or(0);

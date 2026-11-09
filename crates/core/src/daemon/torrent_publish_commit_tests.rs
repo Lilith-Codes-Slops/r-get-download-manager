@@ -187,3 +187,21 @@ async fn keep_files_refuses_pending_removal_intent() {
     assert!(lab.downloads.join("bundle").exists()); assert!(unexpected.exists());
     fs::remove_dir_all(lab.root).unwrap();
 }
+
+#[tokio::test]
+async fn unfinished_removal_cleans_only_owned_stage_and_rejects_journal() {
+    let lab = setup().await; let database = lab.store.database_path();
+    lab.tasks.lock().await.get_mut("task").unwrap().state = "failed: verification".into();
+    lab.store.save(&lab.tasks, &BandwidthLimiter::new()).await.unwrap();
+    let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap();
+    assert!(lab.store.remove_unfinished_torrent(&lab.tasks, "task", &lab.downloads).await.is_err());
+    assert_eq!(journal::load(&database).unwrap(), vec![intent]); assert!(lab.area.verify(&lab.stage).is_ok());
+    fs::remove_dir_all(lab.root).unwrap();
+
+    let lab = setup().await; let database = lab.store.database_path();
+    lab.tasks.lock().await.get_mut("task").unwrap().state = "canceled".into();
+    lab.store.save(&lab.tasks, &BandwidthLimiter::new()).await.unwrap();
+    lab.store.remove_unfinished_torrent(&lab.tasks, "task", &lab.downloads).await.unwrap();
+    assert!(stages::load(&database).unwrap().is_empty()); assert!(!lab.tasks.lock().await.contains_key("task"));
+    fs::remove_dir_all(lab.root).unwrap();
+}

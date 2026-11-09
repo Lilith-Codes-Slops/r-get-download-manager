@@ -27,15 +27,15 @@ async fn remove_at_root(tasks: &Tasks, controls: &Controls, limiter: &Arc<Bandwi
                 Err(error) => return failed(id, &format!("torrent ownership lookup failed: {error}")),
             };
             if tracked || task.torrent.as_ref().is_some_and(|identity| identity.root_name.is_some()) {
-                // Do not wait on a worker while holding its lifecycle lock; no
-                // multi-file worker is enabled yet. Refuse until it has stopped.
-                if !(task.state == "completed" || task.state == "canceled" || task.state.starts_with("failed:")) {
-                    return failed(id, "stop the multi-file torrent before removing it");
-                }
+                // Signal first, then wait without the lifecycle guard; the
+                // worker needs that guard to stop and clean up its stage.
+                let state = match wait_stopped(tasks, controls, &id, &task.state).await {
+                    Ok(state) => state, Err(error) => return failed(id, &error),
+                };
                 let result = if delete_file {
-                    if task.state != "completed" { return failed(id, "deletion of an unfinished multi-file torrent is not yet available"); }
                     let Some(root) = root else { return failed(id, "HOME is not set"); };
-                    store.remove_completed_torrent(tasks, &id, root).await
+                    if state == "completed" { store.remove_completed_torrent(tasks, &id, root).await }
+                    else { store.remove_unfinished_torrent(tasks, &id, root).await }
                 } else { store.forget_torrent_keep_files(tasks, &id).await };
                 return match result {
                     Ok(()) => {
@@ -51,6 +51,23 @@ async fn remove_at_root(tasks: &Tasks, controls: &Controls, limiter: &Arc<Bandwi
     #[cfg(not(feature = "torrent"))]
     let _ = (store, root);
     super::task_removal::remove(tasks, controls, limiter, id, delete_file).await
+}
+
+#[cfg(feature = "torrent")]
+async fn wait_stopped(tasks: &Tasks, controls: &Controls, id: &str, initial: &str) -> Result<String, String> {
+    if matches!(initial, "queued" | "metadata" | "peers" | "connecting" | "downloading" | "finished") {
+        if let DaemonEvent::TaskFailed { error, .. } = super::task_removal::cancel(tasks, controls, id.to_owned()).await {
+            if error != "task is not an active download" { return Err(error); }
+        }
+    }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let state = tasks.lock().await.get(id).map(|task| task.state.clone()).ok_or("torrent task not found")?;
+        if state == "completed" || state == "canceled" || state.starts_with("failed:") { return Ok(state); }
+        if state == "finalizing" { return Err("torrent is publishing; retry removal after it finishes".into()); }
+        if tokio::time::Instant::now() >= deadline { return Err("timed out waiting for torrent to stop; task was not removed".into()); }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
 }
 
 #[cfg(feature = "torrent")]

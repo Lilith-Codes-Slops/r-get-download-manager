@@ -135,3 +135,9 @@ mod torrent_remove_keep;
 
 #[cfg(target_os = "linux")]
 mod torrent_remove_dispatch;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_multi_transfer;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_remove_unfinished;
