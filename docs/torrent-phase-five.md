@@ -267,3 +267,17 @@ delete anything, or prove content hashes: same-size content changes remain
 undetectable. It must run under exclusive lifecycle control. Automatic intent
 replay is not wired in, and multi-file downloads are still disabled. The new
 tests have not been compiled or run in this sandbox.
+
+## Pre-publication verification evidence
+
+An isolated `begin_verified` operation now validates the persisted manifest,
+checks and syncs the staged tree, creates an exact-name intent, and records a
+fingerprint binding the task metadata to the intent and directory identities.
+If writing the evidence fails, the intent remains unproven and cannot be
+assumed replayable. Completion removes evidence together with the intent in its
+existing SQLite transaction. Evidence can detect changed records; it is not a
+MAC, a piece hash, or proof that the engine actually finished. The caller must
+still stop/join a successfully completed engine and exclude concurrent writes.
+
+This operation and automatic replay are not connected to multi-file downloads.
+No test has been compiled or run in the sandbox for this increment.

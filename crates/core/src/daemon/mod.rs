@@ -85,3 +85,8 @@ mod torrent_manifest_store_tests;
 mod torrent_publish_inspection;
 #[cfg(all(test, target_os = "linux", feature = "torrent"))]
 mod torrent_publish_inspection_tests;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_publish_proof;
+#[cfg(all(test, target_os = "linux", feature = "torrent"))]
+mod torrent_publish_proof_tests;

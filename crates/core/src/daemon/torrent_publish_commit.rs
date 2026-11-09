@@ -43,6 +43,7 @@ fn commit(database: &Path, root: &Path, intent: &Intent, completed: &DownloadInf
     }
     // Validate stored intent and initialize tables before beginning transaction.
     if !torrent_publish_intent::load(database)?.iter().any(|stored| stored == intent) { return Err("publication intent missing or changed".into()); }
+    super::torrent_publish_proof::ensure_schema(database)?;
     let mut conn = super::persistence::open(database)?;
     let tx = conn.transaction()?;
     let matched: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM rget_torrent_publish_intents_v1 i
@@ -54,6 +55,7 @@ fn commit(database: &Path, root: &Path, intent: &Intent, completed: &DownloadInf
     if count != 1 { return Err("durable torrent task missing".into()); }
     let removed = tx.execute("DELETE FROM rget_torrent_publish_intents_v1 WHERE task_id=?1", [&intent.stage.task_id])?;
     if removed != 1 { return Err("publication intent changed before commit".into()); }
+    tx.execute("DELETE FROM rget_torrent_publish_proofs_v1 WHERE task_id=?1", [&intent.stage.task_id])?;
     tx.commit()?;
     Ok(())
 }

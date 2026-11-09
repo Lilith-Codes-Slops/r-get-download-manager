@@ -9,8 +9,8 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Inspection { SourcePresent, DestinationLayoutMatches, Ambiguous }
 
-fn manifest(task: &DownloadInfo, intent: &Intent) -> Result<ValidatedManifest> {
-    if task.url != intent.stage.task_id { return Err("publication task identity mismatch".into()); }
+pub(super) fn manifest_for(task: &DownloadInfo, task_id: &str) -> Result<ValidatedManifest> {
+    if task.url != task_id { return Err("publication task identity mismatch".into()); }
     let torrent = task.torrent.as_ref().ok_or("torrent identity missing")?;
     let hash = torrent.info_hash.as_deref().ok_or("torrent info-hash missing")?;
     if hash.len() != 40 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) { return Err("invalid torrent info-hash".into()); }
@@ -32,7 +32,7 @@ fn manifest(task: &DownloadInfo, intent: &Intent) -> Result<ValidatedManifest> {
 /// detectable here. This function never deletes, adopts or changes task state.
 #[allow(dead_code)]
 pub(super) fn inspect(area: &StageArea, root: &File, intent: &Intent, task: &DownloadInfo) -> Result<Inspection> {
-    let manifest = manifest(task, intent)?;
+    let manifest = manifest_for(task, &intent.stage.task_id)?;
     match torrent_publish_intent::inspect(area, root, intent)? {
         Observation::SourcePresent => return Ok(Inspection::SourcePresent),
         Observation::Ambiguous => return Ok(Inspection::Ambiguous),
