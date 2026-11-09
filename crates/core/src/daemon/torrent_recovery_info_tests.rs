@@ -46,3 +46,39 @@ async fn recovery_info_failure_cannot_commit_manifest_or_reservation() {
     assert!(store.load().await.unwrap().tasks["task"].torrent.as_ref().unwrap().files.is_none());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(target_env = "gnu")]
+#[tokio::test]
+async fn journaled_destination_piece_inspection_detects_tampering_and_missing_info() {
+    use librqbit_sha1_wrapper::{ISha1, Sha1};
+    use super::torrent_recovery_content::{self, ContentEvidence};
+    use std::fs::File;
+    let (root, store, tasks) = setup().await; let mut bytes = recovery_metainfo();
+    let mut sha = Sha1::new(); sha.update(b"abc"); let piece = sha.finish();
+    let start = bytes.len() - 22; bytes[start..start + 20].copy_from_slice(&piece);
+    let hash = librqbit::torrent_from_bytes(&bytes).unwrap().info_hash.as_string();
+    tasks.lock().await.get_mut("task").unwrap().torrent.as_mut().unwrap().info_hash = Some(hash.clone());
+    store.save(&tasks, &BandwidthLimiter::new()).await.unwrap();
+    let downloads = root.join("Downloads"); fs::create_dir(&downloads).unwrap();
+    let reservation = store.save_manifest_info_and_reserve(&tasks, "task", &hash, &manifest(), &bytes).await.unwrap();
+    let stage = reservation.allocate(File::open(&downloads).unwrap()).await.unwrap();
+    let payload = downloads.join(".rget-staging").join(&stage.record.name).join("payload");
+    fs::create_dir(payload.join("dir")).unwrap(); fs::write(payload.join("dir/file"), b"abc").unwrap(); fs::write(payload.join("empty"), b"").unwrap();
+    tasks.lock().await.get_mut("task").unwrap().state = "finalizing".into();
+    store.save(&tasks, &BandwidthLimiter::new()).await.unwrap();
+    let task = tasks.lock().await["task"].clone();
+    let published = stage.publish_exact(task.clone(), "bundle".into()).await.unwrap();
+    let inspect = || torrent_recovery_content::inspect(&store.database_path(), &published.stage.area, &published.stage.root, &published.intent, &task);
+    assert_eq!(inspect().unwrap(), ContentEvidence::DestinationPiecesMatch);
+    fs::write(downloads.join("bundle/dir/file"), b"abd").unwrap(); assert!(inspect().is_err());
+    fs::write(downloads.join("bundle/dir/file"), b"abc").unwrap();
+    let conn = super::persistence::open(&store.database_path()).unwrap();
+    conn.execute("UPDATE rget_torrent_recovery_info_v1 SET info=?1 WHERE task_id=?2", rusqlite::params![b"invalid".as_slice(), "task"]).unwrap();
+    assert!(inspect().is_err());
+    conn.execute("DELETE FROM rget_torrent_recovery_info_v1 WHERE task_id=?1", ["task"]).unwrap(); drop(conn);
+    assert_eq!(inspect().unwrap(), ContentEvidence::MissingInfo);
+    assert_eq!(tasks.lock().await["task"].state, "finalizing");
+    assert_eq!(super::torrent_publish_intent::load(&store.database_path()).unwrap().len(), 1);
+    assert!(downloads.join("bundle/dir/file").is_file());
+    drop(published); fs::remove_dir_all(root).unwrap();
+}

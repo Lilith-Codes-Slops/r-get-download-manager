@@ -366,3 +366,10 @@ the exact tree before and after reading, and rejects symlinks and hardlinks.
 The caller must establish destination identity and exclude concurrent writes.
 This is a content inspection primitive only: it is not wired to startup replay,
 does not adopt or delete anything, and does not enable multi-file downloads.
+
+An isolated journaled-destination inspection now combines durable publication
+evidence, exact destination identity, bounded stored info-dictionary validation
+and the v1 piece verifier, then rechecks identity and layout. Missing metadata is
+reported separately and invalid metadata or mismatched pieces fail closed. This
+remains observation only: it neither updates tasks nor performs automatic crash
+replay, and callers must exclude concurrent filesystem writers.
