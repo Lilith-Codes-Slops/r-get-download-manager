@@ -24,7 +24,7 @@ pub(super) struct SavedState {
 pub(super) struct Persistence {
     path: PathBuf,
     // Serialize capture AND commit, so an older snapshot cannot commit last.
-    gate: Mutex<()>,
+    pub(super) gate: Mutex<()>,
 }
 
 impl Persistence {

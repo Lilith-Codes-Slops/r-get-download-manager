@@ -60,6 +60,9 @@ pub struct TorrentIdentity {
     /// Validated files discovered for this attempt; absent for older records.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<TorrentFile>>,
+    /// Publication succeeded but the directory durability sync failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication_warning: Option<String>,
 }
 
 /// File priorities are stored only; the current engine integration does not apply them.
@@ -229,11 +232,12 @@ mod tests {
     #[test]
     fn torrent_identity_roundtrips_and_seed_is_persisted() {
         let identity = TorrentIdentity { source: "magnet:?xt=test".into(), info_hash: Some("hash".into()),
-            stage_name: Some(".rget-torrent-test".into()), seed: true, created_at: 123, metrics: None, files: None };
+            stage_name: Some(".rget-torrent-test".into()), seed: true, created_at: 123, metrics: None, files: None, publication_warning: None };
         let json = serde_json::to_string(&identity).unwrap();
         assert_eq!(serde_json::from_str::<TorrentIdentity>(&json).unwrap(), identity);
         let mut with_files = identity.clone();
         with_files.files = Some(vec![TorrentFile { path: "a.bin".into(), length: 3, priority: 1 }]);
+        with_files.publication_warning = Some("directory sync failed".into());
         assert_eq!(serde_json::from_str::<TorrentIdentity>(&serde_json::to_string(&with_files).unwrap()).unwrap(), with_files);
         assert_eq!(serde_json::from_str::<TorrentIdentity>(&json).unwrap().files, None);
     }

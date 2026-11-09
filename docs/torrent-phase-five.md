@@ -222,3 +222,21 @@ replace the previous intent before journaling the next exact candidate. The
 new journal and helper are not connected to torrent downloads. Atomic recording
 of completion, intent removal and stage-record removal remains outstanding.
 The new tests have not been compiled or run in this sandbox.
+
+## Completion transaction groundwork
+
+An isolated completion operation checks that the journaled payload identity is
+at the intended destination, then writes the completed task and removes its
+exact publication intent in one SQLite transaction. It holds the persistence
+snapshot gate and task lock during that operation, so a concurrent queue
+snapshot through the same store cannot overwrite it. A publication sync warning
+has a backward-compatible optional task field and is displayed by `dl list`.
+A database failure leaves the intent, stage record and in-memory task intact.
+
+The staging row deliberately remains after completion until a later verified
+cleanup removes the empty owned stage: removing the row first would leave an
+unrecorded directory if cleanup or the process failed. The operation is not
+connected to downloads or startup intent replay, and callers must serialize it
+against all publication and cleanup operations and prevent external mutations.
+It does not itself verify the staged tree's contents; that remains a required
+pre-rename step. The new tests have not been compiled or run in this sandbox.
