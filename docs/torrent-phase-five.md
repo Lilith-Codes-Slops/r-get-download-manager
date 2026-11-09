@@ -406,3 +406,10 @@ crash window after filesystem deletion are still missing. On any error after
 intent creation it retains the task and intent rather than guessing that a
 missing directory was deleted by rGet. Remove-from-list/keep-files also remains
 to be integrated.
+
+Startup can now resume a journaled completed-torrent removal only when the
+stored task, intent, published identity and existing directory still match. A
+missing or changed destination remains unresolved; it is not treated as proof
+of successful deletion. A separate isolated keep-files transaction removes a
+stopped task from the list while retaining its files and marking a detached
+staging row retained. Neither operation is connected to the IPC remove command.

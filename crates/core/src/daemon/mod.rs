@@ -126,3 +126,9 @@ mod torrent_published_remove;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_remove_completed;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_remove_recovery;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_remove_keep;

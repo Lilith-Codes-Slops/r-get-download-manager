@@ -136,5 +136,54 @@ async fn failed_final_removal_keeps_task_and_durable_intent() {
     assert!(super::torrent_published_store::load(&database, "task").unwrap().is_some());
     let conn = super::persistence::open(&database).unwrap();
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM rget_torrent_remove_intents_v1 WHERE task_id='task'", [], |r| r.get(0)).unwrap();
-    assert_eq!(count, 1); drop(conn); fs::remove_dir_all(lab.root).unwrap();
+    assert_eq!(count, 1); drop(conn);
+    let report = super::torrent_remove_recovery::recover(&database, &lab.downloads).unwrap();
+    assert_eq!(report.unresolved, 1); assert_eq!(report.removed, 0);
+    fs::remove_dir_all(lab.root).unwrap();
+}
+
+#[tokio::test]
+async fn removal_recovery_resumes_only_when_identity_is_still_proven() {
+    let lab = setup().await; let database = lab.store.database_path();
+    let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap(); rename(&lab);
+    lab.store.commit_torrent_publication(&lab.tasks, &lab.downloads, &intent, None).await.unwrap();
+    let unsafe_entry = lab.downloads.join(".rget-staging").join(&lab.stage.name).join("unexpected");
+    fs::write(&unsafe_entry, b"keep").unwrap();
+    assert!(lab.store.remove_completed_torrent(&lab.tasks, "task", &lab.downloads).await.is_err());
+    let report = super::torrent_remove_recovery::recover(&database, &lab.downloads).unwrap();
+    assert_eq!(report.unresolved, 1); assert!(unsafe_entry.exists()); assert!(lab.downloads.join("bundle").exists());
+    fs::remove_file(unsafe_entry).unwrap();
+    let report = super::torrent_remove_recovery::recover(&database, &lab.downloads).unwrap();
+    assert_eq!(report.removed, 1); assert!(!lab.downloads.join("bundle").exists());
+    assert!(lab.store.load().await.unwrap().tasks.get("task").is_none());
+    fs::remove_dir_all(lab.root).unwrap();
+}
+
+#[tokio::test]
+async fn remove_from_list_keeps_published_and_detached_stage() {
+    let lab = setup().await; let database = lab.store.database_path();
+    let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap(); rename(&lab);
+    lab.store.commit_torrent_publication(&lab.tasks, &lab.downloads, &intent, None).await.unwrap();
+    lab.store.forget_torrent_keep_files(&lab.tasks, "task").await.unwrap();
+    assert!(lab.tasks.lock().await.get("task").is_none());
+    assert!(lab.downloads.join("bundle").is_dir()); assert!(lab.area.verify(&lab.stage).is_ok());
+    assert_eq!(stages::load(&database).unwrap()[0].state, stages::State::Retained);
+    assert!(super::torrent_published_store::load(&database, "task").unwrap().is_some());
+    assert!(lab.store.load().await.unwrap().tasks.get("task").is_none());
+    let report = super::torrent_stage_recovery::recover(&database, &lab.downloads).unwrap();
+    assert_eq!(report.retained, 1); assert!(lab.area.verify(&lab.stage).is_ok());
+    fs::remove_dir_all(lab.root).unwrap();
+}
+
+#[tokio::test]
+async fn keep_files_refuses_pending_removal_intent() {
+    let lab = setup().await; let database = lab.store.database_path();
+    let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap(); rename(&lab);
+    lab.store.commit_torrent_publication(&lab.tasks, &lab.downloads, &intent, None).await.unwrap();
+    let unexpected = lab.downloads.join(".rget-staging").join(&lab.stage.name).join("unexpected"); fs::write(&unexpected, b"keep").unwrap();
+    assert!(lab.store.remove_completed_torrent(&lab.tasks, "task", &lab.downloads).await.is_err());
+    assert!(lab.store.forget_torrent_keep_files(&lab.tasks, "task").await.is_err());
+    assert_eq!(lab.tasks.lock().await["task"].state, "completed");
+    assert!(lab.downloads.join("bundle").exists()); assert!(unexpected.exists());
+    fs::remove_dir_all(lab.root).unwrap();
 }

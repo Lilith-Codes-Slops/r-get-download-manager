@@ -16,7 +16,7 @@ fn invalid(message: &'static str) -> io::Error { io::Error::new(io::ErrorKind::I
 /// exclude publication/recovery/removal and concurrent writers, and retain the
 /// task and record on error. A late failure can leave a partially removed tree.
 /// A missing/replaced directory is an error, not proof of successful deletion.
-pub fn cleanup(root: &File, identity: &PublishedIdentity) -> io::Result<()> {
+pub fn open_owned(root: &File, identity: &PublishedIdentity) -> io::Result<File> {
     validate_component(&identity.name)?;
     let parent = root.metadata()?;
     if !parent.is_dir() || parent.dev() != identity.root_device || parent.ino() != identity.root_inode { return Err(invalid("download root identity changed")); }
@@ -28,6 +28,11 @@ pub fn cleanup(root: &File, identity: &PublishedIdentity) -> io::Result<()> {
         return Err(invalid("published directory identity or ownership changed"));
     }
     staging_cleanup::unchanged(root, &identity.name, &dir)?;
+    Ok(dir)
+}
+
+pub fn cleanup(root: &File, identity: &PublishedIdentity) -> io::Result<()> {
+    let dir = open_owned(root, identity)?;
     staging_cleanup::walk(&dir, identity.device, 0, &mut 0, false)?;
     staging_cleanup::walk(&dir, identity.device, 0, &mut 0, true)?;
     staging_cleanup::unchanged(root, &identity.name, &dir)?;

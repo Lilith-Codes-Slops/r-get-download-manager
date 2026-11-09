@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt, path::Path};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-fn open(path: &Path) -> Result<Connection> {
+pub(super) fn open(path: &Path) -> Result<Connection> {
     torrent_stage_store::load(path)?; torrent_publish_intent::load(path)?; torrent_published_store::ensure_schema(path)?;
     let conn = super::persistence::open(path)?;
     conn.execute_batch("CREATE TABLE IF NOT EXISTS rget_torrent_remove_intents_v1 (task_id TEXT PRIMARY KEY NOT NULL, fingerprint TEXT NOT NULL);
@@ -52,12 +52,52 @@ fn finish(path: &Path, task: &DownloadInfo, record: &PublishedRecord, proof: &st
     tx.commit()?; Ok(())
 }
 
+/// Runs with exclusive daemon lifecycle control. Resuming never assumes that a
+/// missing directory was deleted by rGet; all such cases remain unresolved.
+pub(super) fn execute(path: &Path, root: &Path, task: &DownloadInfo, resume: bool) -> Result<()> {
+    let record = torrent_published_store::load(path, &task.url)?.ok_or("published identity missing")?;
+    let proof = fingerprint(task, &record)?;
+    let root_file = OpenOptions::new().read(true).custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC).open(root)?;
+    use std::os::unix::fs::MetadataExt;
+    let root_meta = root_file.metadata()?; let expected = root.join(&record.name);
+    if root_meta.dev() != record.root_device || root_meta.ino() != record.root_inode
+        || task.filename.as_deref() != Some(record.name.as_str())
+        || task.final_path.as_deref().map(Path::new) != Some(expected.as_path()) {
+        return Err("removal root or destination changed".into());
+    }
+    let identity = crate::protocols::torrent::published_cleanup::PublishedIdentity {
+        name: record.name.clone(), root_device: record.root_device, root_inode: record.root_inode,
+        device: record.device, inode: record.inode,
+    };
+    // Check the exact target before deleting any retained stage. A missing or
+    // replaced destination cannot justify progressing an interrupted removal.
+    crate::protocols::torrent::published_cleanup::open_owned(&root_file, &identity)?;
+    if resume {
+        let conn = open(path)?;
+        let found: Option<String> = conn.query_row("SELECT fingerprint FROM rget_torrent_remove_intents_v1 WHERE task_id=?1", [&task.url], |r| r.get(0)).optional()?;
+        if found.as_deref() != Some(proof.as_str()) || !durable_task(&conn, task)? || !same_record(&conn, &record)?
+            || torrent_publish_intent::has_intent(path, &task.url)? || task.state != "completed" || task.torrent.is_none() {
+            return Err("removal intent or task identity changed".into());
+        }
+    } else { begin(path, task, &record, &proof)?; }
+    if let Some(stage) = torrent_stage_store::load(path)?.into_iter().find(|row| row.task_id == task.url) {
+        let area = StageArea::open_existing(&root_file)?;
+        torrent_stage_store::cleanup_recorded(path, &area, &stage.task_id, &stage.name, true)?;
+    }
+    torrent_published_remove::delete_files(path, root, &root_file, task)?;
+    finish(path, task, &record, &proof)
+}
+
+pub(super) fn pending(path: &Path) -> Result<Vec<String>> {
+    let conn = open(path)?;
+    let mut stmt = conn.prepare("SELECT task_id FROM rget_torrent_remove_intents_v1 ORDER BY task_id")?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    Ok(rows.collect::<std::result::Result<Vec<String>, _>>()?)
+}
+
 impl Persistence {
-    /// Only call after the engine has stopped. All torrent lifecycle paths must
-    /// share this registry. This does not yet implement restart replay: if any
-    /// error occurs after intent creation, retain the task and intent for manual
-    /// reconciliation. Missing files must never be assumed to have been deleted
-    /// by rGet. An aborted caller cannot unlock the blocking operation early.
+    /// Only call after the engine has stopped and all lifecycle paths use the
+    /// same registry. Cancellation cannot unlock the blocking operation early.
     #[allow(dead_code)]
     pub(super) async fn remove_completed_torrent(&self, tasks: &Tasks, task_id: &str, root: &Path) -> Result<()> {
         let lifecycle = super::torrent_lifecycle::global().lock(task_id).await?;
@@ -67,23 +107,7 @@ impl Persistence {
         let database = self.database_path(); let root = root.to_owned();
         tokio::task::spawn_blocking(move || -> Result<()> {
             let (_lifecycle, _gate) = (lifecycle, gate);
-            let record = torrent_published_store::load(&database, &task.url)?.ok_or("published identity missing")?;
-            let fingerprint = fingerprint(&task, &record)?;
-            let root_file = OpenOptions::new().read(true).custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC).open(&root)?;
-            use std::os::unix::fs::MetadataExt;
-            let root_meta = root_file.metadata()?;
-            if root_meta.dev() != record.root_device || root_meta.ino() != record.root_inode
-                || task.filename.as_deref() != Some(record.name.as_str())
-                || task.final_path.as_deref().map(Path::new) != Some(root.join(&record.name).as_path()) {
-                return Err("removal root or destination changed".into());
-            }
-            begin(&database, &task, &record, &fingerprint)?;
-            if let Some(stage) = torrent_stage_store::load(&database)?.into_iter().find(|row| row.task_id == task.url) {
-                let area = StageArea::open_existing(&root_file)?;
-                torrent_stage_store::cleanup_recorded(&database, &area, &stage.task_id, &stage.name, true)?;
-            }
-            torrent_published_remove::delete_files(&database, &root, &root_file, &task)?;
-            finish(&database, &task, &record, &fingerprint)?;
+            execute(&database, &root, &task, false)?;
             tasks.remove(&task.url);
             Ok(())
         }).await?
