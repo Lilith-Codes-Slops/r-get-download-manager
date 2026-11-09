@@ -28,13 +28,13 @@ fn names(dir: &File) -> io::Result<Vec<String>> {
     }
     Ok(out)
 }
-fn unchanged(parent: &File, name: &str, file: &File) -> io::Result<()> {
+pub(super) fn unchanged(parent: &File, name: &str, file: &File) -> io::Result<()> {
     let now = fstatat(parent, name, AtFlags::AT_SYMLINK_NOFOLLOW).map_err(error)?;
     let opened = file.metadata()?;
     if now.st_dev as u64 != opened.dev() || now.st_ino as u64 != opened.ino() { return Err(invalid("staging entry changed during cleanup")); }
     Ok(())
 }
-fn walk(dir: &File, device: u64, depth: usize, count: &mut usize, delete: bool) -> io::Result<()> {
+pub(super) fn walk(dir: &File, device: u64, depth: usize, count: &mut usize, delete: bool) -> io::Result<()> {
     if depth > MAX_DEPTH { return Err(invalid("staging tree too deep")); }
     for name in names(dir)? {
         *count = count.checked_add(1).ok_or_else(|| invalid("staging entry count overflow"))?;

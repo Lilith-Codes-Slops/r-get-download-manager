@@ -43,3 +43,7 @@ pub mod recovery_metadata;
 pub mod recovery_piece_verify;
 #[cfg(all(test, target_os = "linux"))]
 mod recovery_piece_verify_tests;
+#[cfg(target_os = "linux")]
+pub mod published_cleanup;
+#[cfg(all(test, target_os = "linux"))]
+mod published_cleanup_tests;

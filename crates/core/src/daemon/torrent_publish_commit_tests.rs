@@ -38,6 +38,11 @@ async fn published_intent_and_completed_task_commit_together_with_warning() {
     assert_eq!(task.state, "completed"); assert_eq!(task.final_path.as_deref(), lab.downloads.join("bundle").to_str());
     assert_eq!(task.torrent.unwrap().publication_warning.as_deref(), Some("destination sync failed"));
     assert!(journal::load(&database).unwrap().is_empty());
+    let published = super::torrent_published_store::load(&database, "task").unwrap().unwrap();
+    use std::os::unix::fs::MetadataExt;
+    let root_meta = fs::metadata(&lab.downloads).unwrap(); let dest_meta = fs::metadata(lab.downloads.join("bundle")).unwrap();
+    assert_eq!(published.name, "bundle"); assert_eq!((published.root_device, published.root_inode), (root_meta.dev(), root_meta.ino()));
+    assert_eq!((published.device, published.inode), (dest_meta.dev(), dest_meta.ino()));
     assert_eq!(stages::load(&database).unwrap().len(), 1); // owned empty stage retained until cleanup
     let persisted = lab.store.load().await.unwrap().tasks.remove("task").unwrap();
     assert_eq!(persisted.state, "completed");
@@ -54,6 +59,7 @@ async fn database_failure_keeps_intent_and_does_not_claim_completion() {
     assert!(lab.store.commit_torrent_publication(&lab.tasks, &lab.downloads, &intent, None).await.is_err());
     assert_eq!(lab.tasks.lock().await["task"].state, "finalizing");
     assert_eq!(journal::load(&database).unwrap(), vec![intent]);
+    assert!(super::torrent_published_store::load(&database, "task").unwrap().is_none());
     assert_eq!(stages::load(&database).unwrap().len(), 1); assert!(lab.downloads.join("bundle").is_dir());
     fs::remove_dir_all(lab.root).unwrap();
 }
@@ -69,5 +75,38 @@ async fn stale_durable_task_is_not_overwritten_by_completion() {
     assert_eq!(lab.tasks.lock().await["task"].state, "finalizing");
     assert_eq!(journal::load(&database).unwrap(), vec![intent]);
     assert!(lab.downloads.join("bundle").is_dir());
+    fs::remove_dir_all(lab.root).unwrap();
+}
+
+#[tokio::test]
+async fn existing_published_identity_cannot_be_overwritten() {
+    let lab = setup().await; let database = lab.store.database_path();
+    let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap(); rename(&lab);
+    super::torrent_published_store::ensure_schema(&database).unwrap();
+    let conn = super::persistence::open(&database).unwrap();
+    conn.execute("INSERT INTO rget_torrent_published_v1 VALUES (?1,?2,?3,?4,?5,?6)", rusqlite::params!["task", "old", "1", "2", "3", "4"]).unwrap(); drop(conn);
+    assert!(lab.store.commit_torrent_publication(&lab.tasks, &lab.downloads, &intent, None).await.is_err());
+    assert_eq!(super::torrent_published_store::load(&database, "task").unwrap().unwrap().name, "old");
+    assert_eq!(journal::load(&database).unwrap(), vec![intent]);
+    assert_eq!(lab.tasks.lock().await["task"].state, "finalizing"); assert!(lab.downloads.join("bundle").is_dir());
+    fs::remove_dir_all(lab.root).unwrap();
+}
+
+#[tokio::test]
+async fn published_removal_refuses_replacement_and_preserves_records() {
+    let lab = setup().await; let database = lab.store.database_path();
+    let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap(); rename(&lab);
+    lab.store.commit_torrent_publication(&lab.tasks, &lab.downloads, &intent, None).await.unwrap();
+    let task = lab.tasks.lock().await["task"].clone(); let root = File::open(&lab.downloads).unwrap();
+    fs::rename(lab.downloads.join("bundle"), lab.downloads.join("original")).unwrap();
+    fs::create_dir(lab.downloads.join("bundle")).unwrap();
+    fs::write(lab.downloads.join("bundle/unrelated"), b"keep").unwrap();
+    assert!(super::torrent_published_remove::delete_files(&database, &lab.downloads, &root, &task).is_err());
+    assert_eq!(fs::read(lab.downloads.join("bundle/unrelated")).unwrap(), b"keep");
+    fs::remove_dir_all(lab.downloads.join("bundle")).unwrap(); fs::rename(lab.downloads.join("original"), lab.downloads.join("bundle")).unwrap();
+    super::torrent_published_remove::delete_files(&database, &lab.downloads, &root, &task).unwrap();
+    assert!(!lab.downloads.join("bundle").exists());
+    assert!(super::torrent_published_store::load(&database, "task").unwrap().is_some());
+    assert_eq!(lab.tasks.lock().await["task"].state, "completed");
     fs::remove_dir_all(lab.root).unwrap();
 }

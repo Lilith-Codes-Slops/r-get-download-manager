@@ -48,6 +48,7 @@ pub(super) fn commit(database: &Path, root: &Path, intent: &Intent, completed: &
     // Validate stored intent and initialize tables before beginning transaction.
     if !torrent_publish_intent::load(database)?.iter().any(|stored| stored == intent) { return Err("publication intent missing or changed".into()); }
     super::torrent_publish_proof::ensure_schema(database)?;
+    super::torrent_published_store::ensure_schema(database)?;
     let mut conn = super::persistence::open(database)?;
     let tx = conn.transaction()?;
     let matched: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM rget_torrent_publish_intents_v1 i
@@ -64,6 +65,7 @@ pub(super) fn commit(database: &Path, root: &Path, intent: &Intent, completed: &
         || old.root_name != new.root_name || old.files != new.files {
         return Err("durable torrent identity or state changed before completion".into());
     }
+    super::torrent_published_store::insert(&tx, &root_file, intent)?;
     let count = tx.execute("UPDATE rget_queue_v1 SET info=?1 WHERE url=?2", params![serde_json::to_string(completed)?, intent.stage.task_id])?;
     if count != 1 { return Err("durable torrent task missing".into()); }
     let removed = tx.execute("DELETE FROM rget_torrent_publish_intents_v1 WHERE task_id=?1", [&intent.stage.task_id])?;

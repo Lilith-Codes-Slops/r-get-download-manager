@@ -386,3 +386,13 @@ full remove/keep/delete integration remain disabled.
 A second startup pass can remove an empty, identity-verified retained stage
 whose task is already durably completed and has no outstanding publication
 intent. It never removes a retained stage that still has a payload.
+
+Completion now records the download root and published directory identities in
+its SQLite transaction. An isolated removal primitive checks this durable
+record and task identity, then walks and deletes descriptor-relative without
+following symlinks or hardlinks. It intentionally leaves the task and identity
+records after deleting files: crash-safe removal intent and task deletion are
+not implemented, and the primitive is not wired into the user-facing remove
+command. It requires exclusive control and does not defend against hostile
+same-user races or inode reuse. Existing completions without a published record
+are not eligible for this deletion path.
