@@ -59,7 +59,6 @@ fn tracker_reply(mut stream: TcpStream, peer_port: u16) {
     let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
     let _ = stream.write_all(header.as_bytes()); let _ = stream.write_all(&body);
 }
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn torrent_file_and_magnet_download_from_local_tracker_without_clobbering() {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -181,7 +180,6 @@ fn local_multifile_is_validated_before_allocating_a_stage() {
     assert!(std::fs::read_dir(root.join("Downloads")).unwrap().next().is_none());
     drop(f); let _ = std::fs::remove_dir_all(root);
 }
-
 #[cfg(target_env = "gnu")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn local_multifile_publishes_and_removes_over_ipc() {
@@ -237,7 +235,6 @@ async fn local_multifile_publishes_and_removes_over_ipc() {
     drop(f); quit.store(true, Ordering::Relaxed); tracker.join().unwrap(); seed.stop().await;
     let _ = std::fs::remove_dir_all(root);
 }
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn local_multifile_cancel_drains_and_cleans_owned_stage() {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -267,4 +264,37 @@ async fn local_multifile_cancel_drains_and_cleans_owned_stage() {
     }
     assert!(!root.join("Downloads/.rget-staging").join(stage).exists());
     assert!(!root.join("Downloads/bundle").exists()); drop(f); let _ = std::fs::remove_dir_all(root);
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn interrupted_multifile_recovers_only_recorded_stage() {
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("rget-multi-crash-{}-{nonce}", std::process::id()));
+    std::fs::create_dir_all(root.join("Downloads/unrelated")).unwrap();
+    std::fs::write(root.join("Downloads/unrelated/keep"), b"untouched").unwrap();
+    let mut bytes = b"d4:infod5:filesld6:lengthi3e4:pathl1:aeee4:name6:bundle12:piece lengthi16384e6:pieces20:".to_vec();
+    bytes.extend_from_slice(&[0; 20]); bytes.extend_from_slice(b"ee");
+    let source = root.join("crash.torrent"); std::fs::write(&source, bytes).unwrap();
+    let f = Fixture::start(root.clone()); let id = f.add(source.to_str().unwrap());
+    let deadline = Instant::now() + Duration::from_secs(25);
+    let stage = loop {
+        if let DaemonEvent::DetailedQueue { tasks } = f.request(ClientRequest::GetDetailedQueue) {
+            if let Some(task) = tasks.into_iter().find(|task| task.url == id) {
+                assert!(!task.state.starts_with("failed:"), "{task:?}");
+                if let Some(name) = task.torrent.and_then(|torrent| torrent.stage_name) { break name; }
+            }
+        }
+        assert!(Instant::now() < deadline, "stage not created"); tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let path = root.join("Downloads/.rget-staging").join(stage); let unknown = root.join("Downloads/.rget-staging/unrecorded");
+    std::fs::create_dir(&unknown).unwrap(); std::fs::write(unknown.join("keep"), b"unknown").unwrap();
+    assert!(path.join("payload").is_dir()); drop(f); // SIGKILL, without graceful shutdown.
+    let f = Fixture::start(root.clone()); assert!(!path.exists(), "recorded interrupted stage was not cleaned");
+    assert_eq!(std::fs::read(unknown.join("keep")).unwrap(), b"unknown");
+    assert_eq!(std::fs::read(root.join("Downloads/unrelated/keep")).unwrap(), b"untouched");
+    assert!(!root.join("Downloads/bundle").exists());
+    if let DaemonEvent::DetailedQueue { tasks } = f.request(ClientRequest::GetDetailedQueue) {
+        let task = tasks.into_iter().find(|task| task.url == id).expect("interrupted task missing");
+        assert_ne!(task.state, "completed");
+    } else { panic!("queue unavailable"); }
+    drop(f); let _ = std::fs::remove_dir_all(root);
 }
