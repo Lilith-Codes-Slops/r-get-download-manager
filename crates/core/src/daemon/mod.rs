@@ -105,3 +105,6 @@ mod torrent_stage_publish;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_stage_complete;
+
+#[cfg(all(test, target_os = "linux", feature = "torrent"))]
+mod torrent_recovery_info_tests;

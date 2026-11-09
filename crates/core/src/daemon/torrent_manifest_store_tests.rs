@@ -8,11 +8,11 @@ fn lab() -> PathBuf {
     let path = std::env::temp_dir().join(format!("rget-manifest-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     fs::create_dir(&path).unwrap(); path
 }
-fn manifest() -> ValidatedManifest {
+pub(super) fn manifest() -> ValidatedManifest {
     ValidatedManifest::new("bundle".into(), vec![ManifestFile { components: vec!["dir".into(), "file".into()], length: 3 },
         ManifestFile { components: vec!["empty".into()], length: 0 }], 3).unwrap()
 }
-async fn setup() -> (PathBuf, Persistence, Tasks) {
+pub(super) async fn setup() -> (PathBuf, Persistence, Tasks) {
     let root = lab(); let store = Persistence::new(root.join("state/queue.sqlite3"));
     let task: DownloadInfo = serde_json::from_str(r#"{"url":"task","state":"metadata","filename":null,"downloaded":0,"total":null,"speed_bps":0,"final_path":null,"torrent":{"source":"file.torrent","info_hash":"abc","created_at":1}}"#).unwrap();
     let tasks = Arc::new(Mutex::new(BTreeMap::from([("task".into(), task)])));

@@ -38,3 +38,4 @@ pub mod task_identity;
 pub mod multi_file_resolve;
 #[cfg(test)]
 mod multi_file_resolve_tests;
+pub mod recovery_metadata;

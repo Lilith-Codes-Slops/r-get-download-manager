@@ -350,3 +350,11 @@ opened allocation root. Rename success is not reversed on a completion error;
 the intent remains for reconciliation. Cleanup failure after commit leaves the
 completed task and retained stage record, returning a warning. This sequence is
 still not connected to torrent downloads or automatic crash reconciliation.
+
+For future crash-time piece verification, an isolated transaction can now
+persist the validated exact v1 info dictionary together with the manifest and
+stage reservation. It excludes top-level tracker and webseed fields; unknown
+info-dictionary fields may still be sensitive. The stored bytes can be
+revalidated against the info-hash and manifest, but no payload hash check or
+automatic reconciliation is wired yet. Metadata retention/removal policy still
+needs integration before this path is used by downloads.
