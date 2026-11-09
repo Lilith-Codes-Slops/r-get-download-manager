@@ -15,6 +15,10 @@ pub mod staging_manifest;
 #[cfg(target_os = "linux")]
 pub mod staging_tree;
 #[cfg(target_os = "linux")]
+pub mod staging_cleanup;
+#[cfg(all(test, target_os = "linux"))]
+mod staging_cleanup_tests;
+#[cfg(target_os = "linux")]
 pub mod staging_verify;
 #[cfg(all(test, target_os = "linux"))]
 mod staging_verify_tests;

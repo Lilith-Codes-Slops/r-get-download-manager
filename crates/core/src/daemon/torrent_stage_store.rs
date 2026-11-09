@@ -108,6 +108,21 @@ pub(super) fn has_reservation(path: &Path, task_id: &str, name: &str) -> Result<
     Ok(conn.query_row("SELECT 1 FROM rget_torrent_stages_v1 WHERE task_id=?1 AND stage_name=?2 AND state='reserved'", params![task_id, name], |_| Ok(())).optional()?.is_some())
 }
 
+/// Clean only an exact durable identity. Retained verification failures are
+/// eligible solely for explicit remove-and-delete. Keep the row on any error.
+/// Caller must stop the engine and exclude concurrent changes first.
+#[allow(dead_code)]
+pub(super) fn cleanup_recorded(path: &Path, area: &crate::protocols::torrent::staging_tree::StageArea,
+    task_id: &str, name: &str, allow_retained: bool) -> Result<()> {
+    let entry = load(path)?.into_iter().find(|entry| entry.task_id == task_id && entry.name == name)
+        .ok_or("no matching durable staging record")?;
+    if entry.state == State::Reserved { return Err("reservation has no proven staging identity".into()); }
+    if entry.state == State::Retained && !allow_retained { return Err("staging retained for inspection".into()); }
+    let identity = entry.identity.ok_or("missing staging identity")?;
+    crate::protocols::torrent::staging_cleanup::cleanup(area, &identity)?;
+    forget(path, &identity)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,6 +156,39 @@ mod tests {
         assert!(area.verify(&stage).is_ok());
         fs::remove_dir_all(root.join(".rget-staging").join(&name)).unwrap();
         forget(&path, &stage).unwrap(); assert!(load(&path).unwrap().is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn recorded_cleanup_respects_ownership_and_retention() {
+        let root = lab(); let path = root.join("state/queue.sqlite3");
+        let area = StageArea::open(&File::open(&root).unwrap()).unwrap();
+        let name = StageArea::candidate_name(); reserve(&path, "task", &name, 1).unwrap();
+        let stage = area.create_reserved(&name, "task").unwrap(); confirm(&path, &stage).unwrap();
+        area.create_payload(&stage).unwrap();
+        let payload = root.join(".rget-staging").join(&name).join("payload");
+        fs::write(payload.join("partial"), b"data").unwrap();
+        assert!(cleanup_recorded(&path, &area, "other", &name, true).is_err());
+        retain(&path, &stage).unwrap();
+        assert!(cleanup_recorded(&path, &area, "task", &name, false).is_err());
+        assert!(payload.join("partial").exists());
+        cleanup_recorded(&path, &area, "task", &name, true).unwrap();
+        assert!(!payload.exists()); assert!(load(&path).unwrap().is_empty());
+        let unrecorded = area.create("unrecorded").unwrap();
+        assert!(cleanup_recorded(&path, &area, "unrecorded", &unrecorded.name, true).is_err());
+        assert!(area.verify(&unrecorded).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn failed_cleanup_retains_record_and_payload() {
+        let root = lab(); let path = root.join("state/queue.sqlite3");
+        let area = StageArea::open(&File::open(&root).unwrap()).unwrap();
+        let name = StageArea::candidate_name(); reserve(&path, "task", &name, 1).unwrap();
+        let stage = area.create_reserved(&name, "task").unwrap(); confirm(&path, &stage).unwrap();
+        area.create_payload(&stage).unwrap();
+        let payload = root.join(".rget-staging").join(&name).join("payload");
+        std::os::unix::fs::symlink("/etc/passwd", payload.join("unsafe")).unwrap();
+        assert!(cleanup_recorded(&path, &area, "task", &name, false).is_err());
+        assert_eq!(load(&path).unwrap().len(), 1); assert!(payload.join("unsafe").is_symlink());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

@@ -36,6 +36,8 @@ pub struct StageRecord {
 
 pub struct StageArea { parent: File }
 impl StageArea {
+    pub(super) fn parent(&self) -> &File { &self.parent }
+
     /// `download_root` must already be a trusted, opened directory. A symlink
     /// at the staging-parent name is rejected rather than followed.
     pub fn open(download_root: &File) -> io::Result<Self> {

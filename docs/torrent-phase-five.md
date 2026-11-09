@@ -162,3 +162,21 @@ a proven inode; it must not be blindly deleted or adopted. Reconciliation for
 that interval and the rename/database crash window must be designed before any
 payload or publication integration. The record table and tests have not been
 compiled or run in this sandbox. Existing multi-file requests remain rejected.
+
+## Owned-stage cleanup groundwork
+
+An isolated two-pass cleanup helper checks the staging marker and identity,
+then traverses payloads relative to directory descriptors. It rejects symlinks,
+hardlinks, unexpected root entries, foreign ownership and cross-device entries
+before deleting. A separate store wrapper requires an exact durable row; it
+keeps retained verification failures unless explicitly requested for deletion,
+and leaves the row in place when cleanup reports an error. These paths are not
+wired into cancel, remove, shutdown or startup. No automatic crash cleanup is
+claimed yet, and an unconfirmed reservation cannot authorize deletion.
+
+The tree must be exclusively controlled after the engine is joined: inode
+rechecks cannot eliminate races from a malicious same-user process concurrently
+replacing entries. Cleanup can be partial if a later unlink or sync fails. In
+particular, if final directory removal fails after marker deletion, the row is
+kept but automatic ownership verification may need manual reconciliation.
+The tests have not been compiled or run in this sandbox.
