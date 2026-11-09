@@ -4,6 +4,9 @@
 //! writes blocks to storage before checking each completed piece.
 
 pub mod concurrency_queue;
+pub mod diagnostics;
+pub mod multi_file_layout;
+pub mod transport_options;
 pub mod metadata;
 pub mod metrics;
 pub mod session;

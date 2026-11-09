@@ -37,6 +37,7 @@ pub(super) async fn log_config(store: &Persistence) {
         max_active_downloads = settings.max_active_downloads, max_active_checks = settings.max_active_checks,
         max_active_seeds = settings.max_active_seeds, "stored torrent policy (not applied; upload and seeding disabled)");
     tracing::info!("global torrent peer ceiling: not implemented");
+    crate::protocols::torrent::transport_options::log();
 }
 
 #[cfg(test)]

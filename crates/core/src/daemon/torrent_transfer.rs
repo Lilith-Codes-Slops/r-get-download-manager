@@ -132,6 +132,9 @@ async fn run(id: &str, connections: u8, tasks: &Tasks, mut control: watch::Recei
         task.filename = dest.file_name().map(|s| s.to_string_lossy().into_owned());
         task.final_path = Some(dest.to_string_lossy().into_owned());
         task.state = "completed".into();
+        if let Some(metrics) = task.torrent.as_ref().and_then(|identity| identity.metrics.as_ref()) {
+            crate::protocols::torrent::diagnostics::log_completion(id, metrics);
+        }
     }
     // Publication succeeded. Failure to remove the staging link must not undo it.
     if let Err(error) = tokio::fs::remove_file(&staged).await { eprintln!("torrent staging cleanup: {error}"); }
