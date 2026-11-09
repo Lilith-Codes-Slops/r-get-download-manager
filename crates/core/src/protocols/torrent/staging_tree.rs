@@ -82,6 +82,18 @@ impl StageArea {
         Ok(StageRecord { name: name.into(), task_id: task_id.into(), device: metadata.dev(), inode: metadata.ino() })
     }
 
+    /// Create the payload directory only after recording the stage identity.
+    /// Existing entries are never adopted.
+    pub fn create_payload(&self, record: &StageRecord) -> io::Result<File> {
+        let dir = self.verify(record)?;
+        mkdirat(&dir, "payload", Mode::from_bits_truncate(0o700)).map_err(err)?;
+        let payload = open_dir(&dir, "payload")?;
+        private_dir(&payload)?;
+        payload.sync_all()?;
+        dir.sync_all()?;
+        Ok(payload)
+    }
+
     /// Opens a recorded directory without following symlinks, and checks its
     /// directory identity, permissions and marker. This does not establish
     /// that any nested file is safe or unchanged.

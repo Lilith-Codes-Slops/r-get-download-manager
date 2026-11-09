@@ -112,7 +112,20 @@ not provide recursive cleanup, crash recovery, payload verification or a
 complete hostile-same-user isolation guarantee. No rename is called by this
 helper. These new tests have not been compiled or run in the sandbox.
 
-The plan requests both keeping a tree after validation failure for inspection
-and cleaning it on every pre-rename failure. Those instructions need a consistent
-policy before wiring cleanup; for now nothing is automatically deleted through
-this new helper. Multi-file publication remains disabled.
+The user clarified cleanup precedence: retain staging on verification or
+pre-rename sync failure; delete it for other pre-rename failures; after a
+successful rename keep the published tree even if destination sync fails.
+Remove-from-list retains published and inspection-stage data; remove-and-delete
+should delete both. Cleanup must fail closed if ownership cannot be proven:
+an ownership-check failure cannot safely authorize deleting an unknown tree.
+Crash cleanup requires durable records and recovery; it is not implemented.
+
+An isolated Linux verification helper now walks a `payload` directory beneath
+a verified stage using descriptor-relative, no-follow opens. It compares the
+full tree against the validated manifest, rejects missing, extra, non-regular,
+wrong-size, symlinked, hardlinked or cross-device files, and syncs files and
+directories bottom-up. Its caller must first stop and join the engine and
+prevent concurrent modifications; it does not hash file contents. Verification
+failure does not remove anything. Neither this helper nor the payload creation
+helper is integrated into the daemon, and the new tests have not been run in
+the sandbox. Multi-file publication remains disabled.

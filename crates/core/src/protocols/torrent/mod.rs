@@ -11,6 +11,10 @@ pub mod multi_file_layout;
 pub mod staging_manifest;
 #[cfg(target_os = "linux")]
 pub mod staging_tree;
+#[cfg(target_os = "linux")]
+pub mod staging_verify;
+#[cfg(all(test, target_os = "linux"))]
+mod staging_verify_tests;
 #[cfg(all(test, target_os = "linux"))]
 mod staging_tree_tests;
 pub mod transport_options;
