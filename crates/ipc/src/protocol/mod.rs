@@ -5,7 +5,7 @@ pub mod protocol_version;
 pub mod task_snapshot;
 
 pub use client_requests::ClientRequest;
-pub use daemon_events::{DaemonEvent, DownloadInfo, SegmentProgress, TorrentIdentity};
+pub use daemon_events::{DaemonEvent, DownloadInfo, SegmentProgress, TorrentIdentity, TorrentMetrics};
 pub use media_manifest_dto::{MediaManifest, MediaTrack, QualityOption};
 pub use protocol_version::{ProtocolHandshake, PROTOCOL_VERSION};
 pub use task_snapshot::{FileSnapshot, SegmentSnapshot, TaskSnapshot};

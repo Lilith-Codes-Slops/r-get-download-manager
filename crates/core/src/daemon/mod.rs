@@ -48,3 +48,6 @@ mod torrent_transfer_dispatch;
 
 #[cfg(target_os = "linux")]
 mod torrent_cleanup;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_events;

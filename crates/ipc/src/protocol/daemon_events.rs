@@ -54,6 +54,24 @@ pub struct TorrentIdentity {
     #[serde(default)]
     pub seed: bool,
     pub created_at: i64,
+    /// Best-effort observation for the current attempt, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<TorrentMetrics>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TorrentMetrics {
+    pub metadata_fetch_ms: Option<u64>,
+    pub time_to_first_piece_ms: Option<u64>,
+    pub first_piece_to_finished_ms: Option<u64>,
+    pub stall_count: u32,
+    pub stalled: bool,
+    pub current_stall_ms: u64,
+    pub total_stall_ms: u64,
+    pub duplicate_bytes: Option<u64>,
+    pub request_timeouts: Option<u32>,
+    pub peers_dropped: Option<u32>,
 }
 
 /// A half-open byte range and committed progress, not socket activity.
@@ -70,8 +88,12 @@ pub struct SegmentProgress {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum DaemonEvent {
-    /// Emitted only on the opt-in progress stream; task includes current
-    /// committed bytes, speed, state, planned/published destination and attempt.
+    /// Only sent on the opt-in torrent transition stream.
+    TorrentEventsReady,
+    TorrentEventsHeartbeat,
+    TorrentStalled { task_id: String, stall_count: u32 },
+    TorrentRecovered { task_id: String, stall_count: u32, duration_ms: u64 },
+    /// Emitted only on the opt-in progress stream; includes current task state.
     ProgressUpdate { task_id: String, task: DownloadInfo },
     ProgressRemoved { task_id: String },
     ProgressReset,
@@ -186,9 +208,17 @@ mod tests {
     }
 
     #[test]
+    fn torrent_events_and_request_roundtrip() {
+        let request = crate::ClientRequest::SubscribeTorrentEvents;
+        assert_eq!(serde_json::from_str::<crate::ClientRequest>(&serde_json::to_string(&request).unwrap()).unwrap(), request);
+        let event = DaemonEvent::TorrentRecovered { task_id: "task".into(), stall_count: 2, duration_ms: 31000 };
+        assert_eq!(serde_json::from_str::<DaemonEvent>(&serde_json::to_string(&event).unwrap()).unwrap(), event);
+    }
+
+    #[test]
     fn torrent_identity_roundtrips_and_seed_is_persisted() {
         let identity = TorrentIdentity { source: "magnet:?xt=test".into(), info_hash: Some("hash".into()),
-            stage_name: Some(".rget-torrent-test".into()), seed: true, created_at: 123 };
+            stage_name: Some(".rget-torrent-test".into()), seed: true, created_at: 123, metrics: None };
         let json = serde_json::to_string(&identity).unwrap();
         assert_eq!(serde_json::from_str::<TorrentIdentity>(&json).unwrap(), identity);
     }

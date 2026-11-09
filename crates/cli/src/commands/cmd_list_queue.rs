@@ -15,6 +15,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }).unwrap_or_else(|| format!("{} bytes", task.downloaded));
                 println!("{}: {} — {} — {} bytes/s — {}: {}", task.url, task.state, progress, task.speed_bps, label, path);
                 if let Some(note) = &task.connection_note { println!("  {note}"); }
+                if let Some(m) = task.torrent.as_ref().and_then(|torrent| torrent.metrics.as_ref()) {
+                    let first = m.time_to_first_piece_ms.map(|n| format!("{n} ms")).unwrap_or_else(|| "unknown".into());
+                    println!("  stalls: {}{}; first verified piece: {first}", m.stall_count, if m.stalled { " (stalled)" } else { "" });
+                }
             }
         }
         other => println!("{other:?}"),

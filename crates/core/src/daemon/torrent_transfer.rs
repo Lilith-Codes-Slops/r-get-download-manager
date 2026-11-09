@@ -1,6 +1,6 @@
 //! Single-file v1 torrent download; private staging and no-clobber publication.
 use super::{bandwidth::BandwidthLimiter, control::{Controls, Tasks, TransferControl}, persistence::Persistence};
-use crate::protocols::torrent::{metadata, session::{download_only_options, with_discovery}, source, task_identity::{self, Prepared}};
+use crate::protocols::torrent::{metadata, session::{download_only_options, with_discovery}, source, task_identity::{self, Prepared}, metrics::MetricsTracker, stall_detector::StallEvent, picker_capabilities};
 use downloader_ipc::{DaemonEvent, DownloadInfo, TorrentIdentity};
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, ManagedTorrent, Session};
 use std::{path::{Path, PathBuf}, sync::Arc, time::{Duration, Instant}};
@@ -47,7 +47,7 @@ pub(super) async fn add(source: String, connections: u8, tasks: Tasks, controls:
     };
     let task = DownloadInfo { url: id.clone(), state: "metadata".into(), filename: None,
         downloaded: 0, total: None, speed_bps: 0, final_path: None, destination_path: None,
-        suggested_filename: None, torrent: Some(TorrentIdentity { source, info_hash: Some(prepared.info_hash.clone()), stage_name: None, seed, created_at }),
+        suggested_filename: None, torrent: Some(TorrentIdentity { source, info_hash: Some(prepared.info_hash.clone()), stage_name: None, seed, created_at, metrics: None }),
         resume_supported: false, partial_name: None, requested_connections: Some(connections),
         active_connections: None, segment_count: None, connection_note: Some("Torrent: pause, resume and speed limits are not available".into()),
         live_connections_supported: false };
@@ -84,6 +84,7 @@ async fn run(id: &str, connections: u8, tasks: &Tasks, mut control: watch::Recei
             identity.stage_name = stage.file_name().map(|name| name.to_string_lossy().into_owned());
         }
     }
+    picker_capabilities::log();
     let database = Persistence::default_path()?;
     let state = database.parent().ok_or("state database has no directory")?;
     // Only one active task owns a hash; separate folders also prevent different
@@ -137,10 +138,13 @@ async fn run(id: &str, connections: u8, tasks: &Tasks, mut control: watch::Recei
 async fn download(session: &Arc<Session>, root: &Path, stage: &Path, id: &str, connections: u8,
     tasks: &Tasks, control: &mut watch::Receiver<TransferControl>, prepared: Prepared) -> Result<PathBuf> {
     let info_hash = prepared.info_hash;
+    let metadata_started = Instant::now();
     let meta = tokio::select! {
         result = metadata::resolve_prepared(session, prepared.source) => result?,
         _ = control.changed() => return Err("torrent canceled".into()),
     };
+    let metadata_known = Instant::now();
+    let mut metrics = MetricsTracker::new(metadata_known.saturating_duration_since(metadata_started), metadata_known, Duration::from_secs(30));
     if meta.info_hash.as_string() != info_hash { return Err("torrent info-hash changed during metadata resolution".into()); }
     if meta.info.info().private { return Err("private torrents are not supported in Phase 1".into()); }
     let filename = meta.info.name().ok_or("torrent filename missing")?.to_string();
@@ -152,6 +156,7 @@ async fn download(session: &Arc<Session>, root: &Path, stage: &Path, id: &str, c
         task.suggested_filename = Some(filename.clone());
         task.filename = proposed.file_name().map(|s| s.to_string_lossy().into_owned());
         task.total = meta.info.info().length;
+        if let Some(identity) = &mut task.torrent { identity.metrics = Some(metrics.snapshot.clone()); }
         task.state = "peers".into();
     }
     super::progress_events::notify();
@@ -161,28 +166,40 @@ async fn download(session: &Arc<Session>, root: &Path, stage: &Path, id: &str, c
         _ = control.changed() => return Err("torrent canceled".into()),
     };
     let handle = match added { AddTorrentResponse::Added(_, handle) => handle, _ => return Err("torrent already managed".into()) };
-    monitor(&handle, id, tasks, control).await?;
+    monitor(&handle, id, tasks, control, &mut metrics).await?;
     Ok(stage.join(filename))
 }
 
 async fn monitor(handle: &Arc<ManagedTorrent>, id: &str, tasks: &Tasks,
-    control: &mut watch::Receiver<TransferControl>) -> Result<()> {
+    control: &mut watch::Receiver<TransferControl>, metrics: &mut MetricsTracker) -> Result<()> {
     let mut timer = tokio::time::interval(Duration::from_millis(500));
     let mut no_peers_since = Instant::now();
     let mut last = Instant::now(); let mut last_bytes = 0u64;
     loop {
         tokio::select! {
             _ = timer.tick() => {},
-            _ = control.changed() => return Err("torrent canceled".into()),
+            _ = control.changed() => {
+                metrics.observe(Instant::now(), false, None, None, false);
+                update_metrics(tasks, id, metrics).await;
+                return Err("torrent canceled".into());
+            },
         }
         let stats = handle.stats();
-        if let Some(error) = stats.error { return Err(format!("torrent engine: {error}").into()); }
+        if let Some(error) = stats.error {
+            metrics.observe(Instant::now(), false, None, None, false);
+            update_metrics(tasks, id, metrics).await;
+            return Err(format!("torrent engine: {error}").into());
+        }
         // Initialization reports checking progress, not downloaded data.
         let bytes = if matches!(stats.state, librqbit::TorrentStatsState::Live) { stats.progress_bytes } else { 0 };
         let live = stats.live.as_ref();
         let peers = live.map(|live| live.snapshot.peer_stats.live).unwrap_or(0);
         if peers > 0 { no_peers_since = Instant::now(); }
         let now = Instant::now();
+        let fetched = live.map(|live| live.snapshot.fetched_bytes);
+        let pieces = live.map(|live| live.snapshot.downloaded_and_checked_pieces);
+        let active = peers > 0 && fetched.is_some_and(|n| n > 0) && (!stats.finished || metrics.needs_recovery());
+        let transition = metrics.observe(now, active, fetched, pieces, stats.finished);
         let elapsed = now.duration_since(last).as_secs_f64();
         let speed = if elapsed > 0.0 { (bytes.saturating_sub(last_bytes) as f64 / elapsed) as u64 } else { 0 };
         last = now; last_bytes = bytes;
@@ -192,12 +209,29 @@ async fn monitor(handle: &Arc<ManagedTorrent>, id: &str, tasks: &Tasks,
             let task = guard.get_mut(id).ok_or("torrent task removed")?;
             task.downloaded = bytes; task.total = Some(stats.total_bytes); task.speed_bps = speed;
             task.connection_note = Some(format!("Torrent peers: {peers}; pause/resume and speed limits unavailable"));
-            task.state = if stats.finished { "finished" } else if peers > 0 && bytes > 0 { "downloading" }
+            if let Some(identity) = &mut task.torrent { identity.metrics = Some(metrics.snapshot.clone()); }
+            task.state = if stats.finished { "finished" } else if peers > 0 && fetched.is_some_and(|n| n > 0) { "downloading" }
                 else if peers > 0 { "connecting" } else { "peers" }.into();
+        }
+        if let Some((event, duration_ms)) = transition {
+            let count = metrics.snapshot.stall_count;
+            let event = match event {
+                StallEvent::Stalled => { tracing::warn!(task_id = id, count, "torrent stalled; no automatic peer drop available");
+                    DaemonEvent::TorrentStalled { task_id: id.into(), stall_count: count } }
+                StallEvent::Recovered => { tracing::info!(task_id = id, count, duration_ms, "torrent resumed receiving data");
+                    DaemonEvent::TorrentRecovered { task_id: id.into(), stall_count: count, duration_ms } }
+            };
+            super::torrent_events::send(event);
         }
         super::progress_events::notify();
         if stats.finished { return Ok(()); }
         if no_peers_since.elapsed() >= Duration::from_secs(120) { return Err("no peers after 120 seconds".into()); }
+    }
+}
+
+async fn update_metrics(tasks: &Tasks, id: &str, metrics: &MetricsTracker) {
+    if let Some(task) = tasks.lock().await.get_mut(id) {
+        if let Some(identity) = &mut task.torrent { identity.metrics = Some(metrics.snapshot.clone()); }
     }
 }
 

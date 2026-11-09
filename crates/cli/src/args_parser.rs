@@ -11,6 +11,8 @@ pub struct Cli {
 pub enum Commands {
     Add(AddArgs),
     List,
+    /// Watch opt-in torrent stall and recovery events.
+    TorrentEvents,
     Pause(TaskArgs),
     Resume(TaskArgs),
     Refresh(RefreshArgs),

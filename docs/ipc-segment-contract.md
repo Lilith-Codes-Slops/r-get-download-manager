@@ -141,3 +141,14 @@ the current download-only engine. An `AddTask` response for a duplicate uses
 the existing `task_id` and an `existing: ...` state. Clients must use the
 returned ID for subsequent controls. Legacy records lacking an info-hash can
 only be matched by identical source.
+
+### Torrent stall events
+
+`SubscribeTorrentEvents` opens a separate opt-in stream, beginning with
+`TorrentEventsReady`. While connected it carries `TorrentStalled` and
+`TorrentRecovered` in send order and `TorrentEventsHeartbeat` periodically.
+Events are transient, not replayed; a lagging subscriber is disconnected.
+`GetDetailedQueue` or `SubscribeProgress` provides the latest optional
+`torrent.metrics` snapshot. Reconnecting clients should inspect that snapshot;
+there is no atomic history/snapshot replay. Older streams never receive these
+new event variants.

@@ -6,3 +6,5 @@ pub mod cmd_refresh_url;
 pub mod cmd_remove_task;
 pub mod cmd_speed_limit;
 pub mod cmd_verify;
+
+pub mod cmd_torrent_events;

@@ -80,6 +80,10 @@ impl AppState {
                 ui.label(RichText::new(task.torrent.as_ref().map(|t| t.source.as_str()).unwrap_or(&task.url)).small());
                 egui::Grid::new("details_grid").num_columns(2).spacing([24.0, 6.0]).show(ui, |ui| {
                     metric(ui, "Status", &task.state);
+                    if let Some(m) = task.torrent.as_ref().and_then(|t| t.metrics.as_ref()) {
+                        metric(ui, "Torrent stalls", &format!("{}{}", m.stall_count, if m.stalled { " (stalled)" } else { "" }));
+                        metric(ui, "First verified piece", &m.time_to_first_piece_ms.map(|ms| format!("{ms} ms")).unwrap_or_else(|| "Unknown".into()));
+                    }
                     if auto_renamed(task) { if let Some(name) = &task.suggested_filename { metric(ui, "Original suggestion", name); } }
                     metric(ui, "Progress", &format!("{} / {}", format_bytes(task.downloaded), task.total.map(format_bytes).unwrap_or_else(|| "Unknown".into())));
                     metric(ui, "Download rate", &format!("{}/s (average)", format_bytes(task.speed_bps)));

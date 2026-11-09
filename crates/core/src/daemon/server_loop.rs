@@ -148,6 +148,7 @@ impl ServerLoop {
                                         Ok(req) => {
                                             if matches!(&req, ClientRequest::SubscribeSegmentPolicies) { super::segment_events::subscribe_policies(stream).await; return; }
                                             if matches!(&req, ClientRequest::SubscribeProgress) { super::progress_events::subscribe(stream).await; return; }
+                                            #[cfg(feature = "torrent")] if matches!(&req, ClientRequest::SubscribeTorrentEvents) { super::torrent_events::subscribe(stream).await; return; }
                                             if matches!(&req, ClientRequest::SubscribeSegments) { super::segment_events::subscribe(stream).await; return; }
                                             if !matches!(&req, ClientRequest::GetDetailedQueue) { eprintln!("received: {req:?}"); }
                                             let should_save = matches!(&req, ClientRequest::AddTask { .. } | ClientRequest::Pause { .. } | ClientRequest::Resume { .. } | ClientRequest::Cancel { .. } | ClientRequest::RemoveTask { .. } | ClientRequest::SetLimit { .. } | ClientRequest::SetConnections { .. });

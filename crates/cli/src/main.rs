@@ -35,6 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         args_parser::Commands::Add(cmd) => commands::cmd_add_url::run(cmd).await?,
         args_parser::Commands::List => commands::cmd_list_queue::run().await?,
+        args_parser::Commands::TorrentEvents => commands::cmd_torrent_events::run().await?,
         args_parser::Commands::Pause(cmd) => commands::cmd_pause_resume::pause(cmd).await?,
         args_parser::Commands::Resume(cmd) => commands::cmd_pause_resume::resume(cmd).await?,
         args_parser::Commands::Refresh(cmd) => commands::cmd_refresh_url::run(cmd).await?,

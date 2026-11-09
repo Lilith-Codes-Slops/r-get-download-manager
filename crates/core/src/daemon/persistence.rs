@@ -39,7 +39,6 @@ impl Persistence {
         };
         Ok(state_dir.join("rget").join("queue.sqlite3"))
     }
-
     pub async fn load(&self) -> StoreResult<SavedState> {
         let _gate = self.gate.lock().await;
         let path = self.path.clone();
@@ -190,6 +189,7 @@ fn load(path: &Path) -> StoreResult<SavedState> {
             info.final_path = None;
         }
         info.speed_bps = 0;
+        if let Some(metrics) = info.torrent.as_mut().and_then(|t| t.metrics.as_mut()) { metrics.stalled = false; metrics.current_stall_ms = 0; }
         // Live worker counts do not survive a daemon restart.
         info.active_connections = info.active_connections.map(|_| 0);
         info.live_connections_supported = false;

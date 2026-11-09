@@ -45,6 +45,8 @@ pub enum ClientRequest {
     SubscribeSegmentPolicies,
     /// Ordered task progress updates, with a reset on each connection.
     SubscribeProgress,
+    /// Separate, opt-in stream of torrent stall and recovery transitions.
+    SubscribeTorrentEvents,
     GetSnapshot {
         task_id: Option<String>,
     },

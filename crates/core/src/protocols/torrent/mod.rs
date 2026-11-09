@@ -4,7 +4,10 @@
 //! writes blocks to storage before checking each completed piece.
 
 pub mod metadata;
+pub mod metrics;
 pub mod session;
 pub mod source;
 pub mod state;
+pub mod stall_detector;
+pub mod picker_capabilities;
 pub mod task_identity;

@@ -105,6 +105,10 @@ async fn torrent_file_and_magnet_download_from_local_tracker_without_clobbering(
     let first = f.completed(&first_id).await;
     assert_eq!(first.torrent.as_ref().unwrap().source, file_source);
     assert!(!first.torrent.as_ref().unwrap().seed);
+    let metrics = first.torrent.as_ref().unwrap().metrics.as_ref().expect("torrent metrics");
+    assert!(metrics.metadata_fetch_ms.is_some());
+    assert!(metrics.time_to_first_piece_ms.is_some());
+    assert!(metrics.first_piece_to_finished_ms.is_some());
     assert_eq!(first.filename.as_deref(), Some("fixture.bin"));
     assert_eq!(std::fs::read(lab.join("Downloads/fixture.bin")).unwrap(), b"abc");
     assert_eq!(f.add(&magnet), first_id, "duplicate magnet should reuse completed task");
@@ -140,4 +144,17 @@ fn malformed_metainfo_fails_without_touching_existing_downloads() {
     assert!(matches!(response, DaemonEvent::TaskFailed { .. }), "{response:?}");
     assert_eq!(std::fs::read(root.join("Downloads/sentinel")).unwrap(), b"keep");
     drop(f); let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn torrent_transition_subscription_is_opt_in() {
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("rget-torrent-events-{}-{nonce}", std::process::id()));
+    let f = Fixture::start(root.clone());
+    let mut stream = UnixStream::connect(root.join("run/rget.sock")).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    FrameEncoder::write_frame(&mut stream, &ClientRequest::SubscribeTorrentEvents).unwrap();
+    let event: DaemonEvent = FrameDecoder::read_frame(&mut stream).unwrap();
+    assert_eq!(event, DaemonEvent::TorrentEventsReady);
+    drop(stream); drop(f); let _ = std::fs::remove_dir_all(root);
 }
