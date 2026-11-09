@@ -50,24 +50,37 @@ impl StageArea {
         Ok(Self { parent })
     }
 
-    /// Creates a fresh directory; never adopts an existing candidate. A
-    /// returned record is in-memory only until the caller persists it.
+    /// Generate a candidate without touching the filesystem. Persist a
+    /// reservation for this exact name before calling `create_reserved`.
+    pub fn candidate_name() -> String {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        format!("task-{}-{now}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Creates exactly the reserved name and never adopts an existing entry.
+    /// The caller must have durably reserved this name for the task first.
+    pub fn create_reserved(&self, name: &str, task_id: &str) -> io::Result<StageRecord> {
+        validate_component(name)?;
+        if !name.starts_with("task-") || task_id.is_empty() || task_id.len() > 512 { return Err(invalid("invalid staging reservation")); }
+        private_dir(&self.parent)?;
+        mkdirat(&self.parent, name, Mode::from_bits_truncate(0o700)).map_err(err)?;
+        let result = self.initialize(name, task_id);
+        if result.is_err() {
+            // Only remove an empty directory; retain unexpected content.
+            let _ = unlinkat(&self.parent, name, UnlinkatFlags::RemoveDir);
+            let _ = self.parent.sync_all();
+        }
+        result
+    }
+
+    /// Legacy isolated helper for tests; not suitable for a download until a
+    /// database reservation has been committed.
     pub fn create(&self, task_id: &str) -> io::Result<StageRecord> {
-        if task_id.is_empty() || task_id.len() > 512 { return Err(invalid("invalid staging owner id")); }
         for _ in 0..100 {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-            let name = format!("task-{}-{now}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
-            match mkdirat(&self.parent, name.as_str(), Mode::from_bits_truncate(0o700)) {
-                Ok(()) => {}, Err(Errno::EEXIST) => continue, Err(e) => return Err(err(e)),
+            match self.create_reserved(&Self::candidate_name(), task_id) {
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                result => return result,
             }
-            let result = self.initialize(&name, task_id);
-            if result.is_err() {
-                // Only remove an empty directory. A marker or any unexpected
-                // entry makes cleanup fail closed and leaves it for inspection.
-                let _ = unlinkat(&self.parent, name.as_str(), UnlinkatFlags::RemoveDir);
-                let _ = self.parent.sync_all();
-            }
-            return result;
         }
         Err(io::Error::new(io::ErrorKind::AlreadyExists, "staging name limit exhausted"))
     }

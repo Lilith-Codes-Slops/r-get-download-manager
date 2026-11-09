@@ -142,5 +142,23 @@ Magnet metadata remains subject to the existing single-file-only resolver and
 may allocate an empty staging directory before rejection; it does not start a
 payload download. These changes have not been compiled or run in the sandbox.
 
-The latest user-reported workspace run was green after the staging verifier;
-the no-default-features result for that increment was not reported.
+The user subsequently reported both workspace and no-default-features runs
+passing after the local multi-file metadata preflight increment.
+
+## Durable staging-record groundwork
+
+An isolated SQLite table now supports a reservation before directory creation,
+then records the marker-bearing directory's device/inode before payload
+creation. Stage names and task IDs are unique, reservations cannot overwrite an
+existing attempt, and a verification-failure state is represented separately
+from an interrupted stage. Row mutation checks the exact task/name/identity;
+unknown, malformed or mismatched records fail closed. The staging helper can
+create an exact reserved name and will not adopt an existing one.
+
+These functions are **not connected** to daemon startup, downloads, or remove.
+There is no recursive cleanup or publication transaction yet. In particular, a
+crash after `mkdir` but before inode confirmation leaves a reserved row without
+a proven inode; it must not be blindly deleted or adopted. Reconciliation for
+that interval and the rename/database crash window must be designed before any
+payload or publication integration. The record table and tests have not been
+compiled or run in this sandbox. Existing multi-file requests remain rejected.

@@ -57,3 +57,6 @@ mod torrent_queue;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_settings;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_stage_store;
