@@ -71,8 +71,10 @@ pub(super) fn retain(path: &Path, record: &StageRecord) -> Result<()> {
 /// verified cleanup or a separately recorded publication has completed.
 #[allow(dead_code)]
 pub(super) fn forget(path: &Path, record: &StageRecord) -> Result<()> {
+    // Ensure the journal table exists before the atomic guard below.
+    let _ = super::torrent_publish_intent::has_intent(path, &record.task_id)?;
     let conn = open(path)?;
-    let count = conn.execute("DELETE FROM rget_torrent_stages_v1 WHERE task_id=?1 AND stage_name=?2 AND device=?3 AND inode=?4",
+    let count = conn.execute("DELETE FROM rget_torrent_stages_v1 WHERE task_id=?1 AND stage_name=?2 AND device=?3 AND inode=?4 AND NOT EXISTS (SELECT 1 FROM rget_torrent_publish_intents_v1 WHERE task_id=?1)",
         params![record.task_id, record.name, record.device.to_string(), record.inode.to_string()])?;
     if count != 1 { return Err("missing or changed staging identity".into()); }
     Ok(())
@@ -117,6 +119,7 @@ pub(super) fn cleanup_recorded(path: &Path, area: &crate::protocols::torrent::st
     let entry = load(path)?.into_iter().find(|entry| entry.task_id == task_id && entry.name == name)
         .ok_or("no matching durable staging record")?;
     if entry.state == State::Reserved { return Err("reservation has no proven staging identity".into()); }
+    if super::torrent_publish_intent::has_intent(path, task_id)? { return Err("publication intent requires reconciliation before cleanup".into()); }
     if entry.state == State::Retained && !allow_retained { return Err("staging retained for inspection".into()); }
     let identity = entry.identity.ok_or("missing staging identity")?;
     crate::protocols::torrent::staging_cleanup::cleanup(area, &identity)?;

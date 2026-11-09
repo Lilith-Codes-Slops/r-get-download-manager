@@ -200,3 +200,25 @@ retention could incorrectly delete evidence. Publication intent and atomic
 queue/record reconciliation are still required to handle the rename-to-database
 crash window. No multi-file task creates these rows yet. The recovery pass and
 tests have not been compiled or run in this sandbox.
+
+## Publication intent groundwork
+
+An isolated durable intent can record one exact destination plus the source
+payload directory's device/inode, conditional on a matching `retained` staging
+record. An active intent blocks the recorded-stage cleanup helper. A separate
+inspection helper reports whether the recorded payload appears at its source
+or at that exact destination; an observation is evidence only, not authority
+to delete data or mark a task complete. It must run without concurrent writers.
+No automatic intent replay or queue-state reconciliation is implemented. A
+future integration must serialize cleanup, intent creation, publication and
+queue snapshots under a shared lifecycle gate; the current separate DB checks
+alone cannot exclude a concurrent filesystem deletion/intent race.
+
+A new exact-name no-replace rename helper returns an error on a collision; it
+never silently advances to a suffix. This distinction matters because the older
+helper automatically retries suffixes, which would make a previously persisted
+single-name intent inaccurate. A future collision retry must safely reconcile or
+replace the previous intent before journaling the next exact candidate. The
+new journal and helper are not connected to torrent downloads. Atomic recording
+of completion, intent removal and stage-record removal remains outstanding.
+The new tests have not been compiled or run in this sandbox.

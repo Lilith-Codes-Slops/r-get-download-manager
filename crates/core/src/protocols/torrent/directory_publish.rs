@@ -15,6 +15,23 @@ pub struct PublishedDirectory {
     pub sync_error: Option<io::Error>,
 }
 
+/// Rename to one exact journaled destination; never silently try a suffix.
+/// The caller must durably record this exact name before invoking the rename.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub fn publish_exact(source_parent: &File, source_name: &str, destination_parent: &File, destination_name: &str) -> io::Result<PublishedDirectory> {
+    use nix::fcntl::{renameat2, RenameFlags};
+    validate_component(source_name)?; validate_component(destination_name)?;
+    renameat2(source_parent, source_name, destination_parent, destination_name, RenameFlags::RENAME_NOREPLACE)
+        .map_err(|error| io::Error::from_raw_os_error(error as i32))?;
+    let source_sync = source_parent.sync_all(); let destination_sync = destination_parent.sync_all();
+    Ok(PublishedDirectory { name: destination_name.to_owned(), sync_error: source_sync.and(destination_sync).err() })
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub fn publish_exact(_source_parent: &File, _source_name: &str, _destination_parent: &File, _destination_name: &str) -> io::Result<PublishedDirectory> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "atomic no-replace directory rename unavailable"))
+}
+
 /// Atomically move a caller-owned directory relative to anchored parent
 /// descriptors, never replacing an existing file, directory, or symlink.
 /// Source validation and ownership are the caller's responsibility.
