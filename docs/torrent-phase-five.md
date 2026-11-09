@@ -426,3 +426,13 @@ In locked librqbit v9.1.0, the raw peer metadata reader and its connector are
 private, while the public list-only magnet API validates first and computes an
 unchecked length sum. No supported pre-validation hook was found. Local
 metainfo preflight remains available; multi-file download ingress is still off.
+
+The locked librqbit `Session::stop()` pauses/cancels and sleeps for one second;
+it does not expose a join of all spawned engine tasks. An isolated storage gate
+and wrapper around its default filesystem storage now provide a potential
+quiescence barrier: close waits for admitted storage calls and rejects later
+calls, including calls on storage returned by `take`. The wrapper delegates
+writes unchanged and does not implement a picker or assembler. It is not wired
+into downloads, has not been proven with a live engine, and does not itself stop
+or join engine tasks. Local multi-file ingress remains disabled until the full
+lifecycle is integrated and this behavior is validated.

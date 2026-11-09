@@ -47,3 +47,5 @@ mod recovery_piece_verify_tests;
 pub mod published_cleanup;
 #[cfg(all(test, target_os = "linux"))]
 mod published_cleanup_tests;
+pub mod storage_gate;
+pub mod gated_storage;
