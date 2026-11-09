@@ -29,7 +29,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 async-trait = { workspace = true }
-librqbit = { workspace = true, optional = true }
+librqbit = { workspace = true, optional = true, features = ["disable-upload"] }
 nix = { version = "0.31.3", features = ["fs"] }
 libc = "0.2.191"
 futures-util = "0.3"
