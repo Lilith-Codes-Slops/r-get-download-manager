@@ -70,6 +70,13 @@ retain it explicitly if safe cleanup cannot be established. After a successful
 rename, a later directory-sync failure cannot honestly be reported as if no
 public directory existed: reconciliation and durability need explicit handling.
 Crashes and hostile changes to staging paths need their own recovery tests.
+An isolated, not-yet-integrated no-replace rename primitive now targets Linux
+GNU via `nix::fcntl::renameat2`. It anchors source and destination operations
+to caller-provided directory descriptors, retries collisions, fails closed on
+other targets and distinguishes a published-but-unsynced result from an error
+before rename. It does not establish source ownership, validate or sync the
+tree, prevent hostile source replacement, clean up, or recover after a crash.
+The primitive's new tests have not been compiled or run in this environment.
 No multi-file publisher is enabled until these cases are implemented and tested.
 
 ## Current progress and verification
@@ -77,8 +84,8 @@ No multi-file publisher is enabled until these cases are implemented and tested.
 A completion log summarizes the existing sampled first-piece and stall metrics;
 unknown counters stay unknown. Version-gated transport capability logging and
 preliminary component/naming helpers are included. Single-file default priority
-records and local-metainfo webseed declaration counts have been added but have
-not been compiled or tested in the current environment. Multi-file priority
+records and local-metainfo webseed declaration counts passed the user's
+workspace and no-default-feature tests. Multi-file priority
 storage, safe directory publication and multi-file downloads are not implemented. No Phase 5 exit criterion is claimed complete.
 
 The user reported Phase 4 queue unit tests green; live limit-one promotion and

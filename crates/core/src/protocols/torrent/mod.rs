@@ -5,6 +5,7 @@
 
 pub mod concurrency_queue;
 pub mod diagnostics;
+pub mod directory_publish;
 pub mod file_priorities;
 pub mod multi_file_layout;
 pub mod transport_options;
