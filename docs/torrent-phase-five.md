@@ -436,3 +436,8 @@ writes unchanged and does not implement a picker or assembler. It is not wired
 into downloads, has not been proven with a live engine, and does not itself stop
 or join engine tasks. Local multi-file ingress remains disabled until the full
 lifecycle is integrated and this behavior is validated.
+
+A local librqbit-to-librqbit smoke test exercises the delegated filesystem
+storage, stops the downloader, closes the gate, and checks the resulting v1
+multi-file pieces. It uses direct localhost peers, not a tracker, and does not
+exercise daemon ingress, cancellation, crashes, or prove all engine tasks joined.
