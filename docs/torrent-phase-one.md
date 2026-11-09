@@ -1,8 +1,12 @@
 # Torrent Phase 1: approved v1 scope and status
 
-**Not yet wired into the daemon.** The `torrent` feature currently contains
-source classification, lifecycle definitions, session defaults and a list-only metadata resolver with a 60-second timeout
-and an 8 MiB limit for local metainfo files. It does not yet accept or download torrents. Do not use it as a torrent client.
+**Initial daemon integration is present but not yet live-verified.** On Linux,
+torrent support is enabled by default. A magnet or local `.torrent` file is
+dispatched to an isolated v1 librqbit session; completion is published using
+no-clobber naming after the session is stopped. An 8 MiB cap applies to local
+metainfo files, with a 60-second metadata timeout. The normal HTTP path remains
+separate. The integration test uses a local tracker and seeder, but its result
+must be confirmed by running it; it is not evidence of a public-swarm test.
 
 The approved Phase 1 uses the existing, locked librqbit 9.1.0 engine with
 these explicit limitations:
@@ -14,21 +18,19 @@ these explicit limitations:
   blocks before validating each completed piece; it does **not** provide the
   proposed whole-piece-in-memory, verify-before-write or off-reactor guarantees.
   Treat all partial data as untrusted until the engine validates it.
-- Enable librqbit's `disable-upload` feature and configure it on every session;
-  also explicitly stop/remove the torrent after completion. Neither upload
-  prohibition nor cleanup is implemented in the daemon yet.
+- Enable librqbit's `disable-upload` feature and configure it on every session,
+  and stop the session before publication. The integration configures both;
+  zero upload and stop-on-complete still require live verification.
 - Local discovery, webseeds, multiple files and seeding remain out of scope.
   Public-torrent/manual-network verification remains outstanding.
 
-Remaining integration work includes wiring and testing metadata resolution,
-isolated owned temporary storage, no-clobber atomic publication,
-full lifecycle and peer telemetry in the existing queue/event stream, task
-controls, restart behavior and explicit cleanup, and integration tests. The
+Outstanding work includes live verification, stronger transition delivery,
+proper torrent-specific task controls and rate limiting, and restart recovery. The
 existing progress stream is sampled and may coalesce intermediate transitions;
 an explicit ordered transition stream is needed if every transition must be
 observable. URL-keyed HTTP tasks and recovery must not accidentally interpret
-torrent paths as HTTP checkpoints. Relative paths passed by CLI need to be
-resolved before sending them to a daemon with a different working directory.
+torrent paths as HTTP checkpoints. The CLI resolves relative `.torrent` paths
+before sending them to a daemon with a different working directory.
 
 Feature-specific tests should be run as well as the normal workspace suite:
 
@@ -47,3 +49,38 @@ Sampling also cannot prove all unsampled data is intact. Do not enable
 tested. This does not block the remaining Phase 1 download integration.
 
 The future observation and picker scope is recorded in [torrent-phase-three.md](torrent-phase-three.md); it is not implemented yet.
+
+## Test and current limitations
+
+```bash
+cargo test --workspace --locked
+cargo test -p downloader-core --no-default-features --locked
+```
+
+The first command includes `torrent_download_ipc`, which launches a local test
+tracker, test seeder and isolated daemon; it does not contact a public swarm for
+test data. The second checks that HTTP works without the optional torrent
+feature. For a manual test, build and use only a public, authorized single-file
+v1 torrent and an isolated `HOME`/`XDG_RUNTIME_DIR`/`XDG_STATE_HOME` as in
+[manual-live-verification.md](manual-live-verification.md). Add a quoted magnet
+or an absolute `.torrent` path using `dl add`, then use `dl list` repeatedly to
+observe the current state, bytes, rate and peer note. Compare the published
+file's digest with a trusted independent digest. Record results rather than
+assuming success. Avoid magnet links for private torrents: metadata isn't known
+until after peer discovery.
+
+Torrent staging directories are private `.rget-torrent-*` directories under
+Downloads. Failed/canceled/interrupted transfers may leave them intact for
+inspection; they are not automatically resumed or removed by task deletion.
+No stage should be deleted based solely on a displayed path. A restart marks
+incomplete torrents failed and never feeds them into HTTP checkpoint recovery.
+Retry starts from scratch. Phase 2 will address identity, cleanup and recovery.
+
+Torrent pause/resume, torrent speed limiting and live connection changes are not
+implemented. The current connection value is passed as the maximum peer count
+for a newly started torrent; it is not an HTTP split-worker count. HTTP speed
+limits do not limit torrent traffic. Duplicate adds by the same source reuse an
+active task, but info-hash deduplication is not implemented. General progress
+updates are sampled, so intermediate torrent states can be coalesced rather
+than all being visible. Tracker/DHT behavior, rejection and re-request of a
+corrupt piece, zero upload and real public-swarm completion remain unverified.

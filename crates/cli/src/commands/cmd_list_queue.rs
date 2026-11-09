@@ -9,7 +9,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let path = task.final_path.as_deref().or(task.destination_path.as_deref())
                     .or(task.filename.as_deref()).unwrap_or("destination pending");
                 let label = if task.final_path.is_some() { "saved" } else { "destination (may change)" };
-                println!("{}: {} — {}: {}", task.url, task.state, label, path);
+                let progress = task.total.map(|total| {
+                    let pct = if total == 0 { 0.0 } else { task.downloaded as f64 * 100.0 / total as f64 };
+                    format!("{} / {} bytes ({pct:.1}%)", task.downloaded, total)
+                }).unwrap_or_else(|| format!("{} bytes", task.downloaded));
+                println!("{}: {} — {} — {} bytes/s — {}: {}", task.url, task.state, progress, task.speed_bps, label, path);
+                if let Some(note) = &task.connection_note { println!("  {note}"); }
             }
         }
         other => println!("{other:?}"),

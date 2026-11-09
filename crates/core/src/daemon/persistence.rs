@@ -177,7 +177,13 @@ fn load(path: &Path) -> StoreResult<SavedState> {
             // Never restart a transfer that the user had asked to cancel.
             info.state = "canceled".into();
         } else if !matches!(info.state.as_str(), "completed" | "canceled") && !info.state.starts_with("failed:") {
-            result.prior_states.insert(url.clone(), info.state.clone());
+            // Torrent staging does not use HTTP range checkpoints. Until a
+            // torrent recovery path exists, leave interrupted tasks failed.
+            #[cfg(target_os = "linux")]
+            let recover_http = !super::torrent_transfer_dispatch::is_torrent(&url);
+            #[cfg(not(target_os = "linux"))]
+            let recover_http = true;
+            if recover_http { result.prior_states.insert(url.clone(), info.state.clone()); }
             info.state = "failed: interrupted by daemon restart; retry starts from the beginning".into();
             info.downloaded = 0;
             info.total = None;

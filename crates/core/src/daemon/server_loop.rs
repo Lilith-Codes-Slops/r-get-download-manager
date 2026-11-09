@@ -7,9 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
-pub struct ServerLoop {
-    pool: IpcConnectionPool,
-}
+pub struct ServerLoop { pool: IpcConnectionPool }
 impl ServerLoop {
     pub fn new(pool: IpcConnectionPool) -> Self {
         Self { pool }
@@ -157,6 +155,8 @@ impl ServerLoop {
                                                 ClientRequest::AddTask { url, mirrors, connections, extract, category, not_before } => {
                                                     if !(1..=32).contains(&connections) || !mirrors.is_empty() || extract || category.is_some() || not_before.is_some() {
                                                         DaemonEvent::TaskFailed { task_id: url, error: "connections must be 1–32; mirrors, extraction, categories and scheduling are not yet supported".into() }
+                                                    } else if super::torrent_transfer_dispatch::is_torrent(&url) {
+                                                        super::torrent_transfer_dispatch::add(url, connections, tasks.clone(), controls.clone(), limiter.clone(), store.clone()).await
                                                     } else if !matches!(reqwest::Url::parse(&url), Ok(ref u) if matches!(u.scheme(), "http" | "https")) {
                                                         DaemonEvent::TaskFailed { task_id: url, error: "only valid HTTP and HTTPS URLs are supported".into() }
                                                     } else {

@@ -104,7 +104,7 @@ impl AppState {
                         .on_disabled_hover_text("Available when the task is paused.").clicked() {
                         self.send(ClientRequest::Resume { task_id: task.url.clone() });
                     }
-                    let can_cancel = self.connected && matches!(task.state.as_str(), "downloading" | "paused" | "pausing" | "resuming");
+                    let can_cancel = self.connected && matches!(task.state.as_str(), "metadata" | "peers" | "connecting" | "downloading" | "paused" | "pausing" | "resuming" | "finished");
                     if ui.add_enabled(can_cancel, egui::Button::new("Cancel"))
                         .on_disabled_hover_text("Only active downloads can be canceled.").clicked() {
                         self.send(ClientRequest::Cancel { task_id: task.url.clone() });

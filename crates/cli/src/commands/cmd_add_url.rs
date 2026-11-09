@@ -4,9 +4,14 @@ use downloader_ipc::{ClientRequest, DaemonEvent};
 use std::time::{Duration, Instant};
 
 pub async fn run(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let url = args.url.clone();
+    let mut url = args.url.clone();
+    if !url.contains("://") && !url.starts_with("magnet:") && std::path::Path::new(&url).extension()
+        .and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("torrent")) {
+        let path = std::path::Path::new(&url);
+        if !path.is_absolute() { url = std::env::current_dir()?.join(path).to_string_lossy().into_owned(); }
+    }
     let req = ClientRequest::AddTask {
-        url: args.url, mirrors: args.mirrors, connections: args.connections,
+        url: url.clone(), mirrors: args.mirrors, connections: args.connections,
         extract: args.extract, category: None, not_before: None,
     };
     let event = ipc_client::roundtrip(&req)?;

@@ -39,3 +39,9 @@ mod recovery;
 mod recovered_transfer;
 #[cfg(test)]
 mod recovery_tests;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_transfer;
+
+#[cfg(target_os = "linux")]
+mod torrent_transfer_dispatch;
