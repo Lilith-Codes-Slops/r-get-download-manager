@@ -501,3 +501,23 @@ public acceptance test likewise isolates its daemon and rejects single-file,
 one-entry and v2/hybrid metainfo before contacting the network. An ordinary ISO
 torrent with `length` and `name` is single-file even when its release page
 contains several download options.
+
+An additional ignored `public_singlefile_download_and_verify_all_v1_pieces`
+test accepts `RGET_PUBLIC_SINGLE_TORRENT`. It downloads an ordinary v1
+single-file torrent, checks the recorded file metadata and makes a direct
+single-file v1 piece-hash pass. It is a real-world P2P smoke test only; it does
+not satisfy the separately required multi-file acceptance run, whose test
+continues to require `RGET_PUBLIC_TORRENT` and at least two files.
+
+For the optional single-file smoke test, set `RGET_PUBLIC_SINGLE_TORRENT` to a
+local v1 `.torrent` and run only its named ignored test, for example:
+
+```sh
+RGET_PUBLIC_SINGLE_TORRENT="/path/to/file.torrent" RGET_PUBLIC_TIMEOUT_SECS=3600 \
+  cargo test -p downloader-core --test torrent_public_ipc --locked -- \
+  --ignored --nocapture public_singlefile_download_and_verify_all_v1_pieces
+```
+
+Its isolated test home holds the complete download, so allow enough temporary
+disk space. Webseed declarations are not used; reachable BitTorrent peers are
+still required.
