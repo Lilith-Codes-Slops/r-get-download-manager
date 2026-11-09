@@ -141,3 +141,6 @@ mod torrent_multi_transfer;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_remove_unfinished;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_stage_content;

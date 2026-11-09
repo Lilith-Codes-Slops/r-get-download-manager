@@ -452,3 +452,10 @@ guard; stopped unpublished tasks can delete only verified-owned stages, while
 journaled or ambiguous cases fail closed. This path and its new local-tracker
 IPC tests have not yet been compiled or run in this environment; the public
 multi-file acceptance test is still outstanding.
+
+The live local multi-file path also rechecks v1 piece hashes from the durable
+info dictionary after storage quiescence and before journaling or rename. The
+stage is marked retained before this check, so a mismatch leaves it for
+inspection. This is distinct from librqbit's download-time verification and
+still assumes exclusive control of the staging tree during verification and
+publication. The added integration and mismatch test need a fresh test run.

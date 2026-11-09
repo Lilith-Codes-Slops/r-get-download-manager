@@ -82,3 +82,31 @@ async fn journaled_destination_piece_inspection_detects_tampering_and_missing_in
     assert!(downloads.join("bundle/dir/file").is_file());
     drop(published); fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(target_env = "gnu")]
+#[tokio::test]
+async fn live_piece_verification_retains_corrupt_stage_before_publication() {
+    use librqbit_sha1_wrapper::{ISha1, Sha1};
+    use std::fs::File;
+    let (root, store, tasks) = setup().await; let mut bytes = recovery_metainfo();
+    let mut sha = Sha1::new(); sha.update(b"abc"); let piece = sha.finish();
+    let start = bytes.len() - 22; bytes[start..start + 20].copy_from_slice(&piece);
+    let hash = librqbit::torrent_from_bytes(&bytes).unwrap().info_hash.as_string();
+    tasks.lock().await.get_mut("task").unwrap().torrent.as_mut().unwrap().info_hash = Some(hash.clone());
+    store.save(&tasks, &BandwidthLimiter::new()).await.unwrap();
+    let downloads = root.join("Downloads"); fs::create_dir(&downloads).unwrap();
+    let reservation = store.save_manifest_info_and_reserve(&tasks, "task", &hash, &manifest(), &bytes).await.unwrap();
+    let stage = reservation.allocate(File::open(&downloads).unwrap()).await.unwrap();
+    let payload = downloads.join(".rget-staging").join(&stage.record.name).join("payload");
+    fs::create_dir(payload.join("dir")).unwrap(); fs::write(payload.join("dir/file"), b"abd").unwrap(); fs::write(payload.join("empty"), b"").unwrap();
+    tasks.lock().await.get_mut("task").unwrap().state = "finalizing".into();
+    store.save(&tasks, &BandwidthLimiter::new()).await.unwrap();
+    let task = tasks.lock().await["task"].clone();
+    assert!(stage.publish_with_piece_verification(task, "bundle".into()).await.is_err());
+    let rows = stages::load(&store.database_path()).unwrap();
+    assert_eq!(rows[0].state, stages::State::Retained);
+    assert_eq!(fs::read(payload.join("dir/file")).unwrap(), b"abd");
+    assert!(!downloads.join("bundle").exists());
+    assert!(super::torrent_publish_intent::load(&store.database_path()).unwrap().is_empty());
+    fs::remove_dir_all(root).unwrap();
+}

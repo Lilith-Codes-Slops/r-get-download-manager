@@ -63,7 +63,7 @@ pub(super) async fn run(id: &str, connections: u8, tasks: &Tasks, store: &Persis
     }
     if let Err(error) = store.save(tasks, limiter).await { return Err(cleanup(stage, &stage_path, format!("could not persist finalizing state: {error}")).await.into()); }
     let task = tasks.lock().await.get(id).cloned().ok_or("torrent task removed")?;
-    let published = stage.publish_exact(task, manifest.root_name().to_owned()).await
+    let published = stage.publish_with_piece_verification(task, manifest.root_name().to_owned()).await
         .map_err(|e| format!("publication failed: {e}; stage retained at {}", stage_path.display()))?;
     published.complete(store, tasks, &root).await.map_err(|error| PendingPublication(error.to_string()))?;
     Ok(())

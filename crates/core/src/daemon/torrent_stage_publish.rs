@@ -1,4 +1,4 @@
-//! Guarded, exact-name publication sequence; not used by downloads yet.
+//! Guarded, exact-name publication sequence.
 use super::{torrent_publish_intent::{self, Intent, Observation}, torrent_publish_proof,
     torrent_stage_allocate::AllocatedStage, torrent_stage_store};
 use crate::protocols::torrent::directory_publish;
@@ -17,8 +17,8 @@ pub(super) struct PublishedStage {
 }
 
 impl AllocatedStage {
-    /// Caller must stop and join a successfully finished engine first, persist
-    /// finalizing state, and exclude all external writers. The verification
+    /// Caller must stop the engine and drain/close its delegated storage gate,
+    /// persist finalizing state, and exclude all external writers. The verification
     /// checks layout and lengths, not torrent piece hashes. This operation does
     /// not mark tasks complete or clean stages. Failure after retention leaves
     /// the stage and any intent in place. In particular, EEXIST and unsupported
@@ -27,16 +27,23 @@ impl AllocatedStage {
     pub(super) async fn publish_exact(self, task: DownloadInfo, destination: String) -> Result<PublishedStage> {
         // Moving the entire guarded stage into the blocking task prevents an
         // aborted waiter from releasing the guard before rename finishes.
-        tokio::task::spawn_blocking(move || publish(self, &task, &destination)).await?
+        tokio::task::spawn_blocking(move || publish(self, &task, &destination, false)).await?
+    }
+
+    /// The live engine path additionally verifies every stored v1 piece after
+    /// the storage barrier has drained, before any publication intent exists.
+    pub(super) async fn publish_with_piece_verification(self, task: DownloadInfo, destination: String) -> Result<PublishedStage> {
+        tokio::task::spawn_blocking(move || publish(self, &task, &destination, true)).await?
     }
 }
 
-fn publish(stage: AllocatedStage, task: &DownloadInfo, destination: &str) -> Result<PublishedStage> {
+fn publish(stage: AllocatedStage, task: &DownloadInfo, destination: &str, verify_pieces: bool) -> Result<PublishedStage> {
     if task.url != stage.record.task_id || task.state != "finalizing" { return Err("torrent is not finalizing".into()); }
     let db = &stage.reservation.database;
     // Persist retention before verification, so restart cleanup cannot treat a
     // partially verified tree as an ordinary interrupted download.
     torrent_stage_store::retain(db, &stage.record)?;
+    if verify_pieces { super::torrent_stage_content::verify(db, &stage, task)?; }
     let intent = torrent_publish_proof::begin_verified(db, &stage.area, &stage.record, destination, task)?;
     if !torrent_publish_proof::is_verified(db, &intent, task)? { return Err("publication evidence missing or changed".into()); }
     if torrent_publish_intent::inspect(&stage.area, &stage.root, &intent)? != Observation::SourcePresent {
