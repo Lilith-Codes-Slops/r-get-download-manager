@@ -314,3 +314,12 @@ blocking operation retains its task and persistence guards until it finishes;
 any committed reservation is left for conservative recovery rather than being
 silently discarded. This path must be integrated with cancellation-aware
 allocation and the existing reservation crash-window rules before use.
+
+The guarded reservation can now allocate a stage from a trusted directory
+handle: it checks the reservation, creates a marker-bearing directory without
+adopting an existing name, confirms its identity in SQLite, then creates the
+payload. The lock stays with the result. Failures clean only when ownership and
+record state can be proven; otherwise they leave the reservation or stage for
+inspection. If an awaiting caller is aborted, the blocking operation keeps the
+lock until it ends; an abandoned successful stage remains recorded for startup
+recovery. This allocator is isolated and does not yet start a torrent engine.

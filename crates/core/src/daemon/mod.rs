@@ -96,3 +96,6 @@ mod torrent_publish_recovery_evidence;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_lifecycle;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_stage_allocate;

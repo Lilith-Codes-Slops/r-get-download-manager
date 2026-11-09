@@ -13,7 +13,9 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 /// lifecycle paths must eventually acquire the same registry lock.
 pub(super) struct ManifestReservation {
     pub name: String,
-    _guard: tokio::sync::OwnedMutexGuard<()>,
+    pub(super) task_id: String,
+    pub(super) database: std::path::PathBuf,
+    pub(super) _guard: tokio::sync::OwnedMutexGuard<()>,
 }
 
 impl Persistence {
@@ -59,8 +61,8 @@ impl Persistence {
         tokio::task::spawn_blocking(move || -> Result<Option<ManifestReservation>> {
             let _gate = gate;
             commit(&database, &updated, reservation.as_ref().map(|(name, _)| name.as_str()))?;
-            guard.insert(task_id, updated);
-            Ok(reservation.map(|(name, lifecycle)| ManifestReservation { name, _guard: lifecycle }))
+            guard.insert(task_id.clone(), updated);
+            Ok(reservation.map(|(name, lifecycle)| ManifestReservation { name, task_id, database, _guard: lifecycle }))
         }).await?
     }
 }

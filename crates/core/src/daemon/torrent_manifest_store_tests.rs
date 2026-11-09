@@ -99,3 +99,52 @@ async fn reservation_failure_rolls_back_manifest_and_releases_guard() {
     let _guard = tokio::time::timeout(Duration::from_secs(1), super::torrent_lifecycle::global().lock("task")).await.unwrap().unwrap();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn guarded_allocation_confirms_stage_before_payload() {
+    use std::{fs::File, time::Duration};
+    let (root, store, tasks) = setup().await;
+    let downloads = root.join("Downloads"); fs::create_dir(&downloads).unwrap();
+    let reservation = store.save_manifest_and_reserve(&tasks, "task", "abc", &manifest()).await.unwrap();
+    let name = reservation.name.clone();
+    let allocation = reservation.allocate(File::open(&downloads).unwrap()).await.unwrap();
+    let entries = stages::load(&store.database_path()).unwrap();
+    assert_eq!(entries[0].state, stages::State::Staging);
+    assert_eq!(entries[0].identity.as_ref(), Some(&allocation.record));
+    assert!(allocation.payload.metadata().unwrap().is_dir());
+    assert!(downloads.join(".rget-staging").join(&name).join("payload").is_dir());
+    assert!(tokio::time::timeout(Duration::from_millis(25), super::torrent_lifecycle::global().lock("task")).await.is_err());
+    stages::cleanup_recorded(&store.database_path(), &allocation.area, "task", &name, false).unwrap();
+    drop(allocation); assert!(stages::load(&store.database_path()).unwrap().is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn allocation_never_adopts_existing_stage_and_retains_reservation() {
+    use std::fs::File;
+    let (root, store, tasks) = setup().await;
+    let downloads = root.join("Downloads"); fs::create_dir(&downloads).unwrap();
+    let parent = downloads.join(".rget-staging"); fs::create_dir(&parent).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).unwrap();
+    let reservation = store.save_manifest_and_reserve(&tasks, "task", "abc", &manifest()).await.unwrap();
+    let existing = parent.join(&reservation.name); fs::create_dir(&existing).unwrap(); fs::write(existing.join("unrelated"), b"keep").unwrap();
+    assert!(reservation.allocate(File::open(&downloads).unwrap()).await.is_err());
+    assert_eq!(fs::read(existing.join("unrelated")).unwrap(), b"keep");
+    assert_eq!(stages::load(&store.database_path()).unwrap()[0].state, stages::State::Reserved);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn failed_confirmation_cleans_proven_stage_but_keeps_reservation() {
+    use std::fs::File;
+    let (root, store, tasks) = setup().await;
+    let downloads = root.join("Downloads"); fs::create_dir(&downloads).unwrap();
+    let reservation = store.save_manifest_and_reserve(&tasks, "task", "abc", &manifest()).await.unwrap();
+    let stage = downloads.join(".rget-staging").join(&reservation.name);
+    let conn = super::persistence::open(&store.database_path()).unwrap();
+    conn.execute_batch("CREATE TRIGGER reject_confirmation BEFORE UPDATE ON rget_torrent_stages_v1 BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap(); drop(conn);
+    assert!(reservation.allocate(File::open(&downloads).unwrap()).await.is_err());
+    assert!(!stage.exists()); assert_eq!(stages::load(&store.database_path()).unwrap()[0].state, stages::State::Reserved);
+    fs::remove_dir_all(root).unwrap();
+}
