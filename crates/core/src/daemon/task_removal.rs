@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 fn active(state: &str) -> bool {
-    matches!(state, "metadata" | "peers" | "connecting" | "downloading" | "paused" | "pausing" | "resuming" | "finished")
+    matches!(state, "queued" | "metadata" | "peers" | "connecting" | "downloading" | "paused" | "pausing" | "resuming" | "finished")
 }
 
 pub(super) async fn cancel(tasks: &Tasks, controls: &Controls, id: String) -> DaemonEvent {

@@ -1,6 +1,6 @@
 //! Single-file v1 torrent download; private staging and no-clobber publication.
 use super::{bandwidth::BandwidthLimiter, control::{Controls, Tasks, TransferControl}, persistence::Persistence};
-use crate::protocols::torrent::{metadata, session::{download_only_options, with_discovery}, source, task_identity::{self, Prepared}, metrics::MetricsTracker, stall_detector::StallEvent, picker_capabilities};
+use crate::protocols::torrent::{metadata, session::{download_only_options, with_discovery}, source, task_identity::{self, Prepared}, metrics::MetricsTracker, stall_detector::StallEvent, picker_capabilities, concurrency_queue};
 use downloader_ipc::{DaemonEvent, DownloadInfo, TorrentIdentity};
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, ManagedTorrent, Session};
 use std::{path::{Path, PathBuf}, sync::Arc, time::{Duration, Instant}};
@@ -45,19 +45,26 @@ pub(super) async fn add(source: String, connections: u8, tasks: Tasks, controls:
             (id, task_identity::created_at(), false)
         },
     };
-    let task = DownloadInfo { url: id.clone(), state: "metadata".into(), filename: None,
+    let task = DownloadInfo { url: id.clone(), state: "queued".into(), filename: None,
         downloaded: 0, total: None, speed_bps: 0, final_path: None, destination_path: None,
         suggested_filename: None, torrent: Some(TorrentIdentity { source, info_hash: Some(prepared.info_hash.clone()), stage_name: None, seed, created_at, metrics: None }),
         resume_supported: false, partial_name: None, requested_connections: Some(connections),
         active_connections: None, segment_count: None, connection_note: Some("Torrent: pause, resume and speed limits are not available".into()),
         live_connections_supported: false };
     guard.insert(id.clone(), task);
+    let ticket = concurrency_queue::global().register(id.clone());
     let (tx, rx) = watch::channel(TransferControl::Running);
     controls.lock().await.insert(id.clone(), tx);
     drop(guard);
     let task_id = id.clone();
     tokio::spawn(async move {
-        let result = run(&task_id, connections, &tasks, rx.clone(), prepared).await;
+        let mut receiver = rx.clone();
+        let acquired = super::torrent_queue::wait_for_slot(&task_id, &tasks, &ticket, &mut receiver).await;
+        drop(ticket);
+        let (result, permit) = match acquired {
+            Ok(permit) => (run(&task_id, connections, &tasks, rx.clone(), prepared).await, Some(permit)),
+            Err(error) => (Err(error), None),
+        };
         {
             let mut guard = tasks.lock().await;
             if let Some(task) = guard.get_mut(&task_id) {
@@ -66,10 +73,11 @@ pub(super) async fn add(source: String, connections: u8, tasks: Tasks, controls:
                 else if let Err(error) = result { task.state = format!("failed: {error}"); }
             }
         }
+        drop(permit);
         super::progress_events::notify();
         if let Err(error) = store.save(&tasks, &limiter).await { eprintln!("torrent queue save failed: {error}"); }
     });
-    DaemonEvent::TaskStateChanged { task_id: id, state: "metadata".into(), destination_path: None }
+    DaemonEvent::TaskStateChanged { task_id: id, state: "queued".into(), destination_path: None }
 }
 
 async fn run(id: &str, connections: u8, tasks: &Tasks, mut control: watch::Receiver<TransferControl>, prepared: Prepared) -> Result<()> {

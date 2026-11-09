@@ -51,3 +51,6 @@ mod torrent_cleanup;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_events;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_queue;

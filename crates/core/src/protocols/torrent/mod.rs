@@ -3,6 +3,7 @@
 //! The daemon does not yet dispatch torrent tasks. The upstream v1 engine
 //! writes blocks to storage before checking each completed piece.
 
+pub mod concurrency_queue;
 pub mod metadata;
 pub mod metrics;
 pub mod session;
