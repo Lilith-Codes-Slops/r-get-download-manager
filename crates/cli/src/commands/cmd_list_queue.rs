@@ -18,6 +18,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(warning) = task.torrent.as_ref().and_then(|torrent| torrent.publication_warning.as_deref()) {
                     println!("  publication warning: {warning}");
                 }
+                if let Some(root) = task.torrent.as_ref().and_then(|torrent| torrent.root_name.as_deref()) {
+                    println!("  torrent root: {root}");
+                }
                 if let Some(files) = task.torrent.as_ref().and_then(|torrent| torrent.files.as_ref()) {
                     println!("  torrent files: {} (priorities stored, not applied)", files.len());
                 }

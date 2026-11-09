@@ -240,3 +240,19 @@ connected to downloads or startup intent replay, and callers must serialize it
 against all publication and cleanup operations and prevent external mutations.
 It does not itself verify the staged tree's contents; that remains a required
 pre-rename step. The new tests have not been compiled or run in this sandbox.
+
+## Persisted manifest groundwork
+
+A new optional task-identity `root_name` field and the existing file list can
+represent a validated multi-file manifest. An isolated persistence operation
+checks the task ID, v1 info-hash and metadata state, then atomically updates
+the existing queue record only if there is no staging reservation. Queue
+snapshot writes share its persistence gate. Priorities remain stored only.
+`dl list` can display the root name and file count when they are present.
+
+This operation is not connected to add or download: valid multi-file requests
+are still rejected, and no staging/payload writes are enabled by it. A future
+caller must serialize it against reservation and task lifecycle operations and
+invoke it only with the validated librqbit-extracted manifest. Automatic
+publication-intent recovery and completed-stage cleanup remain unfinished. The
+new tests have not been compiled or run in the sandbox.

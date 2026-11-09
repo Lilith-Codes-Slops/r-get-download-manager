@@ -58,7 +58,7 @@ pub(super) async fn add(source: String, connections: u8, tasks: Tasks, controls:
     };
     let task = DownloadInfo { url: id.clone(), state: "queued".into(), filename: None,
         downloaded: 0, total: None, speed_bps: 0, final_path: None, destination_path: None,
-        suggested_filename: None, torrent: Some(TorrentIdentity { source, info_hash: Some(prepared.info_hash.clone()), stage_name: None, seed, created_at, metrics: None, files: None, publication_warning: None }),
+        suggested_filename: None, torrent: Some(TorrentIdentity { source, info_hash: Some(prepared.info_hash.clone()), stage_name: None, seed, created_at, metrics: None, root_name: None, files: None, publication_warning: None }),
         resume_supported: false, partial_name: None, requested_connections: Some(connections),
         active_connections: None, segment_count: None, connection_note: Some("Torrent: pause, resume and speed limits are not available".into()),
         live_connections_supported: false };

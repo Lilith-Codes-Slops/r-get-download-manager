@@ -75,3 +75,8 @@ mod torrent_publish_intent_tests;
 mod torrent_publish_commit;
 #[cfg(all(test, target_os = "linux", feature = "torrent"))]
 mod torrent_publish_commit_tests;
+
+#[cfg(all(target_os = "linux", feature = "torrent"))]
+mod torrent_manifest_store;
+#[cfg(all(test, target_os = "linux", feature = "torrent"))]
+mod torrent_manifest_store_tests;
