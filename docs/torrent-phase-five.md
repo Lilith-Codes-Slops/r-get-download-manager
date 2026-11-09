@@ -396,3 +396,13 @@ not implemented, and the primitive is not wired into the user-facing remove
 command. It requires exclusive control and does not defend against hostile
 same-user races or inode reuse. Existing completions without a published record
 are not eligible for this deletion path.
+
+An isolated completed-torrent remove-and-delete operation now durably records a
+removal intent before cleaning a proven-owned stage and published directory,
+then atomically removes the task and auxiliary ownership records. Its lifecycle,
+persistence and task guards survive cancellation of the waiting caller. It is
+not connected to the remove command: startup replay and reconciliation for the
+crash window after filesystem deletion are still missing. On any error after
+intent creation it retains the task and intent rather than guessing that a
+missing directory was deleted by rGet. Remove-from-list/keep-files also remains
+to be integrated.

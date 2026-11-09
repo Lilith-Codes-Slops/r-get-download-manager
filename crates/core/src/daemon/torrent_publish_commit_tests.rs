@@ -110,3 +110,31 @@ async fn published_removal_refuses_replacement_and_preserves_records() {
     assert_eq!(lab.tasks.lock().await["task"].state, "completed");
     fs::remove_dir_all(lab.root).unwrap();
 }
+
+#[tokio::test]
+async fn journaled_removal_deletes_owned_stage_published_files_and_task() {
+    let lab = setup().await; let database = lab.store.database_path();
+    let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap(); rename(&lab);
+    lab.store.commit_torrent_publication(&lab.tasks, &lab.downloads, &intent, None).await.unwrap();
+    lab.store.remove_completed_torrent(&lab.tasks, "task", &lab.downloads).await.unwrap();
+    assert!(!lab.downloads.join("bundle").exists()); assert!(lab.tasks.lock().await.get("task").is_none());
+    assert!(stages::load(&database).unwrap().is_empty());
+    assert!(super::torrent_published_store::load(&database, "task").unwrap().is_none());
+    assert!(lab.store.load().await.unwrap().tasks.get("task").is_none());
+    fs::remove_dir_all(lab.root).unwrap();
+}
+
+#[tokio::test]
+async fn failed_final_removal_keeps_task_and_durable_intent() {
+    let lab = setup().await; let database = lab.store.database_path();
+    let intent = journal::begin(&database, &lab.area, &lab.stage, "bundle").unwrap(); rename(&lab);
+    lab.store.commit_torrent_publication(&lab.tasks, &lab.downloads, &intent, None).await.unwrap();
+    let conn = super::persistence::open(&database).unwrap();
+    conn.execute_batch("CREATE TRIGGER fail_remove BEFORE DELETE ON rget_queue_v1 BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap(); drop(conn);
+    assert!(lab.store.remove_completed_torrent(&lab.tasks, "task", &lab.downloads).await.is_err());
+    assert!(!lab.downloads.join("bundle").exists()); assert_eq!(lab.tasks.lock().await["task"].state, "completed");
+    assert!(super::torrent_published_store::load(&database, "task").unwrap().is_some());
+    let conn = super::persistence::open(&database).unwrap();
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM rget_torrent_remove_intents_v1 WHERE task_id='task'", [], |r| r.get(0)).unwrap();
+    assert_eq!(count, 1); drop(conn); fs::remove_dir_all(lab.root).unwrap();
+}
