@@ -1,5 +1,10 @@
 # Phase 5: independent groundwork and API probe
 
+> **Status note:** This is an append-only engineering log. Sections below that
+> say a feature is “not yet integrated”, “disabled”, or “pending” describe that
+> point in the development history. See [Finalization status](#finalization-status)
+> for the current release gate.
+
 Requires Phase 1 download/complete and Phase 2 identity/remove. Upload and
 seeding remain deferred. Phase 5 proceeds without them. The seed-regression
 criterion is deferred until seeding exists. Fast resume remains disabled.
@@ -521,3 +526,33 @@ RGET_PUBLIC_SINGLE_TORRENT="/path/to/file.torrent" RGET_PUBLIC_TIMEOUT_SECS=3600
 Its isolated test home holds the complete download, so allow enough temporary
 disk space. Webseed declarations are not used; reachable BitTorrent peers are
 still required.
+
+## Finalization status
+
+The earlier sections of this document are historical development notes; they are
+not a current feature matrix. The daemon now routes validated local v1
+multi-file metainfo through staged verification, storage quiescence, exact
+no-replace publication, durable identity and conservative recovery. Multi-file
+magnets, v2/hybrid/private metainfo, padding/symlink/special files, webseed
+retrieval, upload and seeding remain out of scope.
+
+The user reports that the ignored public v1 multi-file acceptance test passed on
+their PC, including the post-publication v1 piece-verification pass. A verbatim
+final log was **not attached** to this branch, so this is recorded as a
+**user-reported pass**, not as an assistant-observed result. In particular, do
+not quote `test result: ok` or the exact `completed: ... all v1 pieces
+verified` line as text that was captured here. The supplied candidate was the
+Internet Archive Alice in Wonderland LibriVox `_archive.torrent`, info-hash
+`603f7afe0174288bfee17e41399d066952d5251d`; tracker and peer availability can
+change. The earlier CachyOS single-file smoke run does not satisfy this
+multi-file acceptance criterion.
+
+The deterministic Cargo suites and public torrent run were reported green on the
+user's PC. `cargo fmt --check`, `cargo clippy -- -D warnings` and the release
+build at the final SHA are still outstanding. Because the finalization hygiene
+commit changes the SHA, the full matrix must be rerun at that new SHA. See
+[finalization.md](finalization.md) for the exact commands and merge gate.
+
+PR #1 remains open. The selected merge strategy is `--squash`, but no merge is
+permitted until the final matrix is green. No `v0.1.0` tag or GitHub Release is
+created in this flow.

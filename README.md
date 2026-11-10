@@ -1,16 +1,18 @@
 # rget
 
-High-performance Rust download manager for Linux and Windows.
+High-performance Rust download manager for Linux.
+
+> Torrent support targets Linux GNU. Windows daemon support is not implemented.
 
 ## Build
 
 ```bash
-# Clean previous daemon socket if any
+# Clean previous daemon socket if any (only if no production daemon is running)
 pkill -f downloader-core || true
-rm -f /run/user/1000/rget.sock
+rm -f "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/rget.sock"
 
 # Release build of everything
-cargo build --release
+cargo build --release --locked
 
 # Create a folder and copy the binaries
 mkdir -p ~/rget
@@ -43,9 +45,9 @@ cat > ~/.config/systemd/user/rget.service << 'EOF'
 Description=rget download daemon
 
 [Service]
-ExecStart=/home/scarlet/rget/downloader-core
+ExecStart=%h/rget/downloader-core
 Restart=on-failure
-WorkingDirectory=/home/scarlet/rget
+WorkingDirectory=%h/rget
 
 [Install]
 WantedBy=default.target
@@ -61,7 +63,7 @@ cat > ~/.local/share/applications/rget.desktop << 'EOF'
 [Desktop Entry]
 Name=rget
 Comment=Download manager
-Exec=/home/scarlet/rget/downloader-gui
+Exec=/bin/sh -c 'exec "$HOME/rget/downloader-gui"'
 Icon=download
 Terminal=false
 Type=Application
@@ -157,10 +159,11 @@ described above. The GUI exposes pause and resume for eligible tasks; Cancel
 stops an active transfer and keeps its history, while Delete asks for confirmation
 and permanently removes the task's recorded files and history. Failed or canceled
 tasks can be retried. GUI rate limiting and other disabled controls remain
-unavailable. User-directed split resizing, torrent/Metalink
-support, file mutations and post-download automation require engine or platform work. The GUI uses the
-existing local IPC transport, not an HTTP/WebSocket service. Linux is the only
-currently supported daemon platform.
+unavailable. User-directed split resizing is available for eligible split tasks.
+Metalink, multi-file magnets, v2/hybrid torrents, webseeds, file mutations and
+post-download automation remain out of scope. The GUI uses the existing local
+IPC transport, not an HTTP/WebSocket service. Linux is the only currently
+supported daemon platform; the torrent path targets Linux GNU.
 
 ### Verifying a completed download
 
@@ -168,11 +171,31 @@ Use `dl verify <task-URL> sha256 <expected-hex>` or replace `sha256` with
 `blake3`. Verification is explicit and applies only to completed tasks; it is
 not yet an automatic post-download action. A mismatch returns an error.
 
+### V1 torrents
+
+Local BitTorrent v1 `.torrent` files are supported on Linux GNU. The daemon
+preflights ordinary v1 multi-file metadata, stages to a private tree, verifies
+pieces after storage quiescence, publishes the directory with no-replace
+semantics, and exposes root/file-count identity to the GUI. Magnets for
+multi-file torrents, v2/hybrid/private torrents, padding/symlink/special files,
+webseed retrieval, upload and seeding are not supported. Webseed declarations
+are ignored, so reachable BitTorrent peers are required.
+
+An opt-in ignored integration test can exercise a public v1 multi-file torrent
+with `RGET_PUBLIC_TORRENT`; a separate single-file smoke test uses
+`RGET_PUBLIC_SINGLE_TORRENT`. The single-file smoke test does not satisfy the
+multi-file acceptance criterion. The user reported that the public v1
+multi-file test passed on their PC; the verbatim final log was not attached to
+this branch. See [finalization status](docs/finalization.md) and
+[Phase 5 notes](docs/torrent-phase-five.md) for evidence and current gates.
+
 ### Manual live verification and IPC contract
 
 See the [isolated manual verification procedure](docs/manual-live-verification.md)
-for real-host, GUI, checkpoint-kill and v1 checks. The current live connection
-and segment event shapes are recorded in the [IPC contract](docs/ipc-segment-contract.md).
+for real-host, GUI, checkpoint-kill and v1 checks, and the
+[finalization checklist](docs/finalization.md) for the release-SHA test matrix
+and merge gate. The current live connection and segment event shapes are
+recorded in the [IPC contract](docs/ipc-segment-contract.md).
 
 ### Split checkpoint hardening tests (Linux)
 
@@ -207,3 +230,8 @@ These tests stop the daemon after data sync, sidecar rename (before directory sy
 then restart and verify the complete output. This does not prove every possible
 power-loss, runtime shutdown, or filesystem failure scenario. In particular, a
 daemon-wide graceful-shutdown barrier for blocking writes remains outstanding.
+
+## License
+
+Dual-licensed under `MIT OR Apache-2.0`; see [LICENSE](LICENSE),
+[LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).

@@ -1,0 +1,157 @@
+# Finalization status and merge gate
+
+This document records the decisions made for the finalization flowchart and the
+remaining actions for PR #1. It is deliberately conservative: a public-network
+pass is reported by the user, but a verbatim final log was not attached to this
+branch.
+
+## Recorded decisions
+
+| Node | Decision |
+| --- | --- |
+| Public multi-file acceptance | User-reported pass; verbatim final log not attached. Do not quote `test result: ok` as an observed line. |
+| Earlier single-file smoke run | Not multi-file acceptance. Close it out and clean its isolated files on the user's PC. |
+| Final matrix status | Cargo suites and public torrent run passed on the user's PC. `fmt`, `clippy -D warnings` and release build are outstanding. |
+| Scope | Merge PR #1 only. No `v0.1.0` tag or GitHub Release in this flow. |
+| Merge strategy | `--squash`, after all gates are green. |
+| Current action | Prepare and push docs/hygiene commit, update PR title/body, then wait for final matrix confirmation. **Do not merge yet.** |
+
+Because this hygiene commit changes the release SHA, the entire deterministic
+matrix must be rerun at the new SHA. Earlier results at `251cb71` and `70c56e5`
+are useful history but are not sufficient to unblock the merge.
+
+## 1. Save evidence if it becomes available
+
+The fallback wording is already used in `README.md`, `CHANGELOG.md` and
+`docs/torrent-phase-five.md`:
+
+> user-reported pass; verbatim final log not attached.
+
+If the exact log is later available, add a redacted section here containing:
+
+- exact commit SHA;
+- exact public multi-file command;
+- torrent URL, local path and info-hash;
+- preflight/tracker output;
+- final `completed: ... all v1 pieces verified` line;
+- final `test result: ok` line;
+- date, OS and toolchain versions;
+- whether the isolated home was removed.
+
+Redact signed URLs, credentials and private paths before pasting logs into the
+PR. The candidate supplied for this run was the Internet Archive Alice in
+Wonderland LibriVox `_archive.torrent`, info-hash
+`603f7afe0174288bfee17e41399d066952d5251d`. Tracker/peer availability can change.
+
+## 2. Clean the earlier single-file run on your PC
+
+Review before deleting anything; save logs first. Do not kill a production
+daemon by accident.
+
+```sh
+pgrep -af downloader-core || true
+find /tmp -maxdepth 1 -type d \
+  \( -name 'rget-public-single-*' -o -name 'rget-public-torrent-*' -o -name 'rget-lab.*' \) \
+  -print
+```
+
+After reviewing the paths and stopping only lab daemon PIDs you started:
+
+```sh
+find /tmp -maxdepth 1 -type d \
+  \( -name 'rget-public-single-*' -o -name 'rget-public-torrent-*' -o -name 'rget-lab.*' \) \
+  -exec rm -rf -- {} +
+
+rm -f "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/rget.sock"
+unset RGET_PUBLIC_TORRENT RGET_PUBLIC_SINGLE_TORRENT RGET_PUBLIC_TIMEOUT_SECS
+unset RGET_TORRENT_TEST_DIR RGET_TORRENT_TEST_POINT
+unset RGET_TEST_CHECKPOINT_HOOK RGET_TEST_CHECKPOINT_MARKER RGET_TEST_WRITE_BLOCK
+```
+
+The CachyOS single-file run does not satisfy multi-file acceptance. Leaving it
+out of scope is acceptable; do not describe its partial output as a pass.
+
+## 3. Final matrix at the exact post-hygiene SHA
+
+On the user's PC, from the repository root:
+
+```sh
+git pull --ff-only origin arena/4f707bcb-r-get-download-manager
+git status --short
+git rev-parse HEAD
+
+cargo test --workspace --locked
+cargo test -p downloader-core --no-default-features --locked
+cargo test -p downloader-core --features torrent-test-hooks \
+  --test torrent_fault_ipc --locked -- --test-threads=1
+cargo test -p downloader-core --test torrent_public_ipc --locked
+cargo test -p downloader-core --test split_live_ipc \
+  --features checkpoint-test-hooks --locked
+
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo build --release --locked
+```
+
+`git status --short` must be empty. If any command fails, fix it and rerun the
+matrix. If Clippy warnings are intentionally accepted, record that decision in
+the PR body before merging; do not silently drop `-D warnings`.
+
+Test-only hooks must not be compiled into a production daemon. After any
+hook-enabled build, rebuild with default features before installing or running
+the daemon.
+
+The public-network test is ignored by default. Re-run it only if a fresh
+network acceptance record is needed:
+
+```sh
+RGET_PUBLIC_TORRENT="$HOME/rget-public-multifile/alice_in_wonderland_librivox_archive.torrent" \
+RGET_PUBLIC_TIMEOUT_SECS=3600 \
+cargo test -p downloader-core --test torrent_public_ipc --locked -- \
+  --ignored --nocapture public_multifile_download_and_verify_all_v1_pieces
+```
+
+Use the named filter; bare `--ignored` would also try the single-file test.
+
+## 4. Documentation and PR updates completed in this branch
+
+- `README.md`: Linux-only scope, current v1 torrent status, generalized paths,
+  finalization link and license section.
+- `docs/torrent-phase-five.md`: append-only history note and finalization status.
+- `CHANGELOG.md`: pre-release `0.1.0` entry and known limitations.
+- `.gitignore`, `LICENSE`, `LICENSE-MIT`, `LICENSE-APACHE`,
+  `rust-toolchain.toml`.
+- `Cargo.toml`: `librqbit` pinned to `=9.1.0`; `Cargo.lock` already resolves
+  `9.1.0`, so no lockfile rewrite is expected.
+- PR #1 title and body updated for the final scope and the `--squash` strategy.
+
+No `.github/workflows` CI was added; validation remains manual on the user's PC.
+There are no assistant-side Cargo runs, GUI checks or peer connections.
+
+## 5. Merge gate
+
+Only after the full matrix is green at the final SHA:
+
+```sh
+gh pr merge 1 --squash
+```
+
+Do not use `--auto`. The merge command must be the last command in its shell
+chain. Then verify:
+
+```sh
+git fetch origin master
+git log --oneline -1 origin/master
+gh pr view 1 --json state,mergedAt --jq '{state,mergedAt}'
+```
+
+This flow does **not** create a `v0.1.0` tag or GitHub Release. If a public
+release is wanted later, complete the manual GUI/live-HTTP checks in
+`docs/manual-live-verification.md` and `docs/collision-live-verification.md`,
+then add release notes, binary checksums and a tag.
+
+## 6. Current conclusion
+
+The docs/hygiene commit and PR metadata are prepared. The merge is blocked on
+one user-side gate: paste the green results for the full final matrix at the
+new SHA. Until then, PR #1 remains open and unmerged.

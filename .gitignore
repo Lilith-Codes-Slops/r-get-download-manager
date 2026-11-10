@@ -1,0 +1,23 @@
+# Rust build output
+/target/
+**/target/
+
+# Editor / OS artifacts
+**/*.rs.bk
+*.log
+*.tmp
+.DS_Store
+.idea/
+.vscode/
+
+# Local transfer state and partial payloads
+*.part
+*.part.meta
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Local lab artifacts
+/rget-lab/
+/rget-public-*/
