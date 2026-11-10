@@ -100,7 +100,7 @@ to a disabled button, checkbox or placeholder in `views.rs`.
    PR state.
 4. No `v0.1.0` tag or GitHub Release in this flow.
 
-A new GUI compile-fix commit changes the SHA again, so the matrix request must
-be reissued at the new head; earlier results at `07fd541`, `65f5f1e`, the
-post-download feature commit and the GUI port commit are history, not a green
-gate.
+A new GUI window borrow-check fix commit changes the SHA again, so the matrix
+request must be reissued at the new head; earlier results at `07fd541`,
+`65f5f1e`, the post-download feature commit, the GUI port commit and the
+compile-fix/warning-cleanup commit are history, not a green gate.

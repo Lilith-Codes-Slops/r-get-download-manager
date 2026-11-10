@@ -1064,6 +1064,7 @@ impl AppState {
 
         if self.actions_open {
             let mut open = self.actions_open;
+            let mut close_clicked = false;
             let task = self
                 .selected_task
                 .as_ref()
@@ -1119,14 +1120,14 @@ impl AppState {
                             delete_file: false,
                         });
                         self.notify("Removed from list");
-                        open = false;
+                        close_clicked = true;
                     }
                     if ui.button("Delete from disk").clicked() {
                         self.pending_delete = Some(PendingDelete {
                             task_id: task.url.clone(),
                             delete_file: true,
                         });
-                        open = false;
+                        close_clicked = true;
                     }
                     // Work on it later; TODO(state.md): seeding / upload controls are not implemented in the daemon yet.
                     unavailable(
@@ -1135,11 +1136,12 @@ impl AppState {
                         "Seeding and upload are deferred; see state.md.",
                     );
                 });
-            self.actions_open = open;
+            self.actions_open = open && !close_clicked;
         }
 
         if let Some(task) = self.properties_task.clone() {
             let mut open = true;
+            let mut close_clicked = false;
             egui::Window::new("Properties")
                 .open(&mut open)
                 .collapsible(false)
@@ -1175,10 +1177,10 @@ impl AppState {
                             }
                         });
                     if ui.button("Close").clicked() {
-                        open = false;
+                        close_clicked = true;
                     }
                 });
-            if !open {
+            if !open || close_clicked {
                 self.properties_task = None;
             }
         }

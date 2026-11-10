@@ -611,3 +611,14 @@ helpers). `#[allow(dead_code)]` annotations on CLI/native-host stubs and
 `#[cfg(test)]` gates on reserved core helpers are explicit, documented intent;
 `-D warnings` is not waived. This commit changes the SHA again, so the full
 matrix in `docs/finalization.md` must be rerun before merging.
+
+
+## GUI window borrow-check fix (append-only note)
+
+The first `cargo check -p downloader-gui --locked` run after the warning-cleanup
+commit failed with two `E0499` errors in `crates/gui/src/app_state/views.rs`:
+`Window::open(&mut open)` holds a mutable borrow while the `show` closure also
+assigned `open = false` in the Actions and Properties windows. A follow-up
+commit uses a separate `close_clicked` flag inside each closure and reads
+`open` only after `show` returns. This commit changes the SHA again, so the
+full matrix in `docs/finalization.md` must be rerun before merging.
