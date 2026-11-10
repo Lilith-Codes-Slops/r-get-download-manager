@@ -155,9 +155,10 @@ impl Drop for Fixture {
 struct HttpServer {
     url: String,
     release: Arc<AtomicBool>,
-    changed: Arc<AtomicBool>,
+    // Work on it later; see state.md: these handles are only cloned into the server thread.
+    _changed: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
-    requests: Arc<Mutex<Vec<(u64, u64, bool)>>>,
+    _requests: Arc<Mutex<Vec<(u64, u64, bool)>>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl HttpServer {
@@ -193,9 +194,9 @@ impl HttpServer {
         Self {
             url,
             release,
-            changed,
+            _changed: changed,
             running,
-            requests,
+            _requests: requests,
             thread: Some(thread),
         }
     }

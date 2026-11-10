@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 const MAX_DEBT_BYTES: i64 = 256 * 1024; // hard cap ~ few hundred ms at typical rates
 

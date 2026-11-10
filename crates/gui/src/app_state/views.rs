@@ -1,12 +1,15 @@
 use super::*;
 use std::collections::HashMap;
 
+type SegmentSummaries = HashMap<String, Option<(usize, u64, u64)>>;
+type WorkerCounts = HashMap<String, Option<u8>>;
+
 /// Render one task pane. Returns the id of a row the user selected.
 fn render_task_rows(
     ui: &mut egui::Ui,
     tasks: &[DownloadInfo],
-    summaries: &HashMap<String, Option<(usize, u64, u64)>>,
-    workers: &HashMap<String, Option<u8>>,
+    summaries: &SegmentSummaries,
+    workers: &WorkerCounts,
     selected: &Option<String>,
     filter: &str,
     empty_message: &str,
@@ -100,7 +103,7 @@ impl AppState {
             if ui.button("Settings").clicked() {
                 self.settings_open = true;
             }
-            // TODO(state.md): full Help dropdown / command palette is deferred.
+            // Work on it later; TODO(state.md): full Help dropdown / command palette is deferred.
         });
     }
 
@@ -109,7 +112,7 @@ impl AppState {
             if ui.button("+ URL").clicked() {
                 self.add_open = true;
             }
-            // TODO(state.md): magnet ingest is not supported by the daemon yet.
+            // Work on it later; TODO(state.md): magnet ingest is not supported by the daemon yet.
             unavailable(
                 ui,
                 "+ Magnet",
@@ -131,7 +134,7 @@ impl AppState {
                     self.notify("Select a download first");
                 }
             }
-            // TODO(state.md): native file picker is not wired yet.
+            // Work on it later; TODO(state.md): native file picker is not wired yet.
             unavailable(
                 ui,
                 "Add file",
@@ -173,7 +176,7 @@ impl AppState {
                 .selectable_label(self.view == View::Side && self.panel == panel, text)
                 .clicked()
             {
-                // TODO(state.md): Labels, RSS, Recent and Favorites have no daemon storage yet.
+                // Work on it later; TODO(state.md): Labels, RSS, Recent and Favorites have no daemon storage yet.
                 self.panel = panel;
                 self.view = View::Side;
             }
@@ -185,7 +188,7 @@ impl AppState {
             (Color32::from_rgb(239, 68, 68), "● Offline")
         };
         ui.label(RichText::new(text).color(color).small());
-        // TODO(state.md): manual daemon connect/disconnect is not supported; the bridge auto-reconnects.
+        // Work on it later; TODO(state.md): manual daemon connect/disconnect is not supported; the bridge auto-reconnects.
         unavailable(
             ui,
             "Toggle daemon",
@@ -195,8 +198,8 @@ impl AppState {
 
     pub(super) fn tasks_view(&mut self, ui: &mut egui::Ui) {
         let tasks = self.tasks.clone();
-        let mut summaries = HashMap::new();
-        let mut workers = HashMap::new();
+        let mut summaries: SegmentSummaries = HashMap::new();
+        let mut workers: WorkerCounts = HashMap::new();
         for task in &tasks {
             summaries.insert(task.url.clone(), self.live_segments.summary(task));
             workers.insert(
@@ -252,7 +255,7 @@ impl AppState {
                         .hint_text("Filter…")
                         .desired_width(160.0),
                 );
-                // TODO(state.md): seeding / sharing controls are not available in the daemon yet.
+                // Work on it later; TODO(state.md): seeding / sharing controls are not available in the daemon yet.
                 ui.label(RichText::new("Seeding controls are deferred; see state.md.").weak());
                 egui::ScrollArea::vertical()
                     .id_salt("transfer_list")
@@ -481,7 +484,7 @@ impl AppState {
                                 delete_file: true,
                             });
                         }
-                        // TODO(state.md): seeding / upload controls are not implemented in the daemon yet.
+                        // Work on it later; TODO(state.md): seeding / upload controls are not implemented in the daemon yet.
                         unavailable(
                             ui,
                             "Start / Stop seeding",
@@ -582,7 +585,7 @@ impl AppState {
                     }
                     ui.separator();
                     ui.label("Not implemented yet (see state.md):");
-                    // TODO(state.md): close rGet, checksum, extraction, antivirus and power actions are stubs.
+                    // Work on it later; TODO(state.md): close rGet, checksum, extraction, antivirus and power actions are stubs.
                     for label in [
                         "Close rGet",
                         "Verify checksum",
@@ -636,7 +639,7 @@ impl AppState {
                     self.notify("Path copied");
                 }
             }
-            // TODO(state.md): no daemon file-mutation API yet.
+            // Work on it later; TODO(state.md): no daemon file-mutation API yet.
             unavailable(
                 ui,
                 "Rename / move / delete",
@@ -652,7 +655,7 @@ impl AppState {
                     category = id;
                 }
             }
-            // TODO(state.md): category persistence and editing are not backed by the daemon yet.
+            // Work on it later; TODO(state.md): category persistence and editing are not backed by the daemon yet.
             unavailable(ui, "+ New", "Category editing is deferred; see state.md.");
         });
         let mut library_filter = self.library_filter.clone();
@@ -784,22 +787,22 @@ impl AppState {
                 }
             }
             Panel::Labels => {
-                // TODO(state.md): labels have no daemon storage yet.
+                // Work on it later; TODO(state.md): labels have no daemon storage yet.
                 ui.label("Labels are not backed by daemon storage yet.");
                 unavailable(ui, "New label", "Deferred; see state.md.");
             }
             Panel::Rss => {
-                // TODO(state.md): RSS feeds have no daemon fetcher or storage yet.
+                // Work on it later; TODO(state.md): RSS feeds have no daemon fetcher or storage yet.
                 ui.label("RSS feeds are not implemented yet.");
                 unavailable(ui, "Add feed", "Deferred; see state.md.");
             }
             Panel::Recent => {
-                // TODO(state.md): recent history is derived from daemon queue, not persisted separately.
+                // Work on it later; TODO(state.md): recent history is derived from daemon queue, not persisted separately.
                 ui.label("Recent is derived from the live daemon queue; no separate history yet.");
                 unavailable(ui, "Clear recent", "Deferred; see state.md.");
             }
             Panel::Favorites => {
-                // TODO(state.md): favorites have no daemon storage yet.
+                // Work on it later; TODO(state.md): favorites have no daemon storage yet.
                 ui.label("Favorites are not implemented yet.");
                 unavailable(ui, "Add favorite", "Deferred; see state.md.");
             }
@@ -817,7 +820,7 @@ impl AppState {
         let active = self.tasks.iter().filter(|task| is_active(task)).count();
         ui.horizontal_wrapped(|ui| {
             ui.label(format!("↓ {} /s", format_bytes(down)));
-            // TODO(state.md): upload / seeding telemetry is not implemented in the daemon yet.
+            // Work on it later; TODO(state.md): upload / seeding telemetry is not implemented in the daemon yet.
             ui.label("↑ 0 /s");
             ui.label(format!("Completed: {completed}"));
             ui.label(format!("Active: {active}"));
@@ -917,7 +920,7 @@ impl AppState {
                             }
                             ui.checkbox(&mut self.compact, "Compact mode (tighter rows)");
                             ui.label("Theme and compact mode last for this session only.");
-                            // TODO(state.md): persist GUI preferences across restarts.
+                            // Work on it later; TODO(state.md): persist GUI preferences across restarts.
                         }
                         SettingsTab::Behavior => {
                             ui.heading("Behavior");
@@ -926,7 +929,7 @@ impl AppState {
                         }
                         SettingsTab::Notifications => {
                             ui.heading("Notifications");
-                            // TODO(state.md): GUI audio backend is not implemented yet.
+                            // Work on it later; TODO(state.md): GUI audio backend is not implemented yet.
                             ui.add_enabled(
                                 false,
                                 egui::Checkbox::new(&mut self.sound, "Sound on completion"),
@@ -950,7 +953,7 @@ impl AppState {
                                     self.set_limit();
                                 }
                             });
-                            // TODO(state.md): no daemon API for a global concurrent-download cap yet.
+                            // Work on it later; TODO(state.md): no daemon API for a global concurrent-download cap yet.
                             ui.horizontal(|ui| {
                                 ui.label("Max concurrent");
                                 ui.add_enabled(
@@ -964,7 +967,7 @@ impl AppState {
                         }
                         SettingsTab::Torrent => {
                             ui.heading("Torrent");
-                            // TODO(state.md): seeding / share ratio is not implemented in the daemon yet.
+                            // Work on it later; TODO(state.md): seeding / share ratio is not implemented in the daemon yet.
                             ui.horizontal(|ui| {
                                 ui.label("Seed until ratio");
                                 ui.add_enabled(
@@ -1125,7 +1128,7 @@ impl AppState {
                         });
                         open = false;
                     }
-                    // TODO(state.md): seeding / upload controls are not implemented in the daemon yet.
+                    // Work on it later; TODO(state.md): seeding / upload controls are not implemented in the daemon yet.
                     unavailable(
                         ui,
                         "Start / Stop seeding",
@@ -1163,13 +1166,12 @@ impl AppState {
                             if let Some(path) = &task.final_path {
                                 metric(ui, "Saved to", path);
                             }
-                            if let Some((root, files)) = torrent_display(&task) {
-                                if let Some(root) = root {
-                                    metric(ui, "Torrent root", root);
-                                }
-                                if let Some(files) = files {
-                                    metric(ui, "Torrent files", &files.to_string());
-                                }
+                            let (root, files) = torrent_display(&task);
+                            if let Some(root) = root {
+                                metric(ui, "Torrent root", root);
+                            }
+                            if let Some(files) = files {
+                                metric(ui, "Torrent files", &files.to_string());
                             }
                         });
                     if ui.button("Close").clicked() {
@@ -1194,7 +1196,7 @@ impl AppState {
                     ui.label("Ctrl+R  Resume all");
                     ui.label("Ctrl+B  Pin / unpin the left rail");
                     ui.separator();
-                    // TODO(state.md): full command palette and remaining shortcuts are deferred.
+                    // Work on it later; TODO(state.md): full command palette and remaining shortcuts are deferred.
                     ui.label(
                         "Full command palette, category editing, RSS, labels and favorites are tracked in state.md.",
                     );

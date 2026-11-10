@@ -45,6 +45,8 @@ use tokio::sync::{watch, Mutex};
 /// every worker has exited, including on an error. Until supervised cancellation
 /// is implemented, callers must await this future rather than dropping it. The
 /// caller must not publish the file unless this function returns success.
+// Work on it later; see state.md: fixed-split entry point is test-only for now.
+#[cfg(test)]
 pub(super) async fn download_fixed(
     client: reqwest::Client,
     url: String,

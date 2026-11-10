@@ -1,4 +1,3 @@
-use reqwest::header::{HeaderMap, IF_RANGE};
 use thiserror::Error;
 
 #[derive(Error, Debug)]

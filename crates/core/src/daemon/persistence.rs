@@ -114,6 +114,8 @@ impl Persistence {
         .await?
     }
 
+    // Work on it later; see state.md: split-recovery reads are test-only for now.
+    #[cfg(test)]
     #[cfg(target_os = "linux")]
     pub async fn load_split_recovery(
         &self,

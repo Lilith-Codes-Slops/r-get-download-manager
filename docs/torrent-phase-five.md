@@ -598,3 +598,16 @@ seeding, RSS, labels, favorites, editable categories, sounds, file mutations,
 native file picker and the remaining post-download automation. This note does
 not change the torrent lifecycle gates above; the full deterministic matrix
 must still be rerun at the exact final SHA after this commit.
+
+
+## GUI compile-fix and warning cleanup (append-only note)
+
+The first `cargo test --workspace --locked` run at the GUI-port SHA failed with
+`E0308` in `crates/gui/src/app_state/views.rs`: the Properties dialog treated
+`torrent_display`'s `(Option<&str>, Option<usize>)` tuple as an `Option`. A
+follow-up commit destructures the tuple correctly and removes the rustc
+warnings from the same build (unused imports, unused fields and test-only
+helpers). `#[allow(dead_code)]` annotations on CLI/native-host stubs and
+`#[cfg(test)]` gates on reserved core helpers are explicit, documented intent;
+`-D warnings` is not waived. This commit changes the SHA again, so the full
+matrix in `docs/finalization.md` must be rerun before merging.

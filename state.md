@@ -3,7 +3,16 @@
 This is the living backlog for the GUI port. It records what is wired to the
 daemon today, what is intentionally visible-but-disabled, and what we work on
 next. Disabled controls in `crates/gui/src/app_state/views.rs` carry
-`// TODO(state.md): ...` comments so the reason is visible at the call site.
+`// Work on it later; TODO(state.md): ...` comments so the reason is visible at
+the call site.
+
+## Work on it later (long-term project)
+
+The phrase "Work on it later" is intentional: this is a long-term project, and
+the rows below are the next work items rather than merge blockers. Source-level
+`#[allow(dead_code)]` annotations on CLI/native-host stubs and `#[cfg(test)]`
+gates on reserved core helpers document that intent without weakening
+`cargo clippy --workspace --all-targets --locked -- -D warnings`.
 
 ## Branch / PR
 
@@ -34,10 +43,10 @@ next. Disabled controls in `crates/gui/src/app_state/views.rs` carry
 | Copy Link / Copy path | egui clipboard. |
 | Properties | Read-only details window from `DownloadInfo`. |
 
-## Disabled — daemon not fully prepared yet
+## Work on it later — disabled until the daemon is fully prepared
 
-Every row below has a matching `TODO(state.md)` comment next to a disabled
-button, checkbox or placeholder in `views.rs`.
+Every row below has a matching `Work on it later; TODO(state.md)` comment next
+to a disabled button, checkbox or placeholder in `views.rs`.
 
 | Control | Why it is disabled | Next step |
 | --- | --- | --- |
@@ -91,6 +100,7 @@ button, checkbox or placeholder in `views.rs`.
    PR state.
 4. No `v0.1.0` tag or GitHub Release in this flow.
 
-A new GUI commit changes the SHA again, so the matrix request must be reissued
-at the new head; earlier results at `07fd541`, `65f5f1e` and the post-download
-feature commit are history, not a green gate.
+A new GUI compile-fix commit changes the SHA again, so the matrix request must
+be reissued at the new head; earlier results at `07fd541`, `65f5f1e`, the
+post-download feature commit and the GUI port commit are history, not a green
+gate.

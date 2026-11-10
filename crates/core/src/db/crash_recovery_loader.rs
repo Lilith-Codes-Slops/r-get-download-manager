@@ -1,4 +1,5 @@
 use super::sqlite_pool::SqlitePool;
+#[cfg(test)]
 use rusqlite::Connection;
 use std::path::Path;
 use thiserror::Error;
@@ -28,6 +29,8 @@ impl CrashRecoveryLoader {
         Ok(())
     }
 
+    // Work on it later; see state.md: sidecar reconciliation is not wired yet.
+    #[cfg(test)]
     fn prefer_sidecar(
         conn: &Connection,
         meta_seq: u64,
@@ -41,5 +44,22 @@ impl CrashRecoveryLoader {
             )
             .unwrap_or(0);
         Ok((meta_seq as i64) > db_seq)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prefer_sidecar_compares_monotonic_sequences() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE tasks (task_id TEXT PRIMARY KEY, monotonic_seq_no INTEGER NOT NULL);
+             INSERT INTO tasks (task_id, monotonic_seq_no) VALUES ('task', 7);",
+        )
+        .unwrap();
+        assert!(CrashRecoveryLoader::prefer_sidecar(&conn, 8, "task").unwrap());
+        assert!(!CrashRecoveryLoader::prefer_sidecar(&conn, 7, "task").unwrap());
     }
 }

@@ -7,7 +7,9 @@ mod daemon_socket_relay;
 mod stdio_frame_reader;
 mod stdio_frame_writer;
 
+// Work on it later; see state.md for the long-term backlog.
 #[cfg(target_os = "linux")]
+#[allow(dead_code)]
 mod linux_manifest_registrar;
 
 #[cfg(target_os = "windows")]

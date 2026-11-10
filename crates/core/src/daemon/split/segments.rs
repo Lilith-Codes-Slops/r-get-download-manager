@@ -446,6 +446,8 @@ impl SegmentMap {
         self.emit_policy_change(before, now);
         self.changes.notify_one();
     }
+    // Work on it later; see state.md: rejection history is test-only for now.
+    #[cfg(test)]
     pub fn was_rejected(&self) -> bool {
         self.rejected.is_some()
     }

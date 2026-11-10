@@ -547,6 +547,7 @@ fn count(value: Option<u8>) -> String {
         .map(|n| n.to_string())
         .unwrap_or_else(|| "Unknown".into())
 }
+// Work on it later; see state.md for the long-term backlog.
 fn unavailable(ui: &mut egui::Ui, label: &str, reason: &str) {
     ui.add_enabled(false, egui::Button::new(label))
         .on_hover_text(reason);

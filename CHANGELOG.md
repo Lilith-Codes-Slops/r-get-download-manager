@@ -43,6 +43,9 @@ pending, and no merge, tag, or GitHub Release has been created.
   status view and a link to the Settings control.
 - Replace the previous basic GUI layout with the ported design; keep every
   daemon-unready control visible but disabled with `TODO(state.md)` comments.
+- Fix the GUI Properties dialog's `torrent_display` tuple destructure and clean
+  the rustc warnings surfaced by `cargo test --workspace` (unused imports,
+  unused fields and test-only helpers) without waiving `-D warnings`.
 - Clarify Linux-only daemon support and the Linux GNU torrent target in
   `README.md`.
 - Mark `docs/torrent-phase-five.md` as an append-only engineering log and add a
@@ -60,11 +63,11 @@ pending, and no merge, tag, or GitHub Release has been created.
 - At `70c56e5`, the public-test guard suite reported 2 passed and 2 ignored.
 - A formatting/Clippy fix commit addressed the previously reported `rustfmt`
   diffs and `large_enum_variant` error at `07fd541`.
-- The post-download action feature commit and the subsequent GUI port commit each
-  changed the SHA again. The full matrix, including `cargo fmt --check`,
-  `cargo clippy -- -D warnings`, the Cargo test suites and the release build,
-  must still be rerun at the new final SHA. See `docs/finalization.md` and
-  `state.md`.
+- The post-download action feature commit, the subsequent GUI port commit and
+  the compile-fix/warning-cleanup commit each changed the SHA again. The full
+  matrix, including `cargo fmt --check`, `cargo clippy -- -D warnings`, the
+  Cargo test suites and the release build, must still be rerun at the new final
+  SHA. See `docs/finalization.md` and `state.md`.
 
 ### Known limitations
 

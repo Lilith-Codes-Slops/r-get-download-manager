@@ -8,11 +8,12 @@ use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 pub struct ServerLoop {
-    pool: IpcConnectionPool,
+    // Work on it later; see state.md: connection pool is reserved for future use.
+    _pool: IpcConnectionPool,
 }
 impl ServerLoop {
     pub fn new(pool: IpcConnectionPool) -> Self {
-        Self { pool }
+        Self { _pool: pool }
     }
     pub async fn run(&self, mut rx: mpsc::Receiver<()>) {
         let endpoint = match EndpointPathResolver::resolve() {
