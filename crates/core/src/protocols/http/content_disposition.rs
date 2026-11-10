@@ -17,7 +17,10 @@ impl ContentDisposition {
     fn parse_filename(cd: &str) -> Option<String> {
         cd.split(';')
             .map(|p| p.trim())
-            .find_map(|p| p.strip_prefix("filename=").or_else(|| p.strip_prefix("filename*=")))
+            .find_map(|p| {
+                p.strip_prefix("filename=")
+                    .or_else(|| p.strip_prefix("filename*="))
+            })
             .map(|s| s.trim_matches('"').to_string())
     }
 }

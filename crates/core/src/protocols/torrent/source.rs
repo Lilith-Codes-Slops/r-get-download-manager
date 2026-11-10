@@ -18,8 +18,11 @@ pub fn classify(source: &str) -> Option<TorrentSource> {
         return None;
     }
     let path = Path::new(source);
-    if path.extension().and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("torrent")) {
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("torrent"))
+    {
         return Some(TorrentSource::MetainfoFile(path.to_owned()));
     }
     None
@@ -31,9 +34,18 @@ mod tests {
 
     #[test]
     fn accepts_magnet_and_local_torrent_path() {
-        assert!(matches!(classify("magnet:?xt=urn:btih:abc"), Some(TorrentSource::Magnet(_))));
-        assert_eq!(classify("/tmp/My File.TORRENT"), Some(TorrentSource::MetainfoFile("/tmp/My File.TORRENT".into())));
-        assert!(matches!(classify("relative.torrent"), Some(TorrentSource::MetainfoFile(_))));
+        assert!(matches!(
+            classify("magnet:?xt=urn:btih:abc"),
+            Some(TorrentSource::Magnet(_))
+        ));
+        assert_eq!(
+            classify("/tmp/My File.TORRENT"),
+            Some(TorrentSource::MetainfoFile("/tmp/My File.TORRENT".into()))
+        );
+        assert!(matches!(
+            classify("relative.torrent"),
+            Some(TorrentSource::MetainfoFile(_))
+        ));
     }
 
     #[test]

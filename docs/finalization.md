@@ -11,14 +11,15 @@ branch.
 | --- | --- |
 | Public multi-file acceptance | User-reported pass; verbatim final log not attached. Do not quote `test result: ok` as an observed line. |
 | Earlier single-file smoke run | Not multi-file acceptance. Close it out and clean its isolated files on the user's PC. |
-| Final matrix status | Cargo suites and public torrent run passed on the user's PC. `fmt`, `clippy -D warnings` and release build are outstanding. |
+| Final matrix status | Cargo suites and public torrent run passed on the user's PC at an earlier SHA. Formatting and Clippy fixes are now applied; the complete matrix, including the release build, must be rerun at the final SHA. |
 | Scope | Merge PR #1 only. No `v0.1.0` tag or GitHub Release in this flow. |
 | Merge strategy | `--squash`, after all gates are green. |
-| Current action | Prepare and push docs/hygiene commit, update PR title/body, then wait for final matrix confirmation. **Do not merge yet.** |
+| Current action | Push the formatting/Clippy fix commit, update PR metadata with its SHA, then wait for final matrix confirmation. **Do not merge yet.** |
 
-Because this hygiene commit changes the release SHA, the entire deterministic
-matrix must be rerun at the new SHA. Earlier results at `251cb71` and `70c56e5`
-are useful history but are not sufficient to unblock the merge.
+The docs/hygiene commit and the subsequent formatting/Clippy fix commit each
+change the release SHA. The entire deterministic matrix must be rerun at the
+final SHA. Earlier results at `251cb71`, `70c56e5` and `07fd541` are useful
+history but are not sufficient to unblock the merge.
 
 ## 1. Save evidence if it becomes available
 
@@ -97,6 +98,11 @@ cargo build --release --locked
 matrix. If Clippy warnings are intentionally accepted, record that decision in
 the PR body before merging; do not silently drop `-D warnings`.
 
+An assistant-side `rustfmt 1.99.0-stable --check --edition 2021` run over all
+tracked `.rs` files, using the repository `rustfmt.toml`, reported no diffs after
+the fix. This is a static check only: the user-side `cargo fmt --all -- --check`
+command above remains the release gate.
+
 Test-only hooks must not be compiled into a production daemon. After any
 hook-enabled build, rebuild with default features before installing or running
 the daemon.
@@ -124,6 +130,9 @@ Use the named filter; bare `--ignored` would also try the single-file test.
 - `Cargo.toml`: `librqbit` pinned to `=9.1.0`; `Cargo.lock` already resolves
   `9.1.0`, so no lockfile rewrite is expected.
 - PR #1 title and body updated for the final scope and the `--squash` strategy.
+- A formatting/Clippy fix commit applies `rustfmt` across the workspace and boxes
+  `DaemonEvent::ProgressUpdate`'s `DownloadInfo` payload. Serde framing is
+  unchanged; producer, consumer and test constructions were updated together.
 
 No `.github/workflows` CI was added; validation remains manual on the user's PC.
 There are no assistant-side Cargo runs, GUI checks or peer connections.
@@ -152,6 +161,7 @@ then add release notes, binary checksums and a tag.
 
 ## 6. Current conclusion
 
-The docs/hygiene commit and PR metadata are prepared. The merge is blocked on
-one user-side gate: paste the green results for the full final matrix at the
-new SHA. Until then, PR #1 remains open and unmerged.
+The docs/hygiene commit, the formatting/Clippy fix commit and PR metadata are
+prepared. The merge is blocked on one user-side gate: paste the green results
+for the full final matrix at the new SHA. Until then, PR #1 remains open and
+unmerged.

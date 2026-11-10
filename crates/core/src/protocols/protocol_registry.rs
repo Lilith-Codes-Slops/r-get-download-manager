@@ -7,7 +7,9 @@ pub struct ProtocolRegistry {
 
 impl ProtocolRegistry {
     pub fn new() -> Self {
-        Self { handlers: Vec::new() }
+        Self {
+            handlers: Vec::new(),
+        }
     }
 
     pub fn register(&mut self, handler: Arc<dyn ProtocolHandler>) {

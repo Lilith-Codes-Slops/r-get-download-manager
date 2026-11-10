@@ -28,12 +28,18 @@ impl CrashRecoveryLoader {
         Ok(())
     }
 
-    fn prefer_sidecar(conn: &Connection, meta_seq: u64, task_id: &str) -> Result<bool, RecoveryError> {
-        let db_seq: i64 = conn.query_row(
-            "SELECT monotonic_seq_no FROM tasks WHERE task_id = ?1",
-            [task_id],
-            |row| row.get(0),
-        ).unwrap_or(0);
+    fn prefer_sidecar(
+        conn: &Connection,
+        meta_seq: u64,
+        task_id: &str,
+    ) -> Result<bool, RecoveryError> {
+        let db_seq: i64 = conn
+            .query_row(
+                "SELECT monotonic_seq_no FROM tasks WHERE task_id = ?1",
+                [task_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
         Ok((meta_seq as i64) > db_seq)
     }
 }

@@ -8,7 +8,14 @@ const HIGH_GOODPUT: f64 = MIB as f64;
 const EMA_WEIGHT: f64 = 0.25;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Reason { Initial, Remembered, Rejection, Slowdown, Goodput, Rtt }
+pub(super) enum Reason {
+    Initial,
+    Remembered,
+    Rejection,
+    Slowdown,
+    Goodput,
+    Rtt,
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct AdaptiveSizer {
@@ -21,9 +28,20 @@ pub(super) struct AdaptiveSizer {
 
 impl AdaptiveSizer {
     pub fn new(remembered_target: Option<u64>) -> Self {
-        let target = remembered_target.unwrap_or(INITIAL_TARGET).clamp(MIN_TARGET, MAX_TARGET);
-        Self { target, recent_goodput: None, recent_rtt_ms: None,
-            last_change_reason: if remembered_target.is_some() { Reason::Remembered } else { Reason::Initial }, recent_peak: 0.0 }
+        let target = remembered_target
+            .unwrap_or(INITIAL_TARGET)
+            .clamp(MIN_TARGET, MAX_TARGET);
+        Self {
+            target,
+            recent_goodput: None,
+            recent_rtt_ms: None,
+            last_change_reason: if remembered_target.is_some() {
+                Reason::Remembered
+            } else {
+                Reason::Initial
+            },
+            recent_peak: 0.0,
+        }
     }
 
     /// Accept only finite, nonnegative samples; no measurement is different from zero throughput.
@@ -32,11 +50,19 @@ impl AdaptiveSizer {
     pub fn observe(&mut self, goodput_bps: Option<f64>, rtt_ms: Option<f64>) -> bool {
         self.observe_with_growth(goodput_bps, rtt_ms, true)
     }
-    pub fn observe_with_growth(&mut self, goodput_bps: Option<f64>, rtt_ms: Option<f64>, allow_growth: bool) -> bool {
+    pub fn observe_with_growth(
+        &mut self,
+        goodput_bps: Option<f64>,
+        rtt_ms: Option<f64>,
+        allow_growth: bool,
+    ) -> bool {
         let goodput = goodput_bps.filter(|v| v.is_finite() && *v >= 0.0);
         let rtt = rtt_ms.filter(|v| v.is_finite() && *v >= 0.0);
-        if let Some(value) = rtt { self.recent_rtt_ms = Some(ema(self.recent_rtt_ms, value)); }
-        let slowdown = goodput.is_some_and(|value| self.recent_peak > 0.0 && value < self.recent_peak * 0.6);
+        if let Some(value) = rtt {
+            self.recent_rtt_ms = Some(ema(self.recent_rtt_ms, value));
+        }
+        let slowdown =
+            goodput.is_some_and(|value| self.recent_peak > 0.0 && value < self.recent_peak * 0.6);
         if let Some(value) = goodput {
             self.recent_goodput = Some(ema(self.recent_goodput, value));
             self.recent_peak = self.recent_peak.max(value);
@@ -45,12 +71,19 @@ impl AdaptiveSizer {
             self.set(self.target / 2, Reason::Slowdown);
             // Do not repeatedly halve for one historical spike.
             self.recent_peak = goodput.unwrap_or(0.0);
-        } else if allow_growth && goodput.is_some() && self.recent_goodput.is_some_and(|v| v >= HIGH_GOODPUT)
-            && self.recent_rtt_ms.is_some_and(|v| v < 80.0) {
+        } else if allow_growth
+            && goodput.is_some()
+            && self.recent_goodput.is_some_and(|v| v >= HIGH_GOODPUT)
+            && self.recent_rtt_ms.is_some_and(|v| v < 80.0)
+        {
             self.set(self.target.saturating_mul(3) / 2, Reason::Goodput);
-        } else if (goodput.is_some() || rtt.is_some()) && self.recent_rtt_ms.is_some_and(|v| v > 200.0) {
+        } else if (goodput.is_some() || rtt.is_some())
+            && self.recent_rtt_ms.is_some_and(|v| v > 200.0)
+        {
             let target = (self.target * 7 / 10).max(2 * MIB);
-            if allow_growth || target <= self.target { self.set(target, Reason::Rtt); }
+            if allow_growth || target <= self.target {
+                self.set(target, Reason::Rtt);
+            }
         }
         slowdown
     }
@@ -62,7 +95,10 @@ impl AdaptiveSizer {
 
     fn set(&mut self, value: u64, reason: Reason) {
         let target = value.clamp(MIN_TARGET, MAX_TARGET);
-        if target != self.target { self.target = target; self.last_change_reason = reason; }
+        if target != self.target {
+            self.target = target;
+            self.last_change_reason = reason;
+        }
     }
 }
 
@@ -115,9 +151,13 @@ mod tests {
         let mut sizer = AdaptiveSizer::new(None);
         sizer.observe(Some(f64::NAN), Some(f64::INFINITY));
         assert_eq!(sizer.target, INITIAL_TARGET);
-        for _ in 0..100 { sizer.reject(); }
+        for _ in 0..100 {
+            sizer.reject();
+        }
         assert_eq!(sizer.target, MIN_TARGET);
-        for _ in 0..100 { sizer.observe(Some(2.0 * MIB as f64), Some(30.0)); }
+        for _ in 0..100 {
+            sizer.observe(Some(2.0 * MIB as f64), Some(30.0));
+        }
         assert_eq!(sizer.target, MAX_TARGET);
     }
 }

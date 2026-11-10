@@ -52,39 +52,85 @@ async fn live_response_latency_drives_the_floor() {
     use super::worker;
     use crate::daemon::{bandwidth::BandwidthLimiter, range::ResumeInfo};
     use std::{sync::Arc, time::Duration};
-    use tokio::{io::{AsyncReadExt, AsyncWriteExt}, sync::{watch, Mutex}};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        sync::{watch, Mutex},
+    };
     let total = 6 * MIB;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/file", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let mut request = Vec::new(); let mut byte = [0u8; 1];
-        while !request.ends_with(b"\r\n\r\n") { stream.read_exact(&mut byte).await.unwrap(); request.push(byte[0]); }
+        let mut request = Vec::new();
+        let mut byte = [0u8; 1];
+        while !request.ends_with(b"\r\n\r\n") {
+            stream.read_exact(&mut byte).await.unwrap();
+            request.push(byte[0]);
+        }
         tokio::time::sleep(Duration::from_millis(300)).await;
         let header = format!("HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes 0-{}/{total}\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n", total / 2, total / 2 - 1);
         stream.write_all(header.as_bytes()).await.unwrap();
         stream.write_all(&[1]).await.unwrap();
         tokio::time::sleep(Duration::from_secs(10)).await;
     });
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     let path = std::env::temp_dir().join(format!("rget-floor-{}-{nonce}.part", std::process::id()));
-    let file = Arc::new(std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&path).unwrap());
+    let file = Arc::new(
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap(),
+    );
     let map = Arc::new(Mutex::new(SegmentMap::new(total, 2).unwrap()));
-    let (stop, _) = watch::channel(false); let (_retire, retire) = watch::channel(false);
+    let (stop, _) = watch::channel(false);
+    let (_retire, retire) = watch::channel(false);
     let (_drain, drain) = watch::channel(false);
-    let info = ResumeInfo { etag: "\"v1\"".into(), total, url: reqwest::Url::parse(&url).unwrap() };
-    let context = worker::Context { client: reqwest::Client::new(), url, info, file: file.clone(), map: map.clone(),
-        limiter: Arc::new(BandwidthLimiter::new()), stop: stop.subscribe(), retire, drain, desired: None, owner: 0 };
+    let info = ResumeInfo {
+        etag: "\"v1\"".into(),
+        total,
+        url: reqwest::Url::parse(&url).unwrap(),
+    };
+    let context = worker::Context {
+        client: reqwest::Client::new(),
+        url,
+        info,
+        file: file.clone(),
+        map: map.clone(),
+        limiter: Arc::new(BandwidthLimiter::new()),
+        stop: stop.subscribe(),
+        retire,
+        drain,
+        desired: None,
+        owner: 0,
+    };
     let handle = tokio::spawn(worker::run(context));
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let guard = map.lock().await;
-            if guard.active_count() == 1 && guard.policy().reason == "rtt" && guard.stealable_slots() == 0 { break; }
+            if guard.active_count() == 1
+                && guard.policy().reason == "rtt"
+                && guard.stealable_slots() == 0
+            {
+                break;
+            }
             drop(guard);
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-    }).await.expect("worker response latency did not raise the floor");
+    })
+    .await
+    .expect("worker response latency did not raise the floor");
     stop.send_replace(true);
-    assert!(tokio::time::timeout(Duration::from_secs(5), handle).await.unwrap().unwrap().is_err());
-    server.abort(); drop(file); std::fs::remove_file(path).unwrap();
+    assert!(tokio::time::timeout(Duration::from_secs(5), handle)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    server.abort();
+    drop(file);
+    std::fs::remove_file(path).unwrap();
 }

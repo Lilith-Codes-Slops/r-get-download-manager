@@ -20,13 +20,15 @@ impl TorrentState {
         if matches!(next, Failed(_)) {
             return !matches!(self, Completed | Failed(_));
         }
-        matches!((self, next),
+        matches!(
+            (self, next),
             (FetchingMetadata, LookingForPeers)
-            | (LookingForPeers, Connecting)
-            | (Connecting, Downloading)
-            | (Downloading, CheckingFiles | Finished)
-            | (CheckingFiles, Finished)
-            | (Finished, Completed))
+                | (LookingForPeers, Connecting)
+                | (Connecting, Downloading)
+                | (Downloading, CheckingFiles | Finished)
+                | (CheckingFiles, Finished)
+                | (Finished, Completed)
+        )
     }
 
     /// The wire-facing spelling for a queue entry; failures retain their cause.
@@ -50,8 +52,17 @@ mod tests {
 
     #[test]
     fn lifecycle_does_not_mark_unpublished_data_completed() {
-        let sequence = [FetchingMetadata, LookingForPeers, Connecting, Downloading, Finished, Completed];
-        for pair in sequence.windows(2) { assert!(pair[0].can_transition_to(&pair[1])); }
+        let sequence = [
+            FetchingMetadata,
+            LookingForPeers,
+            Connecting,
+            Downloading,
+            Finished,
+            Completed,
+        ];
+        for pair in sequence.windows(2) {
+            assert!(pair[0].can_transition_to(&pair[1]));
+        }
         assert!(!Downloading.can_transition_to(&Completed));
         assert!(!Finished.can_transition_to(&Downloading));
         assert!(!Completed.can_transition_to(&Failed("late".into())));

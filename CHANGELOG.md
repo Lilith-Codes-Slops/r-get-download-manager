@@ -6,7 +6,7 @@ has been published.
 
 ## [0.1.0] — unreleased
 
-Status: PR #1 is open. Final verification at the exact post-hygiene SHA is
+Status: PR #1 is open. Final verification at the exact post-fix SHA is
 pending, and no merge, tag, or GitHub Release has been created.
 
 ### Added
@@ -28,6 +28,9 @@ pending, and no merge, tag, or GitHub Release has been created.
 
 - Pin `librqbit` to `=9.1.0`, matching the already-locked companion crates and
   the engine behavior documented in the Phase notes.
+- Apply `rustfmt` across the workspace and store `DaemonEvent::ProgressUpdate`'s
+  `DownloadInfo` behind `Box`, so `-D warnings` does not reject the large enum
+  variant. The serialized IPC event shape is unchanged.
 - Clarify Linux-only daemon support and the Linux GNU torrent target in
   `README.md`.
 - Mark `docs/torrent-phase-five.md` as an append-only engineering log and add a
@@ -43,8 +46,10 @@ pending, and no merge, tag, or GitHub Release has been created.
   (206 core unit tests plus integration/GUI/IPC suites), no-default-features
   suite green (96 core unit tests), and fault suite green (10/10, 42.12s).
 - At `70c56e5`, the public-test guard suite reported 2 passed and 2 ignored.
-- `cargo fmt --check`, `cargo clippy -- -D warnings`, and the release build at
-  the final SHA remain outstanding. See `docs/finalization.md`.
+- A formatting/Clippy fix commit addresses the previously reported `rustfmt`
+  diffs and `large_enum_variant` error. The full matrix, including
+  `cargo fmt --check`, `cargo clippy -- -D warnings` and the release build, must
+  still be rerun at the new final SHA. See `docs/finalization.md`.
 
 ### Known limitations
 

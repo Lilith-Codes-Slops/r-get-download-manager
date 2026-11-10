@@ -2,7 +2,10 @@
 //!
 //! This is not yet connected to transfer, cancel, remove, or startup recovery.
 //! Those paths must share the same registry before this can protect them.
-use std::{collections::BTreeMap, sync::{Arc, Mutex, OnceLock, Weak}};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex, OnceLock, Weak},
+};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 #[derive(Default)]
@@ -16,10 +19,14 @@ impl LifecycleLocks {
     /// waiter cannot remove or replace an active lock. Poisoning fails closed.
     pub(super) async fn lock(&self, task_id: &str) -> Result<OwnedMutexGuard<()>, &'static str> {
         let lock = {
-            let mut entries = self.entries.lock().map_err(|_| "torrent lifecycle registry poisoned")?;
+            let mut entries = self
+                .entries
+                .lock()
+                .map_err(|_| "torrent lifecycle registry poisoned")?;
             entries.retain(|_, lock| lock.strong_count() != 0);
-            if let Some(lock) = entries.get(task_id).and_then(Weak::upgrade) { lock }
-            else {
+            if let Some(lock) = entries.get(task_id).and_then(Weak::upgrade) {
+                lock
+            } else {
                 let lock = Arc::new(AsyncMutex::new(()));
                 entries.insert(task_id.to_owned(), Arc::downgrade(&lock));
                 lock
@@ -47,10 +54,20 @@ mod tests {
     async fn same_task_waits_while_other_tasks_proceed() {
         let locks = LifecycleLocks::default();
         let first = locks.lock("one").await.unwrap();
-        let other = tokio::time::timeout(Duration::from_secs(1), locks.lock("two")).await.unwrap().unwrap();
-        assert!(tokio::time::timeout(Duration::from_millis(25), locks.lock("one")).await.is_err());
+        let other = tokio::time::timeout(Duration::from_secs(1), locks.lock("two"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), locks.lock("one"))
+                .await
+                .is_err()
+        );
         drop(first);
-        let next = tokio::time::timeout(Duration::from_secs(1), locks.lock("one")).await.unwrap().unwrap();
+        let next = tokio::time::timeout(Duration::from_secs(1), locks.lock("one"))
+            .await
+            .unwrap()
+            .unwrap();
         drop((next, other));
     }
 
@@ -58,11 +75,23 @@ mod tests {
     async fn canceled_waiter_cannot_replace_live_lock() {
         let locks = Arc::new(LifecycleLocks::default());
         let first = locks.lock("task").await.unwrap();
-        let waiting = { let locks = locks.clone(); tokio::spawn(async move { locks.lock("task").await.unwrap() }) };
-        tokio::task::yield_now().await; waiting.abort(); let _ = waiting.await;
-        assert!(tokio::time::timeout(Duration::from_millis(25), locks.lock("task")).await.is_err());
+        let waiting = {
+            let locks = locks.clone();
+            tokio::spawn(async move { locks.lock("task").await.unwrap() })
+        };
+        tokio::task::yield_now().await;
+        waiting.abort();
+        let _ = waiting.await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), locks.lock("task"))
+                .await
+                .is_err()
+        );
         drop(first);
-        let _next = tokio::time::timeout(Duration::from_secs(1), locks.lock("task")).await.unwrap().unwrap();
+        let _next = tokio::time::timeout(Duration::from_secs(1), locks.lock("task"))
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
@@ -71,7 +100,9 @@ mod tests {
         drop(locks.lock("old").await.unwrap());
         let live = locks.lock("live").await.unwrap();
         let entries = locks.entries.lock().unwrap();
-        assert!(!entries.contains_key("old")); assert!(entries.contains_key("live"));
-        drop(entries); drop(live);
+        assert!(!entries.contains_key("old"));
+        assert!(entries.contains_key("live"));
+        drop(entries);
+        drop(live);
     }
 }

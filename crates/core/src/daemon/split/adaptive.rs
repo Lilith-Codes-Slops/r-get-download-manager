@@ -1,18 +1,35 @@
 //! Conservative AIMD supervision for bounded, ownership-safe split workers.
 use super::{segments::SegmentMap, worker};
 use crate::daemon::{bandwidth::BandwidthLimiter, range::ResumeInfo};
-use std::{collections::BTreeMap, sync::Arc, time::{Duration, Instant}};
-use tokio::{sync::{watch, Mutex}, task::JoinSet};
+use std::{
+    collections::BTreeMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio::{
+    sync::{watch, Mutex},
+    task::JoinSet,
+};
 
 const INTERVAL: Duration = Duration::from_secs(2);
 const COOLDOWN: Duration = Duration::from_secs(8);
 const MIN_SAMPLE: u64 = 64 * 1024;
 const MAX_SINGLE_REJECTIONS: u8 = 6;
 
-struct Aimd { target: usize, max: usize, previous: u64, cooldown_until: Instant }
+struct Aimd {
+    target: usize,
+    max: usize,
+    previous: u64,
+    cooldown_until: Instant,
+}
 impl Aimd {
     fn new(max: usize) -> Self {
-        Self { target: max.min(2), max, previous: 0, cooldown_until: Instant::now() }
+        Self {
+            target: max.min(2),
+            max,
+            previous: 0,
+            cooldown_until: Instant::now(),
+        }
     }
     fn reject(&mut self, now: Instant) {
         self.target = (self.target / 2).max(1);
@@ -20,10 +37,16 @@ impl Aimd {
         self.cooldown_until = now + COOLDOWN;
     }
     fn sample(&mut self, bytes: u64, now: Instant) -> bool {
-        if now < self.cooldown_until { self.previous = 0; return false; }
+        if now < self.cooldown_until {
+            self.previous = 0;
+            return false;
+        }
         if self.previous >= MIN_SAMPLE && bytes < self.previous / 2 {
             self.reject(now);
-        } else if bytes >= MIN_SAMPLE && (self.previous == 0 || bytes >= self.previous * 9 / 10) && self.target < self.max {
+        } else if bytes >= MIN_SAMPLE
+            && (self.previous == 0 || bytes >= self.previous * 9 / 10)
+            && self.target < self.max
+        {
             self.target += 1;
             self.previous = bytes;
             return true;
@@ -34,22 +57,44 @@ impl Aimd {
 }
 
 pub(super) struct Inputs {
-    pub client: reqwest::Client, pub url: String, pub info: ResumeInfo,
-    pub file: Arc<std::fs::File>, pub map: Arc<Mutex<SegmentMap>>,
-    pub limiter: Arc<BandwidthLimiter>, pub stop: watch::Sender<bool>, pub max: usize,
+    pub client: reqwest::Client,
+    pub url: String,
+    pub info: ResumeInfo,
+    pub file: Arc<std::fs::File>,
+    pub map: Arc<Mutex<SegmentMap>>,
+    pub limiter: Arc<BandwidthLimiter>,
+    pub stop: watch::Sender<bool>,
+    pub max: usize,
     pub desired: Option<watch::Receiver<u8>>,
     #[cfg(test)]
     pub peak_workers: Option<Arc<std::sync::atomic::AtomicUsize>>,
 }
 
-struct WorkerSignals { retire: watch::Sender<bool>, drain: watch::Sender<bool> }
-fn spawn_worker(inputs: &Inputs, workers: &mut JoinSet<(usize, Result<worker::Exit, String>)>,
-    running: &mut BTreeMap<usize, WorkerSignals>, owner: usize) {
+struct WorkerSignals {
+    retire: watch::Sender<bool>,
+    drain: watch::Sender<bool>,
+}
+fn spawn_worker(
+    inputs: &Inputs,
+    workers: &mut JoinSet<(usize, Result<worker::Exit, String>)>,
+    running: &mut BTreeMap<usize, WorkerSignals>,
+    owner: usize,
+) {
     let (retire, receiver) = watch::channel(false);
     let (drain, drain_rx) = watch::channel(false);
-    let context = worker::Context { client: inputs.client.clone(), url: inputs.url.clone(), info: inputs.info.clone(),
-        file: inputs.file.clone(), map: inputs.map.clone(), limiter: inputs.limiter.clone(),
-        stop: inputs.stop.subscribe(), retire: receiver, drain: drain_rx, desired: inputs.desired.clone(), owner };
+    let context = worker::Context {
+        client: inputs.client.clone(),
+        url: inputs.url.clone(),
+        info: inputs.info.clone(),
+        file: inputs.file.clone(),
+        map: inputs.map.clone(),
+        limiter: inputs.limiter.clone(),
+        stop: inputs.stop.subscribe(),
+        retire: receiver,
+        drain: drain_rx,
+        desired: inputs.desired.clone(),
+        owner,
+    };
     running.insert(owner, WorkerSignals { retire, drain });
     #[cfg(test)]
     if let Some(peak) = &inputs.peak_workers {
@@ -68,18 +113,29 @@ pub(super) async fn supervise(mut inputs: Inputs) -> Result<(), String> {
     let mut retry_at = Instant::now();
     let mut timer = tokio::time::interval(INTERVAL);
     timer.tick().await;
-    let mut previous_bytes: u64 = inputs.map.lock().await.records().iter().map(|s| s.downloaded).sum();
+    let mut previous_bytes: u64 = inputs
+        .map
+        .lock()
+        .await
+        .records()
+        .iter()
+        .map(|s| s.downloaded)
+        .sum();
     let mut last_sample = Instant::now();
     let mut try_steal = false;
     loop {
-        if *inputs.stop.borrow() && first_error.is_none() { first_error = Some("split stopped".into()); }
+        if *inputs.stop.borrow() && first_error.is_none() {
+            first_error = Some("split stopped".into());
+        }
         if first_error.is_none() {
             let map = inputs.map.lock().await;
             let pending = map.pending_count();
             let stealable = map.stealable_slots();
             let complete = map.is_complete();
             drop(map);
-            if complete && running.is_empty() { return Ok(()); }
+            if complete && running.is_empty() {
+                return Ok(());
+            }
             // Pending work must always be retried, even when the target fell to
             // one. An increase may also start workers solely to steal.
             if Instant::now() >= retry_at {
@@ -91,13 +147,23 @@ pub(super) async fn supervise(mut inputs: Inputs) -> Result<(), String> {
                 }
             }
             try_steal = false;
-            let active = running.values().filter(|signal| !*signal.retire.borrow() && !*signal.drain.borrow()).count();
-            for signal in running.values().rev().filter(|signal| !*signal.retire.borrow() && !*signal.drain.borrow()).take(active.saturating_sub(aimd.target)) {
+            let active = running
+                .values()
+                .filter(|signal| !*signal.retire.borrow() && !*signal.drain.borrow())
+                .count();
+            for signal in running
+                .values()
+                .rev()
+                .filter(|signal| !*signal.retire.borrow() && !*signal.drain.borrow())
+                .take(active.saturating_sub(aimd.target))
+            {
                 signal.retire.send_replace(true);
             }
         } else {
             inputs.stop.send_replace(true);
-            if workers.is_empty() { return Err(first_error.unwrap()); }
+            if workers.is_empty() {
+                return Err(first_error.unwrap());
+            }
         }
         tokio::select! {
             result = workers.join_next(), if !workers.is_empty() => {
@@ -181,7 +247,9 @@ mod tests {
         assert!(aimd.sample(MIN_SAMPLE * 4, now + COOLDOWN));
         aimd.reject(now + COOLDOWN);
         assert_eq!(aimd.target, 1);
-        for n in 1..10 { aimd.sample(MIN_SAMPLE * 4, now + COOLDOWN * (n + 1)); }
+        for n in 1..10 {
+            aimd.sample(MIN_SAMPLE * 4, now + COOLDOWN * (n + 1));
+        }
         assert_eq!(aimd.target, 4);
     }
 }

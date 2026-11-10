@@ -18,7 +18,10 @@ fn locate_daemon() -> PathBuf {
             }
         }
     }
-    for rel in ["target/release/downloader-core", "target/debug/downloader-core"] {
+    for rel in [
+        "target/release/downloader-core",
+        "target/debug/downloader-core",
+    ] {
         let p = PathBuf::from(rel);
         if p.exists() {
             return p;

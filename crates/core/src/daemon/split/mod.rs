@@ -1,38 +1,38 @@
 //! Split engine with work-stealing and adaptive concurrency.
-pub(super) mod checkpoint;
-pub(super) mod recovery;
-pub(super) mod startup;
-pub(super) mod live;
-#[cfg(feature = "checkpoint-test-hooks")]
-mod test_hooks;
 mod adaptive;
 mod adaptive_sizer;
-mod host_memory;
-mod steal_floor;
-pub(super) mod sizing_state;
 #[cfg(test)]
-mod steal_floor_tests;
-mod runner;
-pub(super) mod segments;
-mod worker;
-#[cfg(test)]
-mod tests;
+mod adaptive_tests;
+pub(super) mod checkpoint;
 #[cfg(test)]
 mod checkpoint_tests;
 #[cfg(test)]
+mod connection_tests;
+mod host_memory;
+pub(super) mod live;
+#[cfg(test)]
 mod range_validation_tests;
 #[cfg(test)]
+mod rate_tests;
+pub(super) mod recovery;
+mod runner;
+pub(super) mod segments;
+pub(super) mod sizing_state;
+pub(super) mod startup;
+#[cfg(test)]
 mod startup_tests;
+mod steal_floor;
+#[cfg(test)]
+mod steal_floor_tests;
 #[cfg(test)]
 mod stealing_tests;
 #[cfg(test)]
 mod target_range_tests;
+#[cfg(feature = "checkpoint-test-hooks")]
+mod test_hooks;
 #[cfg(test)]
-mod adaptive_tests;
-#[cfg(test)]
-mod connection_tests;
-#[cfg(test)]
-mod rate_tests;
+mod tests;
+mod worker;
 
 use super::bandwidth::BandwidthLimiter;
 use super::range::ResumeInfo;
@@ -58,18 +58,38 @@ pub(super) async fn download_fixed(
         return Err("fixed split requires a new empty partial file".into());
     }
     let (stop, _) = watch::channel(false);
-    run_map(client, url, info, file, map, limiter, stop, connections as usize, None).await
+    run_map(
+        client,
+        url,
+        info,
+        file,
+        map,
+        limiter,
+        stop,
+        connections as usize,
+        None,
+    )
+    .await
 }
 
 async fn run_map(
-    client: reqwest::Client, url: String, info: ResumeInfo, file: Arc<std::fs::File>,
-    map: Arc<Mutex<SegmentMap>>, limiter: Arc<BandwidthLimiter>, stop: watch::Sender<bool>, max_workers: usize,
+    client: reqwest::Client,
+    url: String,
+    info: ResumeInfo,
+    file: Arc<std::fs::File>,
+    map: Arc<Mutex<SegmentMap>>,
+    limiter: Arc<BandwidthLimiter>,
+    stop: watch::Sender<bool>,
+    max_workers: usize,
     desired: Option<watch::Receiver<u8>>,
 ) -> Result<(), String> {
-    if *stop.borrow() { return Err("split stopped".into()); }
+    if *stop.borrow() {
+        return Err("split stopped".into());
+    }
     // Verify a bounded range before starting workers; unsupported servers can
     // fall back without having written anything to the partial.
-    let request = client.get(&url)
+    let request = client
+        .get(&url)
         .header(reqwest::header::ACCEPT_ENCODING, "identity")
         .header(reqwest::header::RANGE, "bytes=0-0")
         .header(reqwest::header::IF_RANGE, info.etag.as_str());
@@ -82,7 +102,18 @@ async fn run_map(
     drop(probe);
 
     let max = max_workers.min((info.total / (1024 * 1024)).min(32) as usize);
-    adaptive::supervise(adaptive::Inputs { client, url, info, file, map, limiter, stop, max, desired,
-        #[cfg(test)] peak_workers: None,
-    }).await
+    adaptive::supervise(adaptive::Inputs {
+        client,
+        url,
+        info,
+        file,
+        map,
+        limiter,
+        stop,
+        max,
+        desired,
+        #[cfg(test)]
+        peak_workers: None,
+    })
+    .await
 }

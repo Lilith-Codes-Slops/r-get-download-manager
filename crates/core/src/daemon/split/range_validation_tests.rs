@@ -5,7 +5,9 @@ async fn read_request(stream: &mut tokio::net::TcpStream) {
     let mut request = Vec::new();
     let mut byte = [0u8; 1];
     while !request.ends_with(b"\r\n\r\n") && request.len() < 16_384 {
-        if !matches!(stream.read(&mut byte).await, Ok(1)) { break; }
+        if !matches!(stream.read(&mut byte).await, Ok(1)) {
+            break;
+        }
         request.push(byte[0]);
     }
 }
@@ -20,7 +22,11 @@ async fn serve(response: &'static str) -> (reqwest::Response, ResumeInfo) {
     });
     let resp = reqwest::Client::new().get(&url).send().await.unwrap();
     task.await.unwrap();
-    let info = ResumeInfo { etag: "\"v1\"".into(), total: 8, url: reqwest::Url::parse(&url).unwrap() };
+    let info = ResumeInfo {
+        etag: "\"v1\"".into(),
+        total: 8,
+        url: reqwest::Url::parse(&url).unwrap(),
+    };
     (resp, info)
 }
 
@@ -48,7 +54,11 @@ async fn rejects_redirect_to_another_resolved_url() {
         second.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 4\r\nContent-Range: bytes 0-3/8\r\nETag: \"v1\"\r\nConnection: close\r\n\r\nabcd").await.unwrap();
     });
     let resp = reqwest::Client::new().get(&url).send().await.unwrap();
-    let info = ResumeInfo { etag: "\"v1\"".into(), total: 8, url: reqwest::Url::parse(&url).unwrap() };
+    let info = ResumeInfo {
+        etag: "\"v1\"".into(),
+        total: 8,
+        url: reqwest::Url::parse(&url).unwrap(),
+    };
     assert!(validate_bounded(&resp, &info, 0, 4).is_err());
     task.await.unwrap();
 }

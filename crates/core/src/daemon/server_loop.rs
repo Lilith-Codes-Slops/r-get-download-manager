@@ -1,15 +1,19 @@
 use downloader_ipc::transport::{EndpointPathResolver, IpcConnectionPool};
 use downloader_ipc::{ClientRequest, DaemonEvent, DownloadInfo};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(target_os = "linux")]
 use tokio::net::UnixListener;
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc;
-pub struct ServerLoop { pool: IpcConnectionPool }
+use tokio::sync::Mutex;
+pub struct ServerLoop {
+    pool: IpcConnectionPool,
+}
 impl ServerLoop {
-    pub fn new(pool: IpcConnectionPool) -> Self { Self { pool } }
+    pub fn new(pool: IpcConnectionPool) -> Self {
+        Self { pool }
+    }
     pub async fn run(&self, mut rx: mpsc::Receiver<()>) {
         let endpoint = match EndpointPathResolver::resolve() {
             Ok(e) => e,
@@ -23,53 +27,91 @@ impl ServerLoop {
             let lock_path = format!("{endpoint}.lock");
             let _lock = match super::SingleInstanceLock::acquire(std::path::Path::new(&lock_path)) {
                 Ok(lock) => lock,
-                Err(e) => { eprintln!("failed to acquire daemon lock: {e}"); return; }
+                Err(e) => {
+                    eprintln!("failed to acquire daemon lock: {e}");
+                    return;
+                }
             };
             let store = match super::persistence::Persistence::default_path() {
                 Ok(path) => Arc::new(super::persistence::Persistence::new(path)),
-                Err(e) => { eprintln!("failed to configure persistent state: {e}"); return; }
+                Err(e) => {
+                    eprintln!("failed to configure persistent state: {e}");
+                    return;
+                }
             };
-            #[cfg(feature = "torrent")] super::torrent_settings::log_config(&store).await;
-            #[cfg(feature = "torrent")] { super::torrent_stage_recovery::startup(&store).await; super::torrent_publication_recovery::startup(&store).await; super::torrent_remove_recovery::startup(&store).await; }
+            #[cfg(feature = "torrent")]
+            super::torrent_settings::log_config(&store).await;
+            #[cfg(feature = "torrent")]
+            {
+                super::torrent_stage_recovery::startup(&store).await;
+                super::torrent_publication_recovery::startup(&store).await;
+                super::torrent_remove_recovery::startup(&store).await;
+            }
             let saved = match store.load().await {
                 Ok(saved) => saved,
-                Err(e) => { eprintln!("failed to load persistent state: {e}"); return; }
+                Err(e) => {
+                    eprintln!("failed to load persistent state: {e}");
+                    return;
+                }
             };
-            let root = std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Downloads"));
-            if root.is_none() { eprintln!("HOME is not set; cannot recover download files"); return; }
-            let (saved, recovered, split_recovered, retry_startup, root) = match tokio::task::spawn_blocking(move || {
-                let mut saved = saved;
-                let old_tasks = saved.tasks.clone(); let old_states = saved.prior_states.clone();
-                let split_recovered = root.as_ref().map(|root| super::split::startup::reconcile(&mut saved, root)).unwrap_or_default();
-                let recovered = root.as_ref().map(|root| super::recovery::reconcile(&mut saved, root)).unwrap_or_default();
-                let retry_startup = super::retry::startup_fallbacks(&mut saved, &old_tasks, &old_states);
-                (saved, recovered, split_recovered, retry_startup, root)
-            }).await {
-                Ok(value) => value,
-                Err(e) => { eprintln!("failed to prepare recovery: {e}"); return; }
-            };
+            let root = std::env::var_os("HOME")
+                .map(|home| std::path::PathBuf::from(home).join("Downloads"));
+            if root.is_none() {
+                eprintln!("HOME is not set; cannot recover download files");
+                return;
+            }
+            let (saved, recovered, split_recovered, retry_startup, root) =
+                match tokio::task::spawn_blocking(move || {
+                    let mut saved = saved;
+                    let old_tasks = saved.tasks.clone();
+                    let old_states = saved.prior_states.clone();
+                    let split_recovered = root
+                        .as_ref()
+                        .map(|root| super::split::startup::reconcile(&mut saved, root))
+                        .unwrap_or_default();
+                    let recovered = root
+                        .as_ref()
+                        .map(|root| super::recovery::reconcile(&mut saved, root))
+                        .unwrap_or_default();
+                    let retry_startup =
+                        super::retry::startup_fallbacks(&mut saved, &old_tasks, &old_states);
+                    (saved, recovered, split_recovered, retry_startup, root)
+                })
+                .await
+                {
+                    Ok(value) => value,
+                    Err(e) => {
+                        eprintln!("failed to prepare recovery: {e}");
+                        return;
+                    }
+                };
             let tasks = Arc::new(Mutex::new(saved.tasks));
             let limiter = Arc::new(super::bandwidth::BandwidthLimiter::new());
             if let Err(e) = limiter.set(None, saved.global_kbps).await {
-                eprintln!("failed to restore global speed limit: {e}"); return;
+                eprintln!("failed to restore global speed limit: {e}");
+                return;
             }
             for (id, rate) in saved.task_kbps {
                 if let Err(e) = limiter.set(Some(&id), rate).await {
-                    eprintln!("failed to restore task speed limit: {e}"); return;
+                    eprintln!("failed to restore task speed limit: {e}");
+                    return;
                 }
             }
             for item in &recovered {
                 if let Err(e) = store.save_recovery(&tasks, &item.record).await {
-                    eprintln!("failed to reconcile recovered checkpoint: {e}"); return;
+                    eprintln!("failed to reconcile recovered checkpoint: {e}");
+                    return;
                 }
             }
             for item in &split_recovered {
                 if let Err(e) = store.save_split_recovery(&tasks, &item.record).await {
-                    eprintln!("failed to reconcile recovered split checkpoint: {e}"); return;
+                    eprintln!("failed to reconcile recovered split checkpoint: {e}");
+                    return;
                 }
             }
             if let Err(e) = store.save(&tasks, &limiter).await {
-                eprintln!("failed to save recovered state: {e}"); return;
+                eprintln!("failed to save recovered state: {e}");
+                return;
             }
             // Only remove a stale socket, never an unrelated file or symlink.
             use std::os::unix::fs::FileTypeExt;
@@ -80,9 +122,15 @@ impl ServerLoop {
                         return;
                     }
                 }
-                Ok(_) => { eprintln!("refusing to replace non-socket endpoint {endpoint}"); return; }
+                Ok(_) => {
+                    eprintln!("refusing to replace non-socket endpoint {endpoint}");
+                    return;
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => { eprintln!("failed to inspect endpoint {endpoint}: {e}"); return; }
+                Err(e) => {
+                    eprintln!("failed to inspect endpoint {endpoint}: {e}");
+                    return;
+                }
             }
             let listener = match UnixListener::bind(&endpoint) {
                 Ok(l) => l,
@@ -92,21 +140,51 @@ impl ServerLoop {
                 }
             };
             use std::os::unix::fs::PermissionsExt;
-            if let Err(e) = std::fs::set_permissions(&endpoint, std::fs::Permissions::from_mode(0o600)) {
+            if let Err(e) =
+                std::fs::set_permissions(&endpoint, std::fs::Permissions::from_mode(0o600))
+            {
                 eprintln!("failed to secure daemon socket: {e}");
                 let _ = std::fs::remove_file(&endpoint);
                 return;
             }
-            let controls = Arc::new(Mutex::new(BTreeMap::<String, tokio::sync::watch::Sender<super::control::TransferControl>>::new()));
+            let controls = Arc::new(Mutex::new(BTreeMap::<
+                String,
+                tokio::sync::watch::Sender<super::control::TransferControl>,
+            >::new()));
             for item in recovered {
-                super::recovered_transfer::spawn(item, tasks.clone(), controls.clone(), limiter.clone(), store.clone()).await;
+                super::recovered_transfer::spawn(
+                    item,
+                    tasks.clone(),
+                    controls.clone(),
+                    limiter.clone(),
+                    store.clone(),
+                )
+                .await;
             }
             if let Some(root) = &root {
                 for item in split_recovered {
-                    super::split::live::spawn(item, root, tasks.clone(), controls.clone(), limiter.clone(), store.clone()).await;
+                    super::split::live::spawn(
+                        item,
+                        root,
+                        tasks.clone(),
+                        controls.clone(),
+                        limiter.clone(),
+                        store.clone(),
+                    )
+                    .await;
                 }
             }
-            for (task, paused) in retry_startup { super::retry::spawn_restart(task, paused, tasks.clone(), controls.clone(), limiter.clone(), store.clone()).await; }
+            for (task, paused) in retry_startup {
+                super::retry::spawn_restart(
+                    task,
+                    paused,
+                    tasks.clone(),
+                    controls.clone(),
+                    limiter.clone(),
+                    store.clone(),
+                )
+                .await;
+            }
             let progress = super::progress_events::start(tasks.clone());
             eprintln!("daemon listening on {endpoint}");
             let checkpoint = {
@@ -117,7 +195,9 @@ impl ServerLoop {
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
                     loop {
                         interval.tick().await;
-                        if let Err(e) = store.save(&tasks, &limiter).await { eprintln!("queue checkpoint failed: {e}"); }
+                        if let Err(e) = store.save(&tasks, &limiter).await {
+                            eprintln!("queue checkpoint failed: {e}");
+                        }
                     }
                 })
             };
@@ -289,7 +369,9 @@ impl ServerLoop {
             }
             progress.abort();
             checkpoint.abort();
-            if let Err(e) = store.save(&tasks, &limiter).await { eprintln!("final queue checkpoint failed: {e}"); }
+            if let Err(e) = store.save(&tasks, &limiter).await {
+                eprintln!("final queue checkpoint failed: {e}");
+            }
         }
         #[cfg(not(target_os = "linux"))]
         {

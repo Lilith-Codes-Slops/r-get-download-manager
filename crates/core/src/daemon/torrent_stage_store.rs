@@ -7,7 +7,11 @@ use std::path::Path;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum State { Reserved, Staging, Retained }
+pub(super) enum State {
+    Reserved,
+    Staging,
+    Retained,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Entry {
     pub task_id: String,
@@ -53,7 +57,9 @@ pub(super) fn confirm(path: &Path, record: &StageRecord) -> Result<()> {
     let conn = open(path)?;
     let count = conn.execute("UPDATE rget_torrent_stages_v1 SET state='staging', device=?1, inode=?2 WHERE task_id=?3 AND stage_name=?4 AND state='reserved'",
         params![record.device.to_string(), record.inode.to_string(), record.task_id, record.name])?;
-    if count != 1 { return Err("missing or changed staging reservation".into()); }
+    if count != 1 {
+        return Err("missing or changed staging reservation".into());
+    }
     Ok(())
 }
 
@@ -63,7 +69,9 @@ pub(super) fn retain(path: &Path, record: &StageRecord) -> Result<()> {
     let conn = open(path)?;
     let count = conn.execute("UPDATE rget_torrent_stages_v1 SET state='retained' WHERE task_id=?1 AND stage_name=?2 AND state='staging' AND device=?3 AND inode=?4",
         params![record.task_id, record.name, record.device.to_string(), record.inode.to_string()])?;
-    if count != 1 { return Err("missing or changed staging identity".into()); }
+    if count != 1 {
+        return Err("missing or changed staging identity".into());
+    }
     Ok(())
 }
 
@@ -76,7 +84,9 @@ pub(super) fn forget(path: &Path, record: &StageRecord) -> Result<()> {
     let conn = open(path)?;
     let count = conn.execute("DELETE FROM rget_torrent_stages_v1 WHERE task_id=?1 AND stage_name=?2 AND device=?3 AND inode=?4 AND NOT EXISTS (SELECT 1 FROM rget_torrent_publish_intents_v1 WHERE task_id=?1)",
         params![record.task_id, record.name, record.device.to_string(), record.inode.to_string()])?;
-    if count != 1 { return Err("missing or changed staging identity".into()); }
+    if count != 1 {
+        return Err("missing or changed staging identity".into());
+    }
     Ok(())
 }
 
@@ -84,20 +94,43 @@ pub(super) fn forget(path: &Path, record: &StageRecord) -> Result<()> {
 pub(super) fn load(path: &Path) -> Result<Vec<Entry>> {
     let conn = open(path)?;
     let mut statement = conn.prepare("SELECT task_id,stage_name,created_at,state,device,inode FROM rget_torrent_stages_v1 ORDER BY created_at,task_id")?;
-    let mut rows = statement.query([])?; let mut result = Vec::new();
+    let mut rows = statement.query([])?;
+    let mut result = Vec::new();
     while let Some(row) = rows.next()? {
-        let task_id: String = row.get(0)?; let name: String = row.get(1)?; let created_at: i64 = row.get(2)?;
+        let task_id: String = row.get(0)?;
+        let name: String = row.get(1)?;
+        let created_at: i64 = row.get(2)?;
         valid(&task_id, &name, created_at)?;
-        let state: String = row.get(3)?; let device: Option<String> = row.get(4)?; let inode: Option<String> = row.get(5)?;
+        let state: String = row.get(3)?;
+        let device: Option<String> = row.get(4)?;
+        let inode: Option<String> = row.get(5)?;
         let (state, identity) = match (state.as_str(), device, inode) {
             ("reserved", None, None) => (State::Reserved, None),
             ("staging" | "retained", Some(device), Some(inode)) => {
-                let identity = StageRecord { task_id: task_id.clone(), name: name.clone(), device: device.parse()?, inode: inode.parse()? };
-                (if state == "staging" { State::Staging } else { State::Retained }, Some(identity))
+                let identity = StageRecord {
+                    task_id: task_id.clone(),
+                    name: name.clone(),
+                    device: device.parse()?,
+                    inode: inode.parse()?,
+                };
+                (
+                    if state == "staging" {
+                        State::Staging
+                    } else {
+                        State::Retained
+                    },
+                    Some(identity),
+                )
             }
             _ => return Err("invalid stored staging state".into()),
         };
-        result.push(Entry { task_id, name, created_at, state, identity });
+        result.push(Entry {
+            task_id,
+            name,
+            created_at,
+            state,
+            identity,
+        });
     }
     Ok(result)
 }
@@ -114,13 +147,26 @@ pub(super) fn has_reservation(path: &Path, task_id: &str, name: &str) -> Result<
 /// eligible solely for explicit remove-and-delete. Keep the row on any error.
 /// Caller must stop the engine and exclude concurrent changes first.
 #[allow(dead_code)]
-pub(super) fn cleanup_recorded(path: &Path, area: &crate::protocols::torrent::staging_tree::StageArea,
-    task_id: &str, name: &str, allow_retained: bool) -> Result<()> {
-    let entry = load(path)?.into_iter().find(|entry| entry.task_id == task_id && entry.name == name)
+pub(super) fn cleanup_recorded(
+    path: &Path,
+    area: &crate::protocols::torrent::staging_tree::StageArea,
+    task_id: &str,
+    name: &str,
+    allow_retained: bool,
+) -> Result<()> {
+    let entry = load(path)?
+        .into_iter()
+        .find(|entry| entry.task_id == task_id && entry.name == name)
         .ok_or("no matching durable staging record")?;
-    if entry.state == State::Reserved { return Err("reservation has no proven staging identity".into()); }
-    if super::torrent_publish_intent::has_intent(path, task_id)? { return Err("publication intent requires reconciliation before cleanup".into()); }
-    if entry.state == State::Retained && !allow_retained { return Err("staging retained for inspection".into()); }
+    if entry.state == State::Reserved {
+        return Err("reservation has no proven staging identity".into());
+    }
+    if super::torrent_publish_intent::has_intent(path, task_id)? {
+        return Err("publication intent requires reconciliation before cleanup".into());
+    }
+    if entry.state == State::Retained && !allow_retained {
+        return Err("staging retained for inspection".into());
+    }
     let identity = entry.identity.ok_or("missing staging identity")?;
     crate::protocols::torrent::staging_cleanup::cleanup(area, &identity)?;
     forget(path, &identity)
@@ -130,15 +176,24 @@ pub(super) fn cleanup_recorded(path: &Path, area: &crate::protocols::torrent::st
 mod tests {
     use super::*;
     use crate::protocols::torrent::staging_tree::StageArea;
-    use std::{fs::{self, File}, sync::atomic::{AtomicU64, Ordering}};
+    use std::{
+        fs::{self, File},
+        sync::atomic::{AtomicU64, Ordering},
+    };
     static NEXT: AtomicU64 = AtomicU64::new(0);
     fn lab() -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!("rget-stage-store-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
-        fs::create_dir(&path).unwrap(); path
+        let path = std::env::temp_dir().join(format!(
+            "rget-stage-store-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).unwrap();
+        path
     }
     #[test]
     fn reserve_create_confirm_reload_and_retain_without_adopting_existing_names() {
-        let root = lab(); let path = root.join("state/queue.sqlite3");
+        let root = lab();
+        let path = root.join("state/queue.sqlite3");
         let area = StageArea::open(&File::open(&root).unwrap()).unwrap();
         let name = StageArea::candidate_name();
         reserve(&path, "task-1", &name, 1).unwrap();
@@ -149,24 +204,33 @@ mod tests {
         assert!(area.create_reserved(&name, "task-2").is_err());
         confirm(&path, &stage).unwrap();
         assert!(!has_reservation(&path, "task-1", &name).unwrap());
-        let records = load(&path).unwrap(); assert_eq!(records.len(), 1);
-        assert_eq!(records[0].state, State::Staging); assert_eq!(records[0].identity.as_ref(), Some(&stage));
+        let records = load(&path).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].state, State::Staging);
+        assert_eq!(records[0].identity.as_ref(), Some(&stage));
         assert!(area.verify(records[0].identity.as_ref().unwrap()).is_ok());
-        let mut altered = stage.clone(); altered.inode = altered.inode.wrapping_add(1);
-        assert!(retain(&path, &altered).is_err()); assert!(forget(&path, &altered).is_err());
-        retain(&path, &stage).unwrap(); assert_eq!(load(&path).unwrap()[0].state, State::Retained);
+        let mut altered = stage.clone();
+        altered.inode = altered.inode.wrapping_add(1);
+        assert!(retain(&path, &altered).is_err());
+        assert!(forget(&path, &altered).is_err());
+        retain(&path, &stage).unwrap();
+        assert_eq!(load(&path).unwrap()[0].state, State::Retained);
         // Test-only deletion after verifying the stage; integration must perform safe cleanup first.
         assert!(area.verify(&stage).is_ok());
         fs::remove_dir_all(root.join(".rget-staging").join(&name)).unwrap();
-        forget(&path, &stage).unwrap(); assert!(load(&path).unwrap().is_empty());
+        forget(&path, &stage).unwrap();
+        assert!(load(&path).unwrap().is_empty());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn recorded_cleanup_respects_ownership_and_retention() {
-        let root = lab(); let path = root.join("state/queue.sqlite3");
+        let root = lab();
+        let path = root.join("state/queue.sqlite3");
         let area = StageArea::open(&File::open(&root).unwrap()).unwrap();
-        let name = StageArea::candidate_name(); reserve(&path, "task", &name, 1).unwrap();
-        let stage = area.create_reserved(&name, "task").unwrap(); confirm(&path, &stage).unwrap();
+        let name = StageArea::candidate_name();
+        reserve(&path, "task", &name, 1).unwrap();
+        let stage = area.create_reserved(&name, "task").unwrap();
+        confirm(&path, &stage).unwrap();
         area.create_payload(&stage).unwrap();
         let payload = root.join(".rget-staging").join(&name).join("payload");
         fs::write(payload.join("partial"), b"data").unwrap();
@@ -175,7 +239,8 @@ mod tests {
         assert!(cleanup_recorded(&path, &area, "task", &name, false).is_err());
         assert!(payload.join("partial").exists());
         cleanup_recorded(&path, &area, "task", &name, true).unwrap();
-        assert!(!payload.exists()); assert!(load(&path).unwrap().is_empty());
+        assert!(!payload.exists());
+        assert!(load(&path).unwrap().is_empty());
         let unrecorded = area.create("unrecorded").unwrap();
         assert!(cleanup_recorded(&path, &area, "unrecorded", &unrecorded.name, true).is_err());
         assert!(area.verify(&unrecorded).is_ok());
@@ -183,26 +248,42 @@ mod tests {
     }
     #[test]
     fn failed_cleanup_retains_record_and_payload() {
-        let root = lab(); let path = root.join("state/queue.sqlite3");
+        let root = lab();
+        let path = root.join("state/queue.sqlite3");
         let area = StageArea::open(&File::open(&root).unwrap()).unwrap();
-        let name = StageArea::candidate_name(); reserve(&path, "task", &name, 1).unwrap();
-        let stage = area.create_reserved(&name, "task").unwrap(); confirm(&path, &stage).unwrap();
+        let name = StageArea::candidate_name();
+        reserve(&path, "task", &name, 1).unwrap();
+        let stage = area.create_reserved(&name, "task").unwrap();
+        confirm(&path, &stage).unwrap();
         area.create_payload(&stage).unwrap();
         let payload = root.join(".rget-staging").join(&name).join("payload");
         std::os::unix::fs::symlink("/etc/passwd", payload.join("unsafe")).unwrap();
         assert!(cleanup_recorded(&path, &area, "task", &name, false).is_err());
-        assert_eq!(load(&path).unwrap().len(), 1); assert!(payload.join("unsafe").is_symlink());
+        assert_eq!(load(&path).unwrap().len(), 1);
+        assert!(payload.join("unsafe").is_symlink());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn reservation_cannot_be_confirmed_by_another_task_or_path() {
-        let root = lab(); let path = root.join("state/queue.sqlite3");
+        let root = lab();
+        let path = root.join("state/queue.sqlite3");
         reserve(&path, "first", "task-first", 1).unwrap();
-        let wrong = StageRecord { task_id: "other".into(), name: "task-first".into(), device: 1, inode: 2 };
+        let wrong = StageRecord {
+            task_id: "other".into(),
+            name: "task-first".into(),
+            device: 1,
+            inode: 2,
+        };
         assert!(confirm(&path, &wrong).is_err());
-        let wrong = StageRecord { task_id: "first".into(), name: "task-other".into(), device: 1, inode: 2 };
+        let wrong = StageRecord {
+            task_id: "first".into(),
+            name: "task-other".into(),
+            device: 1,
+            inode: 2,
+        };
         assert!(confirm(&path, &wrong).is_err());
-        let entries = load(&path).unwrap(); assert_eq!(entries[0].state, State::Reserved);
+        let entries = load(&path).unwrap();
+        assert_eq!(entries[0].state, State::Reserved);
         assert!(entries[0].identity.is_none());
         assert!(reserve(&path, "bad", "../bad", 1).is_err());
         fs::remove_dir_all(root).unwrap();

@@ -1,26 +1,50 @@
 //! Coordinate split checkpoints and worker barriers across pause and cancellation.
 use super::{checkpoint::SplitCheckpoint, recovery::PreparedSplit, run_map};
-use crate::daemon::{bandwidth::BandwidthLimiter, control::{self, Tasks, TransferControl}, persistence::Persistence, range::ResumeInfo};
-use std::{sync::Arc, time::{Duration, Instant}};
+use crate::daemon::{
+    bandwidth::BandwidthLimiter,
+    control::{self, Tasks, TransferControl},
+    persistence::Persistence,
+    range::ResumeInfo,
+};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::watch;
 
 // If the owner future is dropped, request a stop. The independent supervisor
 // keeps running until all worker tasks (and their blocking writes) have joined.
 struct StopOnDrop(watch::Sender<bool>);
 impl Drop for StopOnDrop {
-    fn drop(&mut self) { self.0.send_replace(true); }
+    fn drop(&mut self) {
+        self.0.send_replace(true);
+    }
 }
 
 /// Workers are stopped and joined before a pause is checkpointed or acknowledged.
 pub(super) async fn run_checkpointed(
-    prepared: PreparedSplit, mut checkpoint: SplitCheckpoint,
-    client: reqwest::Client, limiter: Arc<BandwidthLimiter>,
-    store: Arc<Persistence>, tasks: Tasks, mut control: Option<watch::Receiver<TransferControl>>,
+    prepared: PreparedSplit,
+    mut checkpoint: SplitCheckpoint,
+    client: reqwest::Client,
+    limiter: Arc<BandwidthLimiter>,
+    store: Arc<Persistence>,
+    tasks: Tasks,
+    mut control: Option<watch::Receiver<TransferControl>>,
 ) -> Result<(), String> {
-    if control.as_ref().is_some_and(|rx| *rx.borrow() == TransferControl::Canceled) { return Err("download canceled".into()); }
-    if prepared.record != checkpoint.record { return Err("checkpoint does not match prepared transfer".into()); }
-    let info = ResumeInfo { etag: prepared.record.etag.clone(), total: prepared.record.total,
-        url: reqwest::Url::parse(&prepared.record.resolved_url).map_err(|e| e.to_string())? };
+    if control
+        .as_ref()
+        .is_some_and(|rx| *rx.borrow() == TransferControl::Canceled)
+    {
+        return Err("download canceled".into());
+    }
+    if prepared.record != checkpoint.record {
+        return Err("checkpoint does not match prepared transfer".into());
+    }
+    let info = ResumeInfo {
+        etag: prepared.record.etag.clone(),
+        total: prepared.record.total,
+        url: reqwest::Url::parse(&prepared.record.resolved_url).map_err(|e| e.to_string())?,
+    };
     let workers = prepared.record.requested_connections as usize;
     let url = prepared.record.task_url.clone();
     let partial_name = prepared.record.partial_name.clone();
@@ -29,11 +53,17 @@ pub(super) async fn run_checkpointed(
     let origin = super::host_memory::origin(&info.url);
     let path = store.database_path();
     if let Some(key) = &origin {
-        if let Some(memory) = super::host_memory::load(path.clone(), key.clone()).await { map.lock().await.seed_policy(memory); }
+        if let Some(memory) = super::host_memory::load(path.clone(), key.clone()).await {
+            map.lock().await.seed_policy(memory);
+        }
     }
     let mut memory_writer = super::host_memory::Writer::new(path, origin);
     checkpoint.save(&map, &file, &store, &tasks).await?;
-    let publisher = Arc::new(crate::daemon::segment_events::Publisher::new(url.clone(), partial_name.clone(), &map));
+    let publisher = Arc::new(crate::daemon::segment_events::Publisher::new(
+        url.clone(),
+        partial_name.clone(),
+        &map,
+    ));
     let changes = {
         let mut guard = map.lock().await;
         guard.attach_policy_publisher(Arc::downgrade(&publisher));
@@ -43,12 +73,19 @@ pub(super) async fn run_checkpointed(
     publisher.publish_policy(map.lock().await.policy(), true);
     let mut policy_refresh = Instant::now();
     let mut last_time = Instant::now();
-    let mut last_bytes: u64 = checkpoint.record.segments.iter().map(|s| s.downloaded).sum();
+    let mut last_bytes: u64 = checkpoint
+        .record
+        .segments
+        .iter()
+        .map(|s| s.downloaded)
+        .sum();
     let progress = crate::daemon::progress::ProgressMeter::new(last_bytes);
     let mut complete = false;
     loop {
         if let Some(rx) = control.as_mut() {
-            if *rx.borrow() == TransferControl::Canceled { return Err("download canceled".into()); }
+            if *rx.borrow() == TransferControl::Canceled {
+                return Err("download canceled".into());
+            }
             if *rx.borrow() == TransferControl::Paused {
                 // The previous supervisor, if any, has joined every worker. Sync
                 // and persist the verified map before exposing the paused state.
@@ -56,38 +93,74 @@ pub(super) async fn run_checkpointed(
                 checkpoint.save(&map, &file, &store, &tasks).await?;
                 publisher.publish(map.lock().await.progress());
                 publisher.publish_policy(map.lock().await.policy(), false);
-                last_bytes = checkpoint.record.segments.iter().map(|s| s.downloaded).sum();
+                last_bytes = checkpoint
+                    .record
+                    .segments
+                    .iter()
+                    .map(|s| s.downloaded)
+                    .sum();
                 last_time = Instant::now();
                 {
                     let mut guard = tasks.lock().await;
                     if *rx.borrow() == TransferControl::Paused {
                         let task = guard.get_mut(&url).ok_or("split task disappeared")?;
-                        task.downloaded = last_bytes; task.speed_bps = 0; task.state = "paused".into();
+                        task.downloaded = last_bytes;
+                        task.speed_bps = 0;
+                        task.state = "paused".into();
                         task.active_connections = Some(0);
                     }
                 }
-                store.save(&tasks, &limiter).await.map_err(|e| e.to_string())?;
-                if !control::wait_running(&tasks, &url, rx).await { return Err("download canceled".into()); }
+                store
+                    .save(&tasks, &limiter)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if !control::wait_running(&tasks, &url, rx).await {
+                    return Err("download canceled".into());
+                }
                 continue;
             }
             // A resume is acknowledged only while the control is still running.
             let mut guard = tasks.lock().await;
-            if *rx.borrow() != TransferControl::Running { drop(guard); continue; }
+            if *rx.borrow() != TransferControl::Running {
+                drop(guard);
+                continue;
+            }
             if let Some(task) = guard.get_mut(&url) {
-                if task.state == "resuming" { task.state = "downloading".into(); }
-            } else { return Err("split task disappeared".into()); }
+                if task.state == "resuming" {
+                    task.state = "downloading".into();
+                }
+            } else {
+                return Err("split task disappeared".into());
+            }
         }
         if complete {
             checkpoint.save(&map, &file, &store, &tasks).await?;
-            let now = Instant::now(); memory_writer.consider(map.lock().await.good_memory(now), now);
+            let now = Instant::now();
+            memory_writer.consider(map.lock().await.good_memory(now), now);
             memory_writer.finish().await;
             return Ok(());
         }
-        let requested = tasks.lock().await.get(&url).and_then(|task| task.requested_connections).unwrap_or(workers as u8).clamp(1, 32);
+        let requested = tasks
+            .lock()
+            .await
+            .get(&url)
+            .and_then(|task| task.requested_connections)
+            .unwrap_or(workers as u8)
+            .clamp(1, 32);
         let (desired, desired_rx) = watch::channel(requested);
         let (stop, _) = watch::channel(false);
         let _stop_on_drop = StopOnDrop(stop.clone());
-        let mut transfer = tokio::spawn(run_map(client.clone(), url.clone(), info.clone(), file.clone(), map.clone(), limiter.clone(), stop.clone(), requested as usize, Some(desired_rx)));
+        let mut transfer = tokio::spawn(run_map(
+            client.clone(),
+            url.clone(),
+            info.clone(),
+            file.clone(),
+            map.clone(),
+            limiter.clone(),
+            stop.clone(),
+            requested as usize,
+            Some(desired_rx),
+        ));
         let mut timer = tokio::time::interval(Duration::from_millis(250));
         let outcome = loop {
             tokio::select! {
@@ -155,15 +228,28 @@ pub(super) async fn run_checkpointed(
         };
         if let Some(task) = tasks.lock().await.get_mut(&url) {
             task.segment_count = Some(segments);
-            if let Some(status) = rejected { task.connection_note = Some(rejection_note(status)); }
+            if let Some(status) = rejected {
+                task.connection_note = Some(rejection_note(status));
+            }
         }
-        if control.as_ref().is_some_and(|rx| *rx.borrow() == TransferControl::Canceled) { return Err("download canceled".into()); }
+        if control
+            .as_ref()
+            .is_some_and(|rx| *rx.borrow() == TransferControl::Canceled)
+        {
+            return Err("download canceled".into());
+        }
         match outcome {
             Ok(()) => {
                 complete = true;
-                if let Some(task) = tasks.lock().await.get_mut(&url) { task.active_connections = Some(0); }
-            },
-            Err(error) if error == "split stopped" && control.as_ref().is_some_and(|rx| *rx.borrow() == TransferControl::Paused) => {},
+                if let Some(task) = tasks.lock().await.get_mut(&url) {
+                    task.active_connections = Some(0);
+                }
+            }
+            Err(error)
+                if error == "split stopped"
+                    && control
+                        .as_ref()
+                        .is_some_and(|rx| *rx.borrow() == TransferControl::Paused) => {}
             Err(error) => return Err(error),
         }
     }

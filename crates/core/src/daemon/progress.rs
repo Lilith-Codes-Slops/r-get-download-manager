@@ -2,9 +2,17 @@
 use downloader_ipc::DownloadInfo;
 use std::time::{Duration, Instant};
 
-pub(super) struct ProgressMeter { initial: u64, started: Instant }
+pub(super) struct ProgressMeter {
+    initial: u64,
+    started: Instant,
+}
 impl ProgressMeter {
-    pub fn new(initial: u64) -> Self { Self { initial, started: Instant::now() } }
+    pub fn new(initial: u64) -> Self {
+        Self {
+            initial,
+            started: Instant::now(),
+        }
+    }
     pub fn update(&self, task: &mut DownloadInfo, downloaded: u64) {
         task.downloaded = downloaded;
         task.speed_bps = speed(downloaded, self.initial, self.started.elapsed());

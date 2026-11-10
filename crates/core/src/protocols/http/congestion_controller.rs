@@ -4,7 +4,9 @@ pub struct CongestionController {
 
 impl CongestionController {
     pub fn new(base: usize) -> Self {
-        Self { base_connections: base }
+        Self {
+            base_connections: base,
+        }
     }
 
     pub fn adjust(&self, all_slow: bool, high_error: bool) -> usize {

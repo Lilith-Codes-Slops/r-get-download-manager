@@ -5,7 +5,11 @@ pub const NORMAL: u8 = 1;
 
 /// `name` must already have passed metadata path validation.
 pub fn single_file(name: &str, length: u64) -> Vec<TorrentFile> {
-    vec![TorrentFile { path: name.to_owned(), length, priority: NORMAL }]
+    vec![TorrentFile {
+        path: name.to_owned(),
+        length,
+        priority: NORMAL,
+    }]
 }
 
 #[cfg(test)]

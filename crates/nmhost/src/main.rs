@@ -15,8 +15,19 @@ mod windows_registry_registrar;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let daemon = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join(if cfg!(windows) { "downloader-core.exe" } else { "downloader-core" })))
-        .filter(|p| p.exists()).unwrap_or_else(|| PathBuf::from("downloader-core"));
+    let daemon = std::env::current_exe()
+        .ok()
+        .and_then(|p| {
+            p.parent().map(|d| {
+                d.join(if cfg!(windows) {
+                    "downloader-core.exe"
+                } else {
+                    "downloader-core"
+                })
+            })
+        })
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| PathBuf::from("downloader-core"));
     let spawner = DaemonAutospawner::new(daemon);
     spawner.ensure_running().await?;
     let reader = stdio_frame_reader::StdioFrameReader::new();

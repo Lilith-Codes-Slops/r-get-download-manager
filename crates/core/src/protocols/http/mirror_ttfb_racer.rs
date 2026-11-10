@@ -7,7 +7,9 @@ impl MirrorTtfbRacer {
         let mut scored: Vec<_> = mirrors
             .iter()
             .filter_map(|id| {
-                model.predicted_completion(id, size).map(|t| (id.to_string(), t))
+                model
+                    .predicted_completion(id, size)
+                    .map(|t| (id.to_string(), t))
             })
             .collect();
         scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));

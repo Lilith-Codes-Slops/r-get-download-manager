@@ -1,12 +1,21 @@
 //! Complete a previously published stage and clean its now-empty owned stage.
 //! This operation is not wired to torrent downloads or automatic recovery.
-use super::{control::Tasks, persistence::Persistence, torrent_publish_commit, torrent_publish_inspection::{self, Inspection},
-    torrent_publish_proof, torrent_stage_publish::PublishedStage, torrent_stage_store};
+use super::{
+    control::Tasks,
+    persistence::Persistence,
+    torrent_publish_commit,
+    torrent_publish_inspection::{self, Inspection},
+    torrent_publish_proof,
+    torrent_stage_publish::PublishedStage,
+    torrent_stage_store,
+};
 use std::path::Path;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[allow(dead_code)]
-pub(super) struct CompletionReport { pub cleanup_warning: Option<String> }
+pub(super) struct CompletionReport {
+    pub cleanup_warning: Option<String>,
+}
 
 impl PublishedStage {
     /// Rename has already succeeded. An error means completion could not be
@@ -15,18 +24,40 @@ impl PublishedStage {
     /// the same registry. This moves the lifecycle, persistence and task guards
     /// into the blocking operation so cancellation cannot expose a partial commit.
     #[allow(dead_code)]
-    pub(super) async fn complete(self, store: &Persistence, tasks: &Tasks, root: &Path) -> Result<CompletionReport> {
-        if store.database_path() != self.stage.reservation.database { return Err("publication database changed".into()); }
+    pub(super) async fn complete(
+        self,
+        store: &Persistence,
+        tasks: &Tasks,
+        root: &Path,
+    ) -> Result<CompletionReport> {
+        if store.database_path() != self.stage.reservation.database {
+            return Err("publication database changed".into());
+        }
         let gate = store.gate.clone().lock_owned().await;
         let mut tasks = tasks.clone().lock_owned().await;
-        let task = tasks.get(&self.intent.stage.task_id).ok_or("torrent task missing after publication")?;
-        if task.state != "finalizing" { return Err("torrent is not finalizing after publication".into()); }
+        let task = tasks
+            .get(&self.intent.stage.task_id)
+            .ok_or("torrent task missing after publication")?;
+        if task.state != "finalizing" {
+            return Err("torrent is not finalizing after publication".into());
+        }
         let mut completed = task.clone();
-        completed.final_path = Some(root.join(&self.intent.destination).to_str().ok_or("non-UTF-8 destination root")?.into());
+        completed.final_path = Some(
+            root.join(&self.intent.destination)
+                .to_str()
+                .ok_or("non-UTF-8 destination root")?
+                .into(),
+        );
         completed.filename = Some(self.intent.destination.clone());
-        completed.state = "completed".into(); completed.speed_bps = 0;
-        completed.torrent.as_mut().ok_or("torrent identity missing")?.publication_warning = self.sync_warning.clone();
-        let database = store.database_path(); let root = root.to_owned();
+        completed.state = "completed".into();
+        completed.speed_bps = 0;
+        completed
+            .torrent
+            .as_mut()
+            .ok_or("torrent identity missing")?
+            .publication_warning = self.sync_warning.clone();
+        let database = store.database_path();
+        let root = root.to_owned();
         tokio::task::spawn_blocking(move || -> Result<CompletionReport> {
             let _gate = gate;
             let task = tasks.get(&self.intent.stage.task_id).ok_or("torrent task missing after publication")?;

@@ -108,11 +108,23 @@ pub enum DaemonEvent {
     /// Only sent on the opt-in torrent transition stream.
     TorrentEventsReady,
     TorrentEventsHeartbeat,
-    TorrentStalled { task_id: String, stall_count: u32 },
-    TorrentRecovered { task_id: String, stall_count: u32, duration_ms: u64 },
+    TorrentStalled {
+        task_id: String,
+        stall_count: u32,
+    },
+    TorrentRecovered {
+        task_id: String,
+        stall_count: u32,
+        duration_ms: u64,
+    },
     /// Emitted only on the opt-in progress stream; includes current task state.
-    ProgressUpdate { task_id: String, task: DownloadInfo },
-    ProgressRemoved { task_id: String },
+    ProgressUpdate {
+        task_id: String,
+        task: Box<DownloadInfo>,
+    },
+    ProgressRemoved {
+        task_id: String,
+    },
     ProgressReset,
     ProgressHeartbeat,
     SpeedTick {
@@ -137,14 +149,33 @@ pub enum DaemonEvent {
         status: Option<String>,
     },
     /// Complete replacement for a task's changing segment layout.
-    SegmentsSnapshot { task_id: String, generation: String, segments: Vec<SegmentProgress> },
-    SegmentsRemoved { task_id: String, generation: String },
+    SegmentsSnapshot {
+        task_id: String,
+        generation: String,
+        segments: Vec<SegmentProgress>,
+    },
+    SegmentsRemoved {
+        task_id: String,
+        generation: String,
+    },
     SegmentsReset,
     SegmentsHeartbeat,
     SegmentPoliciesReset,
-    SegmentPolicyUpdate { task_id: String, generation: String, target_size: u64, steal_floor: u64, reason: String },
-    SegmentPolicyRemoved { task_id: String, generation: String },
-    ConnectionsChanged { task_id: String, requested: u8 },
+    SegmentPolicyUpdate {
+        task_id: String,
+        generation: String,
+        target_size: u64,
+        steal_floor: u64,
+        reason: String,
+    },
+    SegmentPolicyRemoved {
+        task_id: String,
+        generation: String,
+    },
+    ConnectionsChanged {
+        task_id: String,
+        requested: u8,
+    },
     TaskStateChanged {
         task_id: String,
         state: String,
@@ -203,23 +234,54 @@ mod tests {
     #[test]
     fn legacy_segment_update_deserializes_without_new_fields() {
         let json = r#"{"event":"segment_update","task_id":"a","segment_id":"0","start_byte":0,"end_byte":5,"downloaded":2,"mirror_id":null}"#;
-        assert!(matches!(serde_json::from_str::<DaemonEvent>(json).unwrap(), DaemonEvent::SegmentUpdate { generation: None, status: None, .. }));
+        assert!(matches!(
+            serde_json::from_str::<DaemonEvent>(json).unwrap(),
+            DaemonEvent::SegmentUpdate {
+                generation: None,
+                status: None,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn legacy_state_and_speed_events_allow_missing_destination() {
         let state = r#"{"event":"task_state_changed","task_id":"a","state":"downloading"}"#;
-        assert!(matches!(serde_json::from_str::<DaemonEvent>(state).unwrap(), DaemonEvent::TaskStateChanged { destination_path: None, .. }));
+        assert!(matches!(
+            serde_json::from_str::<DaemonEvent>(state).unwrap(),
+            DaemonEvent::TaskStateChanged {
+                destination_path: None,
+                ..
+            }
+        ));
         let speed = r#"{"event":"speed_tick","task_id":"a","speed_bps":1,"eta_secs":null,"progress_bps":2}"#;
-        assert!(matches!(serde_json::from_str::<DaemonEvent>(speed).unwrap(), DaemonEvent::SpeedTick { destination_path: None, .. }));
-        let event = DaemonEvent::TaskStateChanged { task_id: "a".into(), state: "downloading".into(), destination_path: Some("/Downloads/file (1).bin".into()) };
-        assert_eq!(serde_json::from_str::<DaemonEvent>(&serde_json::to_string(&event).unwrap()).unwrap(), event);
+        assert!(matches!(
+            serde_json::from_str::<DaemonEvent>(speed).unwrap(),
+            DaemonEvent::SpeedTick {
+                destination_path: None,
+                ..
+            }
+        ));
+        let event = DaemonEvent::TaskStateChanged {
+            task_id: "a".into(),
+            state: "downloading".into(),
+            destination_path: Some("/Downloads/file (1).bin".into()),
+        };
+        assert_eq!(
+            serde_json::from_str::<DaemonEvent>(&serde_json::to_string(&event).unwrap()).unwrap(),
+            event
+        );
     }
 
     #[test]
     fn policy_update_roundtrips() {
-        let event = DaemonEvent::SegmentPolicyUpdate { task_id: "task".into(), generation: "attempt".into(),
-            target_size: 8 * 1024 * 1024, steal_floor: 2 * 1024 * 1024, reason: "rtt".into() };
+        let event = DaemonEvent::SegmentPolicyUpdate {
+            task_id: "task".into(),
+            generation: "attempt".into(),
+            target_size: 8 * 1024 * 1024,
+            steal_floor: 2 * 1024 * 1024,
+            reason: "rtt".into(),
+        };
         let json = serde_json::to_string(&event).unwrap();
         assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
     }
@@ -227,40 +289,95 @@ mod tests {
     #[test]
     fn torrent_events_and_request_roundtrip() {
         let request = crate::ClientRequest::SubscribeTorrentEvents;
-        assert_eq!(serde_json::from_str::<crate::ClientRequest>(&serde_json::to_string(&request).unwrap()).unwrap(), request);
-        let event = DaemonEvent::TorrentRecovered { task_id: "task".into(), stall_count: 2, duration_ms: 31000 };
-        assert_eq!(serde_json::from_str::<DaemonEvent>(&serde_json::to_string(&event).unwrap()).unwrap(), event);
+        assert_eq!(
+            serde_json::from_str::<crate::ClientRequest>(&serde_json::to_string(&request).unwrap())
+                .unwrap(),
+            request
+        );
+        let event = DaemonEvent::TorrentRecovered {
+            task_id: "task".into(),
+            stall_count: 2,
+            duration_ms: 31000,
+        };
+        assert_eq!(
+            serde_json::from_str::<DaemonEvent>(&serde_json::to_string(&event).unwrap()).unwrap(),
+            event
+        );
     }
 
     #[test]
     fn torrent_identity_roundtrips_and_seed_is_persisted() {
-        let identity = TorrentIdentity { source: "magnet:?xt=test".into(), info_hash: Some("hash".into()),
-            stage_name: Some(".rget-torrent-test".into()), seed: true, created_at: 123, metrics: None, root_name: None, files: None, publication_warning: None };
+        let identity = TorrentIdentity {
+            source: "magnet:?xt=test".into(),
+            info_hash: Some("hash".into()),
+            stage_name: Some(".rget-torrent-test".into()),
+            seed: true,
+            created_at: 123,
+            metrics: None,
+            root_name: None,
+            files: None,
+            publication_warning: None,
+        };
         let json = serde_json::to_string(&identity).unwrap();
-        assert_eq!(serde_json::from_str::<TorrentIdentity>(&json).unwrap(), identity);
+        assert_eq!(
+            serde_json::from_str::<TorrentIdentity>(&json).unwrap(),
+            identity
+        );
         let mut with_files = identity.clone();
         with_files.root_name = Some("bundle".into());
-        with_files.files = Some(vec![TorrentFile { path: "a.bin".into(), length: 3, priority: 1 }]);
+        with_files.files = Some(vec![TorrentFile {
+            path: "a.bin".into(),
+            length: 3,
+            priority: 1,
+        }]);
         with_files.publication_warning = Some("directory sync failed".into());
-        assert_eq!(serde_json::from_str::<TorrentIdentity>(&serde_json::to_string(&with_files).unwrap()).unwrap(), with_files);
-        assert_eq!(serde_json::from_str::<TorrentIdentity>(&json).unwrap().files, None);
+        assert_eq!(
+            serde_json::from_str::<TorrentIdentity>(&serde_json::to_string(&with_files).unwrap())
+                .unwrap(),
+            with_files
+        );
+        assert_eq!(
+            serde_json::from_str::<TorrentIdentity>(&json)
+                .unwrap()
+                .files,
+            None
+        );
     }
 
     #[test]
     fn progress_update_roundtrips() {
         let task: DownloadInfo = serde_json::from_str(r#"{"url":"task","state":"downloading","filename":"file.bin","downloaded":3,"total":10,"speed_bps":7,"final_path":null,"destination_path":"/Downloads/file.bin","suggested_filename":"original.bin","partial_name":".rget-1.part"}"#).unwrap();
-        let event = DaemonEvent::ProgressUpdate { task_id: task.url.clone(), task };
+        let event = DaemonEvent::ProgressUpdate {
+            task_id: task.url.clone(),
+            task: Box::new(task),
+        };
         let json = serde_json::to_string(&event).unwrap();
         assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
     }
 
     #[test]
     fn detailed_queue_roundtrips() {
-        let event = DaemonEvent::DetailedQueue { tasks: vec![DownloadInfo {
-            url: "https://example.test/file".into(), state: "downloading".into(),
-            filename: Some("file".into()), downloaded: 42, total: Some(100),
-            speed_bps: 12, final_path: None, destination_path: None, suggested_filename: None, torrent: None, resume_supported: false, partial_name: None,
-         requested_connections: None, active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false }] };
+        let event = DaemonEvent::DetailedQueue {
+            tasks: vec![DownloadInfo {
+                url: "https://example.test/file".into(),
+                state: "downloading".into(),
+                filename: Some("file".into()),
+                downloaded: 42,
+                total: Some(100),
+                speed_bps: 12,
+                final_path: None,
+                destination_path: None,
+                suggested_filename: None,
+                torrent: None,
+                resume_supported: false,
+                partial_name: None,
+                requested_connections: None,
+                active_connections: None,
+                segment_count: None,
+                connection_note: None,
+                live_connections_supported: false,
+            }],
+        };
         let json = serde_json::to_string(&event).unwrap();
         assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
     }

@@ -1,21 +1,40 @@
 //! Feature-gated torrent ingress: never pass torrent inputs to HTTP recovery.
-use super::{bandwidth::BandwidthLimiter, control::{Controls, Tasks}, persistence::Persistence};
+use super::{
+    bandwidth::BandwidthLimiter,
+    control::{Controls, Tasks},
+    persistence::Persistence,
+};
 use downloader_ipc::DaemonEvent;
 use std::{path::Path, sync::Arc};
 
 pub(super) fn is_torrent(source: &str) -> bool {
-    source.starts_with("magnet:?") || (!source.contains("://") && Path::new(source).extension()
-        .and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("torrent")))
+    source.starts_with("magnet:?")
+        || (!source.contains("://")
+            && Path::new(source)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("torrent")))
 }
 
-pub(super) async fn add(url: String, connections: u8, tasks: Tasks, controls: Controls,
-    limiter: Arc<BandwidthLimiter>, store: Arc<Persistence>) -> DaemonEvent {
+pub(super) async fn add(
+    url: String,
+    connections: u8,
+    tasks: Tasks,
+    controls: Controls,
+    limiter: Arc<BandwidthLimiter>,
+    store: Arc<Persistence>,
+) -> DaemonEvent {
     #[cfg(feature = "torrent")]
-    { super::torrent_transfer::add(url, connections, tasks, controls, limiter, store).await }
+    {
+        super::torrent_transfer::add(url, connections, tasks, controls, limiter, store).await
+    }
     #[cfg(not(feature = "torrent"))]
     {
         let _ = (connections, tasks, controls, limiter, store);
-        DaemonEvent::TaskFailed { task_id: url, error: "torrent support is disabled in this build".into() }
+        DaemonEvent::TaskFailed {
+            task_id: url,
+            error: "torrent support is disabled in this build".into(),
+        }
     }
 }
 

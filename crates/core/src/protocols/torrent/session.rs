@@ -24,7 +24,10 @@ mod tests {
         let options = super::download_only_options();
         assert!(options.disable_upload);
         assert!(options.disable_local_service_discovery);
-        assert!(options.dht.as_ref().is_some_and(|config| config.persistence.is_none()));
+        assert!(options
+            .dht
+            .as_ref()
+            .is_some_and(|config| config.persistence.is_none()));
         assert!(!options.disable_trackers);
     }
     #[test]
@@ -34,7 +37,10 @@ mod tests {
         assert!(!options.fastresume);
         assert!(!options.disable_local_service_discovery);
         assert!(options.listen.is_some());
-        assert!(options.dht.as_ref().is_some_and(|dht| dht.persistence.is_some()));
+        assert!(options
+            .dht
+            .as_ref()
+            .is_some_and(|dht| dht.persistence.is_some()));
     }
 }
 

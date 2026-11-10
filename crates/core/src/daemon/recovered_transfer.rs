@@ -10,16 +10,33 @@ use tokio::sync::watch;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub(super) async fn run(item: PreparedRecovery, tasks: Tasks, limiter: Arc<BandwidthLimiter>, store: Arc<Persistence>, mut control: watch::Receiver<TransferControl>) -> Result<PathBuf> {
+pub(super) async fn run(
+    item: PreparedRecovery,
+    tasks: Tasks,
+    limiter: Arc<BandwidthLimiter>,
+    store: Arc<Persistence>,
+    mut control: watch::Receiver<TransferControl>,
+) -> Result<PathBuf> {
     let url = item.record.task_url.clone();
-    let final_path = item.partial.parent().ok_or("partial file has no parent")?.join(&item.record.filename);
-    let info = ResumeInfo { etag: item.record.etag.clone(), total: item.record.total, url: reqwest::Url::parse(&item.record.resolved_url)? };
+    let final_path = item
+        .partial
+        .parent()
+        .ok_or("partial file has no parent")?
+        .join(&item.record.filename);
+    let info = ResumeInfo {
+        etag: item.record.etag.clone(),
+        total: item.record.total,
+        url: reqwest::Url::parse(&item.record.resolved_url)?,
+    };
     let offset = item.record.downloaded;
     let mut checkpoint = Checkpoint::restore(&item.partial, item.record, item.hash);
     checkpoint.attach_persistence(store, tasks.clone());
     let mut file = tokio::fs::File::from_std(item.file);
-    let client = reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(30))
-        .read_timeout(std::time::Duration::from_secs(60)).redirect(reqwest::redirect::Policy::limited(10)).build()?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(std::time::Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()?;
     if offset == info.total && offset > 0 {
         loop {
             if !wait_running(&tasks, &url, &mut control).await {
@@ -28,8 +45,11 @@ pub(super) async fn run(item: PreparedRecovery, tasks: Tasks, limiter: Arc<Bandw
                 let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
                 return Err("download canceled".into());
             }
-            let request = client.get(&url).header(reqwest::header::ACCEPT_ENCODING, "identity")
-                .header(reqwest::header::RANGE, "bytes=0-0").header(reqwest::header::IF_RANGE, info.etag.as_str());
+            let request = client
+                .get(&url)
+                .header(reqwest::header::ACCEPT_ENCODING, "identity")
+                .header(reqwest::header::RANGE, "bytes=0-0")
+                .header(reqwest::header::IF_RANGE, info.etag.as_str());
             let response = tokio::select! {
                 response = request.send() => Some(response?),
                 changed = control.changed() => { if changed.is_err() { return Err("download canceled".into()); } None },
@@ -39,7 +59,20 @@ pub(super) async fn run(item: PreparedRecovery, tasks: Tasks, limiter: Arc<Bandw
             break;
         }
     }
-    let result = transfer_body::receive(&client, None, &url, &mut file, &tasks, &limiter, &mut control, Some(&info), Some(info.total), Some(&mut checkpoint), offset).await;
+    let result = transfer_body::receive(
+        &client,
+        None,
+        &url,
+        &mut file,
+        &tasks,
+        &limiter,
+        &mut control,
+        Some(&info),
+        Some(info.total),
+        Some(&mut checkpoint),
+        offset,
+    )
+    .await;
     if let Err(error) = result {
         drop(file);
         let canceled = *control.borrow() == TransferControl::Canceled;
@@ -82,12 +115,22 @@ pub(super) async fn run(item: PreparedRecovery, tasks: Tasks, limiter: Arc<Bandw
             let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
             return Err("download canceled".into());
         }
-        if state == TransferControl::Paused { drop(guard); continue; }
-        if let Some(task) = guard.get_mut(&url) { task.state = "finalizing".into(); }
+        if state == TransferControl::Paused {
+            drop(guard);
+            continue;
+        }
+        if let Some(task) = guard.get_mut(&url) {
+            task.state = "finalizing".into();
+        }
         break guard;
     };
     let final_path = super::collision::publish(&item.partial, &final_path).await?;
-    if let Some(task) = guard.get_mut(&url) { task.filename = final_path.file_name().and_then(|n| n.to_str()).map(str::to_owned); }
+    if let Some(task) = guard.get_mut(&url) {
+        task.filename = final_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(str::to_owned);
+    }
     drop(guard);
     let _ = tokio::fs::remove_file(&item.partial).await;
     let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
@@ -95,29 +138,56 @@ pub(super) async fn run(item: PreparedRecovery, tasks: Tasks, limiter: Arc<Bandw
 }
 
 /// Install the control channel before accepting IPC commands, then run recovery.
-pub(super) async fn spawn(item: PreparedRecovery, tasks: Tasks, controls: Controls, limiter: Arc<BandwidthLimiter>, store: Arc<Persistence>) {
+pub(super) async fn spawn(
+    item: PreparedRecovery,
+    tasks: Tasks,
+    controls: Controls,
+    limiter: Arc<BandwidthLimiter>,
+    store: Arc<Persistence>,
+) {
     let task_id = item.record.task_url.clone();
-    let initial = if item.paused { TransferControl::Paused } else { TransferControl::Running };
+    let initial = if item.paused {
+        TransferControl::Paused
+    } else {
+        TransferControl::Running
+    };
     let (sender, receiver) = watch::channel(initial);
     controls.lock().await.insert(task_id.clone(), sender);
     tokio::spawn(async move {
-        let result = run(item, tasks.clone(), limiter.clone(), store.clone(), receiver.clone()).await;
+        let result = run(
+            item,
+            tasks.clone(),
+            limiter.clone(),
+            store.clone(),
+            receiver.clone(),
+        )
+        .await;
         let mut guard = tasks.lock().await;
         if let Some(task) = guard.get_mut(&task_id) {
-            task.speed_bps = 0; task.active_connections = Some(0);
+            task.speed_bps = 0;
+            task.active_connections = Some(0);
             if *receiver.borrow() == TransferControl::Canceled {
                 task.state = "canceled".into();
                 task.resume_supported = false;
             } else {
                 match result {
-                    Ok(path) => { task.state = "completed".into(); task.final_path = Some(path.to_string_lossy().into_owned()); task.partial_name = None; }
-                    Err(e) => { task.state = format!("failed: {e}"); task.resume_supported = false; }
+                    Ok(path) => {
+                        task.state = "completed".into();
+                        task.final_path = Some(path.to_string_lossy().into_owned());
+                        task.partial_name = None;
+                    }
+                    Err(e) => {
+                        task.state = format!("failed: {e}");
+                        task.resume_supported = false;
+                    }
                 }
             }
         }
         drop(guard);
         #[cfg(target_os = "linux")]
         super::progress_events::notify();
-        if let Err(e) = store.save(&tasks, &limiter).await { eprintln!("queue checkpoint failed: {e}"); }
+        if let Err(e) = store.save(&tasks, &limiter).await {
+            eprintln!("queue checkpoint failed: {e}");
+        }
     });
 }

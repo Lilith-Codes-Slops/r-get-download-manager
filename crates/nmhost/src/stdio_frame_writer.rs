@@ -7,7 +7,9 @@ pub struct StdioFrameWriter {
 
 impl StdioFrameWriter {
     pub fn new() -> Self {
-        Self { stdout: io::stdout() }
+        Self {
+            stdout: io::stdout(),
+        }
     }
 
     pub fn write_frame<T: serde::Serialize>(&mut self, value: &T) -> IpcResult<()> {

@@ -12,9 +12,13 @@ pub(super) async fn publish_no_clobber(partial: &Path, dest: &Path) -> std::io::
     // the partial and checkpoint, so recovery or manual inspection is possible.
     #[cfg(unix)]
     {
-        let parent = dest.parent().ok_or_else(|| std::io::Error::other("destination has no directory"))?.to_owned();
+        let parent = dest
+            .parent()
+            .ok_or_else(|| std::io::Error::other("destination has no directory"))?
+            .to_owned();
         tokio::task::spawn_blocking(move || std::fs::File::open(parent)?.sync_all())
-            .await.map_err(std::io::Error::other)??;
+            .await
+            .map_err(std::io::Error::other)??;
     }
     Ok(())
 }

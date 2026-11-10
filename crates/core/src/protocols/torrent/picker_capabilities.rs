@@ -28,7 +28,11 @@ pub fn log() {
 mod tests {
     #[test]
     fn no_unverified_fast_extension_control_claim() {
-        let caps = super::current(); assert_eq!(caps.fast_extension_control, None);
-        if librqbit::version() == "9.1.0" { assert_eq!(caps.dynamic_queue_depth, Some(false)); assert_eq!(caps.first_last_boost, Some(false)); }
+        let caps = super::current();
+        assert_eq!(caps.fast_extension_control, None);
+        if librqbit::version() == "9.1.0" {
+            assert_eq!(caps.dynamic_queue_depth, Some(false));
+            assert_eq!(caps.first_last_boost, Some(false));
+        }
     }
 }

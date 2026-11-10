@@ -1,7 +1,7 @@
 #![cfg(target_os = "windows")]
 
 use crate::{IpcError, IpcResult};
-use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions, ClientOptions};
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
 
 /// Windows Named Pipe transport wrapper.
 pub struct WindowsNamedPipe;
@@ -17,7 +17,9 @@ impl WindowsNamedPipe {
     }
 
     /// Connect a client to the named pipe.
-    pub async fn connect(pipe_name: &str) -> IpcResult<tokio::net::windows::named_pipe::NamedPipeClient> {
+    pub async fn connect(
+        pipe_name: &str,
+    ) -> IpcResult<tokio::net::windows::named_pipe::NamedPipeClient> {
         let client = ClientOptions::new()
             .open(pipe_name)
             .await

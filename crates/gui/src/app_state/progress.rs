@@ -5,11 +5,14 @@ pub(super) fn apply(tasks: &mut Vec<DownloadInfo>, event: DaemonEvent) {
     match event {
         DaemonEvent::ProgressReset => tasks.clear(),
         DaemonEvent::ProgressUpdate { task_id, task } if task_id == task.url => {
-            if let Some(existing) = tasks.iter_mut().find(|existing| existing.url == task.url) { *existing = task; }
-            else { tasks.push(task); }
+            if let Some(existing) = tasks.iter_mut().find(|existing| existing.url == task.url) {
+                *existing = *task;
+            } else {
+                tasks.push(*task);
+            }
         }
         DaemonEvent::ProgressRemoved { task_id } => tasks.retain(|task| task.url != task_id),
-        _ => {},
+        _ => {}
     }
 }
 
@@ -22,12 +25,31 @@ mod tests {
     #[test]
     fn reset_update_retry_and_remove_replace_the_task_view() {
         let mut tasks = vec![task(9, "old")];
-        apply(&mut tasks, DaemonEvent::ProgressReset); assert!(tasks.is_empty());
-        apply(&mut tasks, DaemonEvent::ProgressUpdate { task_id: "task".into(), task: task(3, "new") });
-        apply(&mut tasks, DaemonEvent::ProgressUpdate { task_id: "task".into(), task: task(7, "new") });
-        assert_eq!(tasks.len(), 1); assert_eq!(tasks[0].downloaded, 7);
+        apply(&mut tasks, DaemonEvent::ProgressReset);
+        assert!(tasks.is_empty());
+        apply(
+            &mut tasks,
+            DaemonEvent::ProgressUpdate {
+                task_id: "task".into(),
+                task: Box::new(task(3, "new")),
+            },
+        );
+        apply(
+            &mut tasks,
+            DaemonEvent::ProgressUpdate {
+                task_id: "task".into(),
+                task: Box::new(task(7, "new")),
+            },
+        );
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].downloaded, 7);
         assert_eq!(tasks[0].partial_name.as_deref(), Some("new"));
-        apply(&mut tasks, DaemonEvent::ProgressRemoved { task_id: "task".into() });
+        apply(
+            &mut tasks,
+            DaemonEvent::ProgressRemoved {
+                task_id: "task".into(),
+            },
+        );
         assert!(tasks.is_empty());
     }
 }

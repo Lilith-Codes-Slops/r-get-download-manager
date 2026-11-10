@@ -3,66 +3,177 @@ use super::*;
 impl AppState {
     pub(super) fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            ui.heading(RichText::new("rGet").strong().color(Color32::from_rgb(99, 165, 255)));
+            ui.heading(
+                RichText::new("rGet")
+                    .strong()
+                    .color(Color32::from_rgb(99, 165, 255)),
+            );
             ui.add_space(16.0);
-            if ui.button("+ Add URL").clicked() { self.add_open = true; }
-            unavailable(ui, "Add file", "File picker is not available; use Add URL to enter a local .torrent path.");
+            if ui.button("+ Add URL").clicked() {
+                self.add_open = true;
+            }
+            unavailable(
+                ui,
+                "Add file",
+                "File picker is not available; use Add URL to enter a local .torrent path.",
+            );
             unavailable(ui, "Pause all", "Not yet supported.");
             unavailable(ui, "Resume all", "Not yet supported.");
             unavailable(ui, "Cancel all", "Not yet supported.");
-            if ui.button("Settings").clicked() { self.settings_open = true; }
+            if ui.button("Settings").clicked() {
+                self.settings_open = true;
+            }
         });
     }
 
     pub(super) fn sidebar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(12.0);
         ui.label(RichText::new("LIBRARY").small().weak());
-        if ui.selectable_label(self.view == View::Tasks, format!("Tasks   {}", self.tasks.len())).clicked() { self.view = View::Tasks; }
-        if ui.selectable_label(self.view == View::Downloads, "Downloads").clicked() { self.view = View::Downloads; self.refresh_files(); }
+        if ui
+            .selectable_label(
+                self.view == View::Tasks,
+                format!("Tasks   {}", self.tasks.len()),
+            )
+            .clicked()
+        {
+            self.view = View::Tasks;
+        }
+        if ui
+            .selectable_label(self.view == View::Downloads, "Downloads")
+            .clicked()
+        {
+            self.view = View::Downloads;
+            self.refresh_files();
+        }
         ui.separator();
-        ui.label(format!("Active     {}", self.tasks.iter().filter(|t| t.state == "downloading").count()));
-        ui.label(format!("Completed  {}", self.tasks.iter().filter(|t| t.state == "completed").count()));
-        let color = if self.connected { Color32::from_rgb(91, 193, 143) } else { Color32::from_rgb(232, 171, 92) };
-        ui.label(RichText::new(if self.connected { "● Daemon connected" } else { "● Connecting / offline" }).color(color).small());
+        ui.label(format!(
+            "Active     {}",
+            self.tasks
+                .iter()
+                .filter(|t| t.state == "downloading")
+                .count()
+        ));
+        ui.label(format!(
+            "Completed  {}",
+            self.tasks.iter().filter(|t| t.state == "completed").count()
+        ));
+        let color = if self.connected {
+            Color32::from_rgb(91, 193, 143)
+        } else {
+            Color32::from_rgb(232, 171, 92)
+        };
+        ui.label(
+            RichText::new(if self.connected {
+                "● Daemon connected"
+            } else {
+                "● Connecting / offline"
+            })
+            .color(color)
+            .small(),
+        );
     }
 
     pub(super) fn tasks_view(&mut self, ui: &mut egui::Ui) {
         ui.heading("Tasks");
         ui.label(RichText::new("Your download queue and live transfer details").weak());
         let speed: u64 = self.tasks.iter().map(|t| t.speed_bps).sum();
-        ui.label(format!("{} downloads  ·  Download {}/s  ·  Upload not supported", self.tasks.len(), format_bytes(speed)));
+        ui.label(format!(
+            "{} downloads  ·  Download {}/s  ·  Upload not supported",
+            self.tasks.len(),
+            format_bytes(speed)
+        ));
         ui.separator();
         let height = (ui.available_height() * 0.46).max(110.0);
-        egui::ScrollArea::vertical().id_salt("task_list").max_height(height).show(ui, |ui| {
-            if self.tasks.is_empty() { ui.add_space(24.0); ui.label("No downloads yet. Add a URL to get started."); }
-            for task in &self.tasks {
-                let selected = self.selected_task.as_deref() == Some(task.url.as_str());
-                let name = task.filename.as_deref().or_else(|| task.torrent.as_ref().and_then(|torrent| torrent.root_name.as_deref()))
-                    .unwrap_or_else(|| task.url.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(&task.url));
-                ui.horizontal(|ui| {
-                    if ui.selectable_label(selected, RichText::new(name).strong()).clicked() { self.selected_task = Some(task.url.clone()); }
-                    if auto_renamed(task) {
-                        ui.label(RichText::new("Renamed").small().color(Color32::from_rgb(232, 171, 92)))
-                            .on_hover_text(format!("Original suggestion: {}", task.suggested_filename.as_deref().unwrap_or("")));
-                    }
-                    ui.label(RichText::new(&task.state).weak());
-                    ui.label(format!("{}/s", format_bytes(task.speed_bps)));
-                    ui.label(format!("Workers: {} / {} requested", count(self.live_segments.active_workers(task).or(task.active_connections)), count(task.requested_connections)));
-                });
-                let live = self.live_segments.summary(task);
-                if let Some((segments, bytes, total)) = live {
-                    ui.label(format!("{segments} segments · {:.1}%", bytes as f64 / total as f64 * 100.0));
+        egui::ScrollArea::vertical()
+            .id_salt("task_list")
+            .max_height(height)
+            .show(ui, |ui| {
+                if self.tasks.is_empty() {
+                    ui.add_space(24.0);
+                    ui.label("No downloads yet. Add a URL to get started.");
                 }
-                if let Some(total) = task.total.filter(|n| *n > 0) {
-                    let downloaded = live.map(|(_, bytes, _)| bytes).unwrap_or(task.downloaded);
-                    ui.add(egui::ProgressBar::new((downloaded as f64 / total as f64).clamp(0.0, 1.0) as f32).show_percentage().desired_width(ui.available_width()));
-                } else { ui.label(format!("{} downloaded · total unknown", format_bytes(task.downloaded))); }
-                ui.separator();
-            }
-        });
-        let selected = self.selected_task.as_ref().and_then(|id| self.tasks.iter().find(|t| &t.url == id)).cloned();
-        if let Some(task) = selected { self.task_details(ui, &task); }
-        else { ui.label(RichText::new("Select a task to view details").weak()); }
+                for task in &self.tasks {
+                    let selected = self.selected_task.as_deref() == Some(task.url.as_str());
+                    let name = task
+                        .filename
+                        .as_deref()
+                        .or_else(|| {
+                            task.torrent
+                                .as_ref()
+                                .and_then(|torrent| torrent.root_name.as_deref())
+                        })
+                        .unwrap_or_else(|| {
+                            task.url
+                                .rsplit('/')
+                                .next()
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or(&task.url)
+                        });
+                    ui.horizontal(|ui| {
+                        if ui
+                            .selectable_label(selected, RichText::new(name).strong())
+                            .clicked()
+                        {
+                            self.selected_task = Some(task.url.clone());
+                        }
+                        if auto_renamed(task) {
+                            ui.label(
+                                RichText::new("Renamed")
+                                    .small()
+                                    .color(Color32::from_rgb(232, 171, 92)),
+                            )
+                            .on_hover_text(format!(
+                                "Original suggestion: {}",
+                                task.suggested_filename.as_deref().unwrap_or("")
+                            ));
+                        }
+                        ui.label(RichText::new(&task.state).weak());
+                        ui.label(format!("{}/s", format_bytes(task.speed_bps)));
+                        ui.label(format!(
+                            "Workers: {} / {} requested",
+                            count(
+                                self.live_segments
+                                    .active_workers(task)
+                                    .or(task.active_connections)
+                            ),
+                            count(task.requested_connections)
+                        ));
+                    });
+                    let live = self.live_segments.summary(task);
+                    if let Some((segments, bytes, total)) = live {
+                        ui.label(format!(
+                            "{segments} segments · {:.1}%",
+                            bytes as f64 / total as f64 * 100.0
+                        ));
+                    }
+                    if let Some(total) = task.total.filter(|n| *n > 0) {
+                        let downloaded = live.map(|(_, bytes, _)| bytes).unwrap_or(task.downloaded);
+                        ui.add(
+                            egui::ProgressBar::new(
+                                (downloaded as f64 / total as f64).clamp(0.0, 1.0) as f32,
+                            )
+                            .show_percentage()
+                            .desired_width(ui.available_width()),
+                        );
+                    } else {
+                        ui.label(format!(
+                            "{} downloaded · total unknown",
+                            format_bytes(task.downloaded)
+                        ));
+                    }
+                    ui.separator();
+                }
+            });
+        let selected = self
+            .selected_task
+            .as_ref()
+            .and_then(|id| self.tasks.iter().find(|t| &t.url == id))
+            .cloned();
+        if let Some(task) = selected {
+            self.task_details(ui, &task);
+        } else {
+            ui.label(RichText::new("Select a task to view details").weak());
+        }
     }
 
     fn task_details(&mut self, ui: &mut egui::Ui, task: &DownloadInfo) {
@@ -169,42 +280,108 @@ impl AppState {
     }
 
     pub(super) fn downloads_view(&mut self, ui: &mut egui::Ui) {
-        if self.last_files_refresh.elapsed() >= Duration::from_secs(3) { self.refresh_files(); }
+        if self.last_files_refresh.elapsed() >= Duration::from_secs(3) {
+            self.refresh_files();
+        }
         ui.heading("Downloads");
-        ui.label(RichText::new(download_dir().map(|p| p.display().to_string()).unwrap_or_else(|| "Download directory unavailable".into())).weak());
+        ui.label(
+            RichText::new(
+                download_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "Download directory unavailable".into()),
+            )
+            .weak(),
+        );
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Refresh").clicked() { self.refresh_files(); }
-            if ui.add_enabled(self.selected_file.is_some(), egui::Button::new("Open file")).clicked() {
-                if let Some(path) = &self.selected_file { if let Err(e) = open_path(path) { self.notice = Some(e); } }
+            if ui.button("Refresh").clicked() {
+                self.refresh_files();
+            }
+            if ui
+                .add_enabled(self.selected_file.is_some(), egui::Button::new("Open file"))
+                .clicked()
+            {
+                if let Some(path) = &self.selected_file {
+                    if let Err(e) = open_path(path) {
+                        self.notice = Some(e);
+                    }
+                }
             }
             if ui.button("Open folder").clicked() {
-                if let Some(path) = download_dir() { if let Err(e) = open_path(&path) { self.notice = Some(e); } }
+                if let Some(path) = download_dir() {
+                    if let Err(e) = open_path(&path) {
+                        self.notice = Some(e);
+                    }
+                }
             }
-            if ui.add_enabled(self.selected_file.is_some(), egui::Button::new("Copy path")).clicked() {
-                if let Some(path) = &self.selected_file { ui.ctx().copy_text(path.display().to_string()); }
+            if ui
+                .add_enabled(self.selected_file.is_some(), egui::Button::new("Copy path"))
+                .clicked()
+            {
+                if let Some(path) = &self.selected_file {
+                    ui.ctx().copy_text(path.display().to_string());
+                }
             }
-            unavailable(ui, "Rename / move / delete", "File modifications are not implemented.");
+            unavailable(
+                ui,
+                "Rename / move / delete",
+                "File modifications are not implemented.",
+            );
         });
         ui.horizontal(|ui| {
             ui.label("Sort by:");
-            for (sort, label) in [(Sort::Name, "Name"), (Sort::Size, "Size"), (Sort::Date, "Modified"), (Sort::Type, "Type")] {
-                if ui.selectable_label(self.sort == sort, label).clicked() { if self.sort == sort { self.descending = !self.descending; } else { self.sort = sort; self.descending = false; } self.sort_files(); }
+            for (sort, label) in [
+                (Sort::Name, "Name"),
+                (Sort::Size, "Size"),
+                (Sort::Date, "Modified"),
+                (Sort::Type, "Type"),
+            ] {
+                if ui.selectable_label(self.sort == sort, label).clicked() {
+                    if self.sort == sort {
+                        self.descending = !self.descending;
+                    } else {
+                        self.sort = sort;
+                        self.descending = false;
+                    }
+                    self.sort_files();
+                }
             }
-            ui.label(if self.descending { "Descending" } else { "Ascending" });
+            ui.label(if self.descending {
+                "Descending"
+            } else {
+                "Ascending"
+            });
         });
         ui.separator();
-        egui::ScrollArea::vertical().id_salt("files").show(ui, |ui| {
-            if self.files.is_empty() { ui.label("No files in the Downloads folder."); }
-            for file in &self.files {
-                let name = file.path.file_name().unwrap_or_default().to_string_lossy();
-                ui.horizontal(|ui| {
-                    if ui.selectable_label(self.selected_file.as_ref() == Some(&file.path), name.as_ref()).clicked() { self.selected_file = Some(file.path.clone()); }
-                    ui.label(format_bytes(file.size));
-                    ui.label(file.path.extension().unwrap_or_default().to_string_lossy().into_owned());
-                });
-                ui.separator();
-            }
-        });
+        egui::ScrollArea::vertical()
+            .id_salt("files")
+            .show(ui, |ui| {
+                if self.files.is_empty() {
+                    ui.label("No files in the Downloads folder.");
+                }
+                for file in &self.files {
+                    let name = file.path.file_name().unwrap_or_default().to_string_lossy();
+                    ui.horizontal(|ui| {
+                        if ui
+                            .selectable_label(
+                                self.selected_file.as_ref() == Some(&file.path),
+                                name.as_ref(),
+                            )
+                            .clicked()
+                        {
+                            self.selected_file = Some(file.path.clone());
+                        }
+                        ui.label(format_bytes(file.size));
+                        ui.label(
+                            file.path
+                                .extension()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned(),
+                        );
+                    });
+                    ui.separator();
+                }
+            });
     }
 
     pub(super) fn dialogs(&mut self, ctx: &egui::Context) {
@@ -223,7 +400,13 @@ impl AppState {
                 if ui.add_enabled(self.connected && !self.url.trim().is_empty(), egui::Button::new("Start download")).clicked() { submit = true; }
                 if !self.connected { ui.label("Waiting for the daemon to connect."); }
             });
-            if submit { let url = self.url.trim().to_string(); self.send(add_request(url, self.connections)); self.url.clear(); open = false; self.view = View::Tasks; }
+            if submit {
+                let url = self.url.trim().to_string();
+                self.send(add_request(url, self.connections));
+                self.url.clear();
+                open = false;
+                self.view = View::Tasks;
+            }
             self.add_open = open;
         }
         if let Some(id) = self.pending_delete.clone() {
@@ -239,9 +422,14 @@ impl AppState {
                 });
             });
             if confirm {
-                self.send(ClientRequest::RemoveTask { task_id: id, delete_file: true });
+                self.send(ClientRequest::RemoveTask {
+                    task_id: id,
+                    delete_file: true,
+                });
                 self.pending_delete = None;
-            } else if dismiss { self.pending_delete = None; }
+            } else if dismiss {
+                self.pending_delete = None;
+            }
         }
         if self.settings_open {
             let mut open = self.settings_open;

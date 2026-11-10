@@ -556,3 +556,15 @@ commit changes the SHA, the full matrix must be rerun at that new SHA. See
 PR #1 remains open. The selected merge strategy is `--squash`, but no merge is
 permitted until the final matrix is green. No `v0.1.0` tag or GitHub Release is
 created in this flow.
+
+## Formatting and Clippy finalization fix
+
+The first full-matrix attempt at `07fd541` reported `cargo fmt --all -- --check`
+diffs and one `large_enum_variant` error for
+`DaemonEvent::ProgressUpdate { task_id: String, task: DownloadInfo }`. A later
+commit applies `rustfmt` across the workspace and changes that payload to
+`Box<DownloadInfo>`. Serde still emits and accepts the same JSON event shape;
+the daemon publisher, GUI cache, IPC integration test and protocol roundtrip
+test were updated together. This is a source-level fix, not a waiver of
+`-D warnings` and not a completed user-side matrix run. The final SHA changed
+again, so repeat the entire matrix in `docs/finalization.md` before merging.

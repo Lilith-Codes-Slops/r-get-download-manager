@@ -6,13 +6,19 @@ use tokio::sync::watch;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub(super) async fn wait_for_slot(id: &str, tasks: &Tasks, ticket: &Ticket,
-    control: &mut watch::Receiver<TransferControl>) -> Result<tokio::sync::OwnedSemaphorePermit> {
+pub(super) async fn wait_for_slot(
+    id: &str,
+    tasks: &Tasks,
+    ticket: &Ticket,
+    control: &mut watch::Receiver<TransferControl>,
+) -> Result<tokio::sync::OwnedSemaphorePermit> {
     let acquire = ticket.acquire();
     tokio::pin!(acquire);
     let mut refresh = tokio::time::interval(Duration::from_millis(250));
     loop {
-        if *control.borrow() == TransferControl::Canceled { return Err("torrent canceled".into()); }
+        if *control.borrow() == TransferControl::Canceled {
+            return Err("torrent canceled".into());
+        }
         tokio::select! {
             biased;
             _ = control.changed() => return Err("torrent canceled".into()),
@@ -57,14 +63,20 @@ mod tests {
     #[tokio::test]
     async fn waiting_task_can_be_canceled_and_next_task_is_promoted() {
         let queue = ConcurrencyQueue::new(1);
-        let first = queue.register("first".into()); let active = first.acquire().await.unwrap();
+        let first = queue.register("first".into());
+        let active = first.acquire().await.unwrap();
         let waiting = queue.register("second".into());
-        let tasks: Tasks = Arc::new(Mutex::new(BTreeMap::from([("second".into(), task("second"))])));
+        let tasks: Tasks = Arc::new(Mutex::new(BTreeMap::from([(
+            "second".into(),
+            task("second"),
+        )])));
         let (sender, mut receiver) = watch::channel(TransferControl::Running);
         {
             let future = wait_for_slot("second", &tasks, &waiting, &mut receiver);
             tokio::pin!(future);
-            assert!(tokio::time::timeout(Duration::from_millis(30), &mut future).await.is_err());
+            assert!(tokio::time::timeout(Duration::from_millis(30), &mut future)
+                .await
+                .is_err());
             assert_eq!(tasks.lock().await["second"].state, "queued");
             sender.send_replace(TransferControl::Canceled);
             assert!(future.await.is_err());
@@ -75,7 +87,11 @@ mod tests {
         let (_sender, mut receiver) = watch::channel(TransferControl::Running);
         let next_future = wait_for_slot("third", &tasks, &next, &mut receiver);
         tokio::pin!(next_future);
-        assert!(tokio::time::timeout(Duration::from_millis(30), &mut next_future).await.is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut next_future)
+                .await
+                .is_err()
+        );
         drop(active);
         let _permit = next_future.await.unwrap();
         assert_eq!(tasks.lock().await["third"].state, "metadata");

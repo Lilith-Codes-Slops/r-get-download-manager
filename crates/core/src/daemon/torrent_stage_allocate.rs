@@ -1,6 +1,9 @@
 //! Guarded stage allocation, not connected to download ingress.
 use super::{torrent_manifest_store::ManifestReservation, torrent_stage_store};
-use crate::protocols::torrent::{staging_cleanup, staging_tree::{StageArea, StageRecord}};
+use crate::protocols::torrent::{
+    staging_cleanup,
+    staging_tree::{StageArea, StageRecord},
+};
 use std::fs::File;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -41,21 +44,48 @@ fn allocate(reservation: ManifestReservation, root: File) -> Result<AllocatedSta
         // Only an unchanged unconfirmed reservation plus a verified marker and
         // inode permits removal. Keep the reservation even after successful
         // removal: forgetting a reserved row needs its own crash-safe protocol.
-        let cleanup = match torrent_stage_store::has_reservation(db, &reservation.task_id, &reservation.name) {
-            Ok(true) => staging_cleanup::cleanup(&area, &record).map_err(|e| e.to_string()),
-            Ok(false) => Err("reservation changed".into()),
-            Err(e) => Err(e.to_string()),
-        };
-        return Err(format!("stage confirmation failed for {}: {error}; cleanup: {}", record.name,
-            cleanup.err().unwrap_or_else(|| "completed; reservation retained".into())).into());
+        let cleanup =
+            match torrent_stage_store::has_reservation(db, &reservation.task_id, &reservation.name)
+            {
+                Ok(true) => staging_cleanup::cleanup(&area, &record).map_err(|e| e.to_string()),
+                Ok(false) => Err("reservation changed".into()),
+                Err(e) => Err(e.to_string()),
+            };
+        return Err(format!(
+            "stage confirmation failed for {}: {error}; cleanup: {}",
+            record.name,
+            cleanup
+                .err()
+                .unwrap_or_else(|| "completed; reservation retained".into())
+        )
+        .into());
     }
     let payload = match area.create_payload(&record) {
         Ok(payload) => payload,
         Err(error) => {
-            let cleanup = torrent_stage_store::cleanup_recorded(db, &area, &record.task_id, &record.name, false);
-            return Err(format!("payload creation failed for {}: {error}; cleanup: {}", record.name,
-                cleanup.err().map(|e| e.to_string()).unwrap_or_else(|| "completed".into())).into());
+            let cleanup = torrent_stage_store::cleanup_recorded(
+                db,
+                &area,
+                &record.task_id,
+                &record.name,
+                false,
+            );
+            return Err(format!(
+                "payload creation failed for {}: {error}; cleanup: {}",
+                record.name,
+                cleanup
+                    .err()
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "completed".into())
+            )
+            .into());
         }
     };
-    Ok(AllocatedStage { area, root, record, payload, reservation })
+    Ok(AllocatedStage {
+        area,
+        root,
+        record,
+        payload,
+        reservation,
+    })
 }

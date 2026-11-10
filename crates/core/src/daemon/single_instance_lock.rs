@@ -22,10 +22,18 @@ impl SingleInstanceLock {
         {
             use std::os::fd::AsRawFd;
             use std::os::unix::fs::OpenOptionsExt;
-            let file = OpenOptions::new().read(true).write(true).create(true)
-                .mode(0o600).custom_flags(libc::O_NOFOLLOW).open(path)?;
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(path)?;
             #[allow(deprecated)]
-            match nix::fcntl::flock(file.as_raw_fd(), nix::fcntl::FlockArg::LockExclusiveNonblock) {
+            match nix::fcntl::flock(
+                file.as_raw_fd(),
+                nix::fcntl::FlockArg::LockExclusiveNonblock,
+            ) {
                 Ok(()) => Ok(Self { _file: file }),
                 Err(nix::errno::Errno::EWOULDBLOCK) => Err(LockError::AlreadyRunning),
                 Err(e) => Err(LockError::Io(std::io::Error::from_raw_os_error(e as i32))),
@@ -47,7 +55,10 @@ mod tests {
     fn prevents_second_instance_and_releases_on_drop() {
         let path = std::env::temp_dir().join(format!("rget-lock-test-{}", std::process::id()));
         let first = SingleInstanceLock::acquire(&path).unwrap();
-        assert!(matches!(SingleInstanceLock::acquire(&path), Err(LockError::AlreadyRunning)));
+        assert!(matches!(
+            SingleInstanceLock::acquire(&path),
+            Err(LockError::AlreadyRunning)
+        ));
         drop(first);
         let second = SingleInstanceLock::acquire(&path).unwrap();
         drop(second);

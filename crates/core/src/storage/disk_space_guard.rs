@@ -6,7 +6,9 @@ const DEFAULT_SAFETY_BUFFER: u64 = 1 << 30; // 1 GiB
 
 #[derive(Error, Debug)]
 pub enum DiskSpaceError {
-    #[error("insufficient free space: available {available}, required {required} (buffer {buffer})")]
+    #[error(
+        "insufficient free space: available {available}, required {required} (buffer {buffer})"
+    )]
     InsufficientSpace {
         available: u64,
         required: u64,

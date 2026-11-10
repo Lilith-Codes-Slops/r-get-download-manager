@@ -4,9 +4,19 @@ use super::adaptive_sizer::MIN_TARGET;
 const MIB: u64 = 1024 * 1024;
 const RELAXED_DECISIONS: u8 = 4;
 
-pub(super) struct StealFloor { base: u64, latency_bucket: u64, relaxed: u8 }
+pub(super) struct StealFloor {
+    base: u64,
+    latency_bucket: u64,
+    relaxed: u8,
+}
 impl Default for StealFloor {
-    fn default() -> Self { Self { base: MIN_TARGET, latency_bucket: MIN_TARGET, relaxed: 0 } }
+    fn default() -> Self {
+        Self {
+            base: MIN_TARGET,
+            latency_bucket: MIN_TARGET,
+            relaxed: 0,
+        }
+    }
 }
 impl StealFloor {
     fn bucket(rtt_ms: Option<f64>) -> u64 {
@@ -26,13 +36,25 @@ impl StealFloor {
             self.latency_bucket = bucket;
         }
     }
-    pub fn limit(&mut self, cap: u64) { self.base = self.base.min(cap.max(MIN_TARGET)); }
-    pub fn target_reduced(&mut self, target: u64) { self.base = self.base.min((target / 2).max(MIN_TARGET)); }
-    pub fn target_increased(&mut self, target: u64) { self.base = (target / 4).min(8 * MIB).max(MIN_TARGET); }
-    pub fn current(&self, cooling: bool) -> u64 {
-        if cooling || self.relaxed > 0 { MIN_TARGET } else { self.base }
+    pub fn limit(&mut self, cap: u64) {
+        self.base = self.base.min(cap.max(MIN_TARGET));
     }
-    pub fn relax(&mut self) { self.relaxed = RELAXED_DECISIONS; }
+    pub fn target_reduced(&mut self, target: u64) {
+        self.base = self.base.min((target / 2).max(MIN_TARGET));
+    }
+    pub fn target_increased(&mut self, target: u64) {
+        self.base = (target / 4).min(8 * MIB).max(MIN_TARGET);
+    }
+    pub fn current(&self, cooling: bool) -> u64 {
+        if cooling || self.relaxed > 0 {
+            MIN_TARGET
+        } else {
+            self.base
+        }
+    }
+    pub fn relax(&mut self) {
+        self.relaxed = RELAXED_DECISIONS;
+    }
     /// Inspecting capacity is not a decision; consume only on a steal attempt.
     pub fn decision(&mut self, cooling: bool) -> u64 {
         let floor = self.current(cooling);
@@ -46,20 +68,35 @@ mod tests {
     use super::*;
     #[test]
     fn buckets_and_unknown_latency() {
-        for (rtt, expected) in [(None, MIB), (Some(0.0), 2*MIB), (Some(49.99), 2*MIB),
-            (Some(50.0), 4*MIB), (Some(199.99), 4*MIB), (Some(200.0), 8*MIB), (Some(f64::NAN), MIB)] {
-            let mut floor = StealFloor::default(); floor.observe_latency(rtt, true);
+        for (rtt, expected) in [
+            (None, MIB),
+            (Some(0.0), 2 * MIB),
+            (Some(49.99), 2 * MIB),
+            (Some(50.0), 4 * MIB),
+            (Some(199.99), 4 * MIB),
+            (Some(200.0), 8 * MIB),
+            (Some(f64::NAN), MIB),
+        ] {
+            let mut floor = StealFloor::default();
+            floor.observe_latency(rtt, true);
             assert_eq!(floor.current(false), expected);
         }
     }
     #[test]
     fn congestion_temporarily_relaxes_and_refreshes_budget() {
-        let mut floor = StealFloor::default(); floor.observe_latency(Some(300.0), true);
+        let mut floor = StealFloor::default();
+        floor.observe_latency(Some(300.0), true);
         floor.relax();
-        for _ in 0..RELAXED_DECISIONS { assert_eq!(floor.decision(false), MIB); }
+        for _ in 0..RELAXED_DECISIONS {
+            assert_eq!(floor.decision(false), MIB);
+        }
         assert_eq!(floor.current(false), 8 * MIB);
-        floor.relax(); floor.decision(false); floor.relax();
-        for _ in 0..RELAXED_DECISIONS { assert_eq!(floor.decision(false), MIB); }
+        floor.relax();
+        floor.decision(false);
+        floor.relax();
+        for _ in 0..RELAXED_DECISIONS {
+            assert_eq!(floor.decision(false), MIB);
+        }
         assert_eq!(floor.current(false), 8 * MIB);
     }
 }

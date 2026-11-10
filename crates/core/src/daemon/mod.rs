@@ -10,35 +10,35 @@ pub use server_loop::ServerLoop;
 pub use single_instance_lock::SingleInstanceLock;
 pub use tray_service::TrayService;
 
-mod transfer;
+mod bandwidth;
+mod checkpoint;
+mod checkpoint_validation;
+mod checksum;
+mod collision;
+mod control;
+mod destination;
+mod persistence;
 mod progress;
+#[cfg(target_os = "linux")]
+mod progress_events;
 #[cfg(test)]
 mod publication;
-mod collision;
-mod destination;
+mod range;
+#[cfg(test)]
+mod range_tests;
+mod recovered_transfer;
+mod recovery;
+#[cfg(test)]
+mod recovery_tests;
 #[cfg(target_os = "linux")]
 mod retry;
 #[cfg(target_os = "linux")]
-mod split;
-#[cfg(target_os = "linux")]
 mod segment_events;
 #[cfg(target_os = "linux")]
-mod progress_events;
-mod bandwidth;
-mod control;
+mod split;
 mod task_removal;
-mod range;
+mod transfer;
 mod transfer_body;
-#[cfg(test)]
-mod range_tests;
-mod persistence;
-mod checksum;
-mod checkpoint;
-mod checkpoint_validation;
-mod recovery;
-mod recovered_transfer;
-#[cfg(test)]
-mod recovery_tests;
 
 #[cfg(all(target_os = "linux", feature = "torrent"))]
 mod torrent_transfer;
