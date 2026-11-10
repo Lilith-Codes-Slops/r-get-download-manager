@@ -49,6 +49,9 @@ pending, and no merge, tag, or GitHub Release has been created.
 - Fix `E0499` borrow errors in the Actions and Properties windows by using a
   separate `close_clicked` flag instead of mutating the `Window::open` flag
   inside the `show` closure.
+- Replace `std::io::Error::new(ErrorKind::Other, ...)` with
+  `std::io::Error::other(...)` in the CLI IPC client to satisfy
+  `clippy::io_other_error` under `-D warnings`.
 - Clarify Linux-only daemon support and the Linux GNU torrent target in
   `README.md`.
 - Mark `docs/torrent-phase-five.md` as an append-only engineering log and add a
@@ -67,11 +70,11 @@ pending, and no merge, tag, or GitHub Release has been created.
 - A formatting/Clippy fix commit addressed the previously reported `rustfmt`
   diffs and `large_enum_variant` error at `07fd541`.
 - The post-download action feature commit, the subsequent GUI port commit, the
-  compile-fix/warning-cleanup commit and the window borrow-check fix commit each
-  changed the SHA again. The full matrix, including `cargo fmt --check`,
-  `cargo clippy -- -D warnings`, the Cargo test suites and the release build,
-  must still be rerun at the new final SHA. See `docs/finalization.md` and
-  `state.md`.
+  compile-fix/warning-cleanup commit, the window borrow-check fix commit and the
+  Clippy `io_other_error` fix commit each changed the SHA again. The full matrix,
+  including `cargo fmt --check`, `cargo clippy -- -D warnings`, the Cargo test
+  suites and the release build, must still be rerun at the new final SHA. See
+  `docs/finalization.md` and `state.md`.
 
 ### Known limitations
 

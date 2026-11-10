@@ -622,3 +622,17 @@ assigned `open = false` in the Actions and Properties windows. A follow-up
 commit uses a separate `close_clicked` flag inside each closure and reads
 `open` only after `show` returns. This commit changes the SHA again, so the
 full matrix in `docs/finalization.md` must be rerun before merging.
+
+
+## Clippy io_other_error fix (append-only note)
+
+STEP 7 at the previous SHA exited 101 with one `clippy::io_other_error` finding
+in `crates/cli/src/ipc_client.rs`. A follow-up commit uses
+`std::io::Error::other(error.clone())` instead of
+`std::io::Error::new(ErrorKind::Other, ...)`. STEP 6 (`cargo fmt --all --
+--check`) was green, but STEP 8 (`cargo build --release --locked`) was reported
+as not finished / memory-heavy; it is not a green result. The user was advised
+to rerun the release build with `-j 2` (or `CARGO_BUILD_JOBS=2`) and to use
+`/bin/df -h "$HOME"` if `df` is aliased to `duf`. This commit changes the SHA
+again, so the full matrix in `docs/finalization.md` must be rerun before
+merging.
