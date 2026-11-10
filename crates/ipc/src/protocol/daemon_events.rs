@@ -1,3 +1,4 @@
+use super::post_download_settings::PostDownloadSettings;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -213,6 +214,10 @@ pub enum DaemonEvent {
     QueueSnapshot {
         tasks: Vec<String>,
     },
+    /// Current daemon-wide post-download action settings.
+    PostDownloadSettings {
+        settings: PostDownloadSettings,
+    },
 }
 
 #[cfg(test)]
@@ -342,6 +347,17 @@ mod tests {
                 .files,
             None
         );
+    }
+
+    #[test]
+    fn post_download_settings_roundtrips() {
+        let settings = PostDownloadSettings {
+            open_containing_folder: true,
+        };
+        let event = DaemonEvent::PostDownloadSettings { settings };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"post_download_settings\""));
+        assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
     }
 
     #[test]

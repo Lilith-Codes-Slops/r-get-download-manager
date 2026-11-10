@@ -22,6 +22,8 @@ impl CommandDispatcher {
             ClientRequest::AddMirror { .. } => Ok(()),
             ClientRequest::SelectMediaQuality { .. } => Ok(()),
             ClientRequest::VerifyChecksum { .. } => Ok(()),
+            ClientRequest::GetPostDownloadSettings
+            | ClientRequest::SetPostDownloadSettings { .. } => Ok(()),
             ClientRequest::Shutdown => Ok(()),
         }
     }

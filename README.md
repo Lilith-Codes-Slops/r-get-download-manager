@@ -161,7 +161,7 @@ and permanently removes the task's recorded files and history. Failed or cancele
 tasks can be retried. GUI rate limiting and other disabled controls remain
 unavailable. User-directed split resizing is available for eligible split tasks.
 Metalink, multi-file magnets, v2/hybrid torrents, webseeds, file mutations and
-post-download automation remain out of scope. The GUI uses the existing local
+most post-download automation remain out of scope. The GUI uses the existing local
 IPC transport, not an HTTP/WebSocket service. Linux is the only currently
 supported daemon platform; the torrent path targets Linux GNU.
 
@@ -170,6 +170,20 @@ supported daemon platform; the torrent path targets Linux GNU.
 Use `dl verify <task-URL> sha256 <expected-hex>` or replace `sha256` with
 `blake3`. Verification is explicit and applies only to completed tasks; it is
 not yet an automatic post-download action. A mismatch returns an error.
+
+### Post-download actions
+
+Settings includes one global post-download action: **Open containing folder
+after a download completes**. When enabled, the daemon opens the completed
+file's parent directory, or the published torrent root directory, in the
+desktop file manager with `xdg-open`. The setting is stored in the daemon's
+SQLite state, so it applies even when the GUI is closed. It is skipped on
+headless daemons without a graphical session environment and is not applied
+retroactively to tasks completed before the daemon started.
+
+The Post-download actions tab shows the current setting and links to Settings.
+Other placeholder actions (Close rGet, Verify checksum, Extract archive, Run
+antivirus scan, System power action) remain unimplemented.
 
 ### V1 torrents
 

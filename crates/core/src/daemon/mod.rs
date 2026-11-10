@@ -18,6 +18,8 @@ mod collision;
 mod control;
 mod destination;
 mod persistence;
+#[cfg(target_os = "linux")]
+mod post_download;
 mod progress;
 #[cfg(target_os = "linux")]
 mod progress_events;

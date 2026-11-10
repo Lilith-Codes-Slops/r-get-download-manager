@@ -185,7 +185,22 @@ impl ServerLoop {
                 )
                 .await;
             }
-            let progress = super::progress_events::start(tasks.clone());
+            let post_download = match store.load_post_download_settings().await {
+                Ok(settings) => super::post_download::PostDownloadState::new(settings),
+                Err(e) => {
+                    eprintln!("failed to load post-download settings: {e}; using defaults");
+                    super::post_download::PostDownloadState::default()
+                }
+            };
+            let initial_progress = {
+                let guard = tasks.lock().await;
+                guard.values().cloned().collect::<Vec<_>>()
+            };
+            let progress = super::progress_events::start(
+                tasks.clone(),
+                post_download.clone(),
+                initial_progress,
+            );
             eprintln!("daemon listening on {endpoint}");
             let checkpoint = {
                 let store = store.clone();
@@ -211,6 +226,7 @@ impl ServerLoop {
                                 let limiter = limiter.clone();
                                 let controls = controls.clone();
                                 let store = store.clone();
+                                let post_download = post_download.clone();
                                 tokio::spawn(async move {
                                     let mut prefix = [0u8; 4];
                                     if stream.read_exact(&mut prefix).await.is_err() {
@@ -340,6 +356,23 @@ impl ServerLoop {
                                                     match guard.get(&id) {
                                                         Some(state) => DaemonEvent::TaskStateChanged { task_id: id, state: state.state.clone(), destination_path: super::destination::path(state) },
                                                         None => DaemonEvent::TaskFailed { task_id: id, error: "task not found".into() },
+                                                    }
+                                                }
+                                                ClientRequest::GetPostDownloadSettings => {
+                                                    DaemonEvent::PostDownloadSettings {
+                                                        settings: post_download.get(),
+                                                    }
+                                                }
+                                                ClientRequest::SetPostDownloadSettings { settings } => {
+                                                    match store.save_post_download_settings(settings).await {
+                                                        Ok(()) => {
+                                                            post_download.set(settings);
+                                                            DaemonEvent::PostDownloadSettings { settings }
+                                                        }
+                                                        Err(e) => DaemonEvent::TaskFailed {
+                                                            task_id: String::new(),
+                                                            error: format!("could not save post-download settings: {e}"),
+                                                        },
                                                     }
                                                 }
                                                 _ => DaemonEvent::TaskFailed { task_id: String::new(), error: "command is not yet supported".into() },

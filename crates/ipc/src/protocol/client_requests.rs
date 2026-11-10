@@ -1,3 +1,4 @@
+use super::post_download_settings::PostDownloadSettings;
 use serde::{Deserialize, Serialize};
 
 /// Commands sent from clients (CLI, GUI, nmhost) to the core daemon.
@@ -66,6 +67,12 @@ pub enum ClientRequest {
         task_id: String,
         algorithm: String,
         expected: String,
+    },
+    /// Read the daemon-wide post-download action settings.
+    GetPostDownloadSettings,
+    /// Update the daemon-wide post-download action settings.
+    SetPostDownloadSettings {
+        settings: PostDownloadSettings,
     },
     Shutdown,
 }

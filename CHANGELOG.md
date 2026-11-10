@@ -6,7 +6,7 @@ has been published.
 
 ## [0.1.0] — unreleased
 
-Status: PR #1 is open. Final verification at the exact post-fix SHA is
+Status: PR #1 is open. Final verification at the exact post-feature SHA is
 pending, and no merge, tag, or GitHub Release has been created.
 
 ### Added
@@ -23,6 +23,9 @@ pending, and no merge, tag, or GitHub Release has been created.
   torrent acceptance tests.
 - Dual-license texts, `.gitignore`, `rust-toolchain.toml`, finalization
   checklist and refreshed release documentation.
+- A global **Open containing folder** post-download action, configured in GUI
+  Settings, stored by the daemon and applied to HTTP, single-file torrent and
+  multi-file torrent completions.
 
 ### Changed
 
@@ -31,6 +34,8 @@ pending, and no merge, tag, or GitHub Release has been created.
 - Apply `rustfmt` across the workspace and store `DaemonEvent::ProgressUpdate`'s
   `DownloadInfo` behind `Box`, so `-D warnings` does not reject the large enum
   variant. The serialized IPC event shape is unchanged.
+- Replace the disabled Post-download actions placeholder with a read-only
+  status view and a link to the Settings control.
 - Clarify Linux-only daemon support and the Linux GNU torrent target in
   `README.md`.
 - Mark `docs/torrent-phase-five.md` as an append-only engineering log and add a
@@ -46,10 +51,12 @@ pending, and no merge, tag, or GitHub Release has been created.
   (206 core unit tests plus integration/GUI/IPC suites), no-default-features
   suite green (96 core unit tests), and fault suite green (10/10, 42.12s).
 - At `70c56e5`, the public-test guard suite reported 2 passed and 2 ignored.
-- A formatting/Clippy fix commit addresses the previously reported `rustfmt`
-  diffs and `large_enum_variant` error. The full matrix, including
-  `cargo fmt --check`, `cargo clippy -- -D warnings` and the release build, must
-  still be rerun at the new final SHA. See `docs/finalization.md`.
+- A formatting/Clippy fix commit addressed the previously reported `rustfmt`
+  diffs and `large_enum_variant` error at `07fd541`.
+- A post-download action feature commit changed the SHA again. The full matrix,
+  including `cargo fmt --check`, `cargo clippy -- -D warnings`, the Cargo test
+  suites and the release build, must still be rerun at the new final SHA. See
+  `docs/finalization.md`.
 
 ### Known limitations
 
@@ -64,7 +71,9 @@ pending, and no merge, tag, or GitHub Release has been created.
 - Cleanup assumes exclusive control of the private staging tree and is not
   hostile-same-user concurrency safe.
 - Windows daemon support, Metalink, mirrors, extraction, scheduling, GUI rate
-  limiting, file mutations, post-download automation, automatic checksums and
-  a daemon-wide graceful-shutdown barrier remain unimplemented.
+  limiting, file mutations, automatic checksums, unimplemented post-download
+  actions (close rGet, antivirus scans, system power actions) and a daemon-wide
+  graceful-shutdown barrier remain unimplemented. The global "open containing
+  folder" action is implemented; other automation is not.
 - The earlier CachyOS single-file public run was a smoke test only and does not
   satisfy the multi-file acceptance criterion.

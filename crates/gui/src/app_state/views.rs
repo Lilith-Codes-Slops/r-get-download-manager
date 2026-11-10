@@ -271,9 +271,33 @@ impl AppState {
             }
             Detail::Actions => {
                 ui.heading("Post-download actions");
-                ui.label("Automation is not available yet. No actions will run automatically.");
-                for label in ["Open file location", "Close rGet", "Verify checksum", "Extract archive", "Run antivirus scan", "System power action"] {
+                ui.label("One global action is available. Configure it in Settings.");
+                let enabled = self.post_download_settings.open_containing_folder;
+                let mut flag = enabled;
+                ui.add_enabled(
+                    false,
+                    egui::Checkbox::new(
+                        &mut flag,
+                        "Open containing folder after completion",
+                    ),
+                );
+                let mut open_settings = false;
+                if ui.button("Open Settings").clicked() {
+                    open_settings = true;
+                }
+                ui.separator();
+                ui.label("Not implemented yet:");
+                for label in [
+                    "Close rGet",
+                    "Verify checksum",
+                    "Extract archive",
+                    "Run antivirus scan",
+                    "System power action",
+                ] {
                     ui.add_enabled(false, egui::Checkbox::new(&mut false, label));
+                }
+                if open_settings {
+                    self.settings_open = true;
                 }
             }
         });
@@ -452,6 +476,29 @@ impl AppState {
                 ui.heading("Download engine");
                 ui.label("Choose 1–32 connections when adding a download. Live changes currently require a split task.");
                 ui.label("Theme selection lasts for this session.");
+                ui.separator();
+                ui.heading("Post-download actions");
+                if !self.post_download_loaded {
+                    ui.label("Loading daemon setting…");
+                } else {
+                    let mut enabled = self.post_download_settings.open_containing_folder;
+                    let response = ui.add_enabled(
+                        self.connected,
+                        egui::Checkbox::new(
+                            &mut enabled,
+                            "Open containing folder after a download completes",
+                        ),
+                    );
+                    if response.clicked() {
+                        self.post_download_settings.open_containing_folder = enabled;
+                        self.send(ClientRequest::SetPostDownloadSettings {
+                            settings: self.post_download_settings,
+                        });
+                    }
+                    ui.label(
+                        "The daemon opens the folder in your desktop file manager, even if the GUI is closed. It is skipped on headless daemons without a graphical session and is not applied retroactively to tasks completed before daemon startup.",
+                    );
+                }
             });
             self.settings_open = open;
         }

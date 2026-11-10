@@ -11,15 +11,16 @@ branch.
 | --- | --- |
 | Public multi-file acceptance | User-reported pass; verbatim final log not attached. Do not quote `test result: ok` as an observed line. |
 | Earlier single-file smoke run | Not multi-file acceptance. Close it out and clean its isolated files on the user's PC. |
-| Final matrix status | Cargo suites and public torrent run passed on the user's PC at an earlier SHA. Formatting and Clippy fixes are now applied; the complete matrix, including the release build, must be rerun at the final SHA. |
+| Final matrix status | Cargo suites and public torrent run passed on the user's PC at an earlier SHA. Formatting/Clippy fixes and the post-download action feature are now applied; the complete matrix, including the release build, must be rerun at the final SHA. |
 | Scope | Merge PR #1 only. No `v0.1.0` tag or GitHub Release in this flow. |
 | Merge strategy | `--squash`, after all gates are green. |
-| Current action | Push the formatting/Clippy fix commit, update PR metadata with its SHA, then wait for final matrix confirmation. **Do not merge yet.** |
+| Current action | Push the post-download action commit, update PR metadata with its SHA, then wait for final matrix confirmation. **Do not merge yet.** |
 
-The docs/hygiene commit and the subsequent formatting/Clippy fix commit each
-change the release SHA. The entire deterministic matrix must be rerun at the
-final SHA. Earlier results at `251cb71`, `70c56e5` and `07fd541` are useful
-history but are not sufficient to unblock the merge.
+The docs/hygiene commit, the subsequent formatting/Clippy fix commit and the
+post-download action feature commit each change the release SHA. The entire
+deterministic matrix must be rerun at the final SHA. Earlier results at
+`251cb71`, `70c56e5`, `07fd541` and `65f5f1e` are useful history but are not
+sufficient to unblock the merge.
 
 ## 1. Save evidence if it becomes available
 
@@ -72,7 +73,7 @@ unset RGET_TEST_CHECKPOINT_HOOK RGET_TEST_CHECKPOINT_MARKER RGET_TEST_WRITE_BLOC
 The CachyOS single-file run does not satisfy multi-file acceptance. Leaving it
 out of scope is acceptable; do not describe its partial output as a pass.
 
-## 3. Final matrix at the exact post-hygiene SHA
+## 3. Final matrix at the exact final SHA
 
 On the user's PC, from the repository root:
 
@@ -102,6 +103,10 @@ An assistant-side `rustfmt 1.99.0-stable --check --edition 2021` run over all
 tracked `.rs` files, using the repository `rustfmt.toml`, reported no diffs after
 the fix. This is a static check only: the user-side `cargo fmt --all -- --check`
 command above remains the release gate.
+
+The post-download action feature commit changed the SHA again. Do not reuse the
+earlier `65f5f1e` matrix request as current; run the eight commands below at
+the final SHA.
 
 Test-only hooks must not be compiled into a production daemon. After any
 hook-enabled build, rebuild with default features before installing or running
@@ -133,6 +138,12 @@ Use the named filter; bare `--ignored` would also try the single-file test.
 - A formatting/Clippy fix commit applies `rustfmt` across the workspace and boxes
   `DaemonEvent::ProgressUpdate`'s `DownloadInfo` payload. Serde framing is
   unchanged; producer, consumer and test constructions were updated together.
+- A post-download action feature commit adds a daemon-wide "Open containing
+  folder" setting, IPC get/set requests, SQLite persistence, completion
+  detection on the progress sampler, a GUI Settings control and an updated
+  Post-download actions tab. The setting is global, daemon-side and applies to
+  all completed task types; it is skipped on headless daemons without a
+  graphical session.
 
 No `.github/workflows` CI was added; validation remains manual on the user's PC.
 There are no assistant-side Cargo runs, GUI checks or peer connections.
@@ -161,7 +172,7 @@ then add release notes, binary checksums and a tag.
 
 ## 6. Current conclusion
 
-The docs/hygiene commit, the formatting/Clippy fix commit and PR metadata are
-prepared. The merge is blocked on one user-side gate: paste the green results
-for the full final matrix at the new SHA. Until then, PR #1 remains open and
-unmerged.
+The docs/hygiene commit, the formatting/Clippy fix commit, the post-download
+action feature commit and PR metadata are prepared. The merge is blocked on one
+user-side gate: paste the green results for the full final matrix at the new
+SHA. Until then, PR #1 remains open and unmerged.

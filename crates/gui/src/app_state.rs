@@ -3,7 +3,7 @@ mod progress;
 mod segments;
 mod views;
 use crate::ipc_bridge_worker::{BridgeMessage, IpcBridgeWorker};
-use downloader_ipc::{ClientRequest, DaemonEvent, DownloadInfo};
+use downloader_ipc::{ClientRequest, DaemonEvent, DownloadInfo, PostDownloadSettings};
 use eframe::egui::{self, Color32, RichText};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -64,6 +64,8 @@ pub struct AppState {
     notice: Option<String>,
     connected: bool,
     progress_active: bool,
+    post_download_settings: PostDownloadSettings,
+    post_download_loaded: bool,
 }
 
 impl AppState {
@@ -92,6 +94,8 @@ impl AppState {
             notice: None,
             connected: false,
             progress_active: false,
+            post_download_settings: PostDownloadSettings::default(),
+            post_download_loaded: false,
         }
     }
 
@@ -112,6 +116,7 @@ impl AppState {
                 BridgeMessage::SegmentEvent(event) => self.live_segments.apply(event),
                 BridgeMessage::ConnectionError(error) => {
                     self.connected = false;
+                    self.post_download_loaded = false;
                     self.notice = Some(format!("Daemon disconnected: {error}"));
                 }
                 BridgeMessage::Event(DaemonEvent::DetailedQueue { tasks }) => {
@@ -136,8 +141,16 @@ impl AppState {
                     }
                     self.notice = Some(format!("Task: {state}."));
                 }
+                BridgeMessage::Event(DaemonEvent::PostDownloadSettings { settings }) => {
+                    self.post_download_settings = settings;
+                    self.post_download_loaded = true;
+                }
                 BridgeMessage::Event(_) => {}
             }
+        }
+        if self.connected && !self.post_download_loaded {
+            self.send(ClientRequest::GetPostDownloadSettings);
+            self.post_download_loaded = true;
         }
     }
 

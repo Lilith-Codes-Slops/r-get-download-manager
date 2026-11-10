@@ -568,3 +568,21 @@ the daemon publisher, GUI cache, IPC integration test and protocol roundtrip
 test were updated together. This is a source-level fix, not a waiver of
 `-D warnings` and not a completed user-side matrix run. The final SHA changed
 again, so repeat the entire matrix in `docs/finalization.md` before merging.
+
+## Post-download action finalization
+
+Before release, the user requested one more GUI setting: the Post-download
+actions tab had only disabled placeholders. A later commit implements a global
+"Open containing folder" action. The GUI Settings window stores the choice in
+the daemon's SQLite state through new IPC get/set requests; the progress
+sampler detects newly completed tasks and asks the daemon to open the file's
+parent directory, or the published torrent root directory, with `xdg-open`.
+This applies to HTTP, single-file torrent and multi-file torrent completions,
+even when the GUI is closed. It is skipped on headless daemons without a
+graphical session and is not applied retroactively to tasks completed before
+daemon startup. Other placeholder actions remain unimplemented.
+
+This feature commit changed the SHA again after `65f5f1e`. The full matrix in
+`docs/finalization.md` must be rerun at the new final SHA before merging; no
+user-side matrix result has been captured for this commit yet. PR #1 remains
+open and unmerged, with `--squash` still the selected strategy.
