@@ -586,3 +586,15 @@ This feature commit changed the SHA again after `65f5f1e`. The full matrix in
 `docs/finalization.md` must be rerun at the new final SHA before merging; no
 user-side matrix result has been captured for this commit yet. PR #1 remains
 open and unmerged, with `--squash` still the selected strategy.
+
+## GUI port and state.md (append-only note)
+
+A later commit ports the single-file browser GUI mockup into the Rust
+`eframe`/`egui` crate (`crates/gui`). The design source is preserved at
+`docs/gui-design/index.html`. Only core `ClientRequest`/`DaemonEvent` IPC is
+wired; unsupported controls stay visible but disabled with
+`TODO(state.md)` comments. `state.md` is the living backlog for magnets,
+seeding, RSS, labels, favorites, editable categories, sounds, file mutations,
+native file picker and the remaining post-download automation. This note does
+not change the torrent lifecycle gates above; the full deterministic matrix
+must still be rerun at the exact final SHA after this commit.

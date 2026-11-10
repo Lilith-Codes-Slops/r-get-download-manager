@@ -11,16 +11,17 @@ branch.
 | --- | --- |
 | Public multi-file acceptance | User-reported pass; verbatim final log not attached. Do not quote `test result: ok` as an observed line. |
 | Earlier single-file smoke run | Not multi-file acceptance. Close it out and clean its isolated files on the user's PC. |
-| Final matrix status | Cargo suites and public torrent run passed on the user's PC at an earlier SHA. Formatting/Clippy fixes and the post-download action feature are now applied; the complete matrix, including the release build, must be rerun at the final SHA. |
+| Final matrix status | Cargo suites and public torrent run passed on the user's PC at an earlier SHA. Formatting/Clippy fixes, the post-download action feature and the GUI port are now applied; the complete matrix, including the release build, must be rerun at the final SHA. |
 | Scope | Merge PR #1 only. No `v0.1.0` tag or GitHub Release in this flow. |
 | Merge strategy | `--squash`, after all gates are green. |
-| Current action | Push the post-download action commit, update PR metadata with its SHA, then wait for final matrix confirmation. **Do not merge yet.** |
+| Current action | Push the GUI port commit, update PR metadata with its SHA, then wait for final matrix confirmation. **Do not merge yet.** |
 
-The docs/hygiene commit, the subsequent formatting/Clippy fix commit and the
-post-download action feature commit each change the release SHA. The entire
-deterministic matrix must be rerun at the final SHA. Earlier results at
-`251cb71`, `70c56e5`, `07fd541` and `65f5f1e` are useful history but are not
-sufficient to unblock the merge.
+The docs/hygiene commit, the subsequent formatting/Clippy fix commit, the
+post-download action feature commit and the GUI port commit each change the
+release SHA. The entire deterministic matrix must be rerun at the final SHA.
+Earlier results at `251cb71`, `70c56e5`, `07fd541`, `65f5f1e` and the
+post-download feature commit are useful history but are not sufficient to
+unblock the merge.
 
 ## 1. Save evidence if it becomes available
 
@@ -101,12 +102,13 @@ the PR body before merging; do not silently drop `-D warnings`.
 
 An assistant-side `rustfmt 1.99.0-stable --check --edition 2021` run over all
 tracked `.rs` files, using the repository `rustfmt.toml`, reported no diffs after
-the fix. This is a static check only: the user-side `cargo fmt --all -- --check`
+the fix. The GUI port commit was checked with the same static formatter/parser
+pass. These are static checks only: the user-side `cargo fmt --all -- --check`
 command above remains the release gate.
 
-The post-download action feature commit changed the SHA again. Do not reuse the
-earlier `65f5f1e` matrix request as current; run the eight commands below at
-the final SHA.
+The post-download action feature commit and the GUI port commit changed the SHA
+again. Do not reuse the earlier `65f5f1e` matrix request as current; run the
+eight commands below at the final SHA.
 
 Test-only hooks must not be compiled into a production daemon. After any
 hook-enabled build, rebuild with default features before installing or running
@@ -144,6 +146,13 @@ Use the named filter; bare `--ignored` would also try the single-file test.
   Post-download actions tab. The setting is global, daemon-side and applies to
   all completed task types; it is skipped on headless daemons without a
   graphical session.
+- A GUI port commit replaces the basic `egui` layout with the design in
+  `docs/gui-design/index.html`, wires core IPC only, keeps unsupported controls
+  disabled with `TODO(state.md)` comments, and adds `state.md` as the living
+  backlog. It also exposes a global `SetLimit` control and bulk
+  pause/resume/remove-completed fan-out.
+- `README.md` and `CHANGELOG.md` describe the ported GUI, wired controls and
+  deferred work.
 
 No `.github/workflows` CI was added; validation remains manual on the user's PC.
 There are no assistant-side Cargo runs, GUI checks or peer connections.
@@ -173,6 +182,7 @@ then add release notes, binary checksums and a tag.
 ## 6. Current conclusion
 
 The docs/hygiene commit, the formatting/Clippy fix commit, the post-download
-action feature commit and PR metadata are prepared. The merge is blocked on one
-user-side gate: paste the green results for the full final matrix at the new
-SHA. Until then, PR #1 remains open and unmerged.
+action feature commit, the GUI port commit and PR metadata are prepared. The
+merge is blocked on one user-side gate: paste the green results for the full
+final matrix at the new SHA. Until then, PR #1 remains open and unmerged. See
+`state.md` for the long-term backlog; it is not a merge blocker.

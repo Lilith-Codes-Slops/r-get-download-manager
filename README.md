@@ -147,23 +147,28 @@ implemented.
 Build the daemon and GUI together with `cargo build --workspace --locked`,
 then run `./target/debug/downloader-gui`. The GUI starts or connects to the
 local daemon and polls its queue; restart any older running daemon after an
-upgrade so it understands the detailed queue protocol. Add HTTP/HTTPS URLs
-from the toolbar, select tasks to inspect progress, or browse files in the
-Downloads view. The displayed transfer rate is the average for the current
-transfer; upload/seeding is not supported. Theme overrides are session-only.
+upgrade so it understands the detailed queue protocol.
 
-The Downloads view lists regular files from `~/Downloads`, not a persistent
-history. Opening files uses the system file association. The daemon's queue is
-saved in SQLite. Eligible incomplete downloads can recover after restart as
-described above. The GUI exposes pause and resume for eligible tasks; Cancel
-stops an active transfer and keeps its history, while Delete asks for confirmation
-and permanently removes the task's recorded files and history. Failed or canceled
-tasks can be retried. GUI rate limiting and other disabled controls remain
-unavailable. User-directed split resizing is available for eligible split tasks.
-Metalink, multi-file magnets, v2/hybrid torrents, webseeds, file mutations and
-most post-download automation remain out of scope. The GUI uses the existing local
-IPC transport, not an HTTP/WebSocket service. Linux is the only currently
-supported daemon platform; the torrent path targets Linux GNU.
+The GUI is an `eframe`/`egui` port of the browser design mockup in
+[`docs/gui-design/index.html`](docs/gui-design/index.html). It keeps the ribbon,
+action bar, collapsible left rail, two-pane Tasks view, Downloads library,
+tabbed Settings dialog and status bar. Only **core IPC** is wired: add URL
+(HTTP/HTTPS or a local `.torrent` path), pause/resume/cancel/retry,
+remove/delete, bulk pause/resume/remove-completed fan-out, the live detailed
+queue and progress stream, split segment telemetry, live split-worker resizing,
+a global speed limit, and the daemon-wide **Open containing folder**
+post-download setting. See [`state.md`](state.md) for the exact wired/disabled
+matrix and the long-term backlog. Controls whose daemon support is not ready are
+visible but disabled with `// TODO(state.md):` comments in the source rather than
+hidden.
+
+Theme, compact mode, confirm-before-delete and in-app alerts are GUI-only and
+session-scoped. The Downloads view lists regular files from `~/Downloads`, not a
+persistent history; opening files uses the system file association. Upload,
+seeding, RSS, labels, favorites, editable categories, magnets, sounds, file
+mutations and the remaining post-download automation are deferred. The GUI uses
+the existing local IPC transport, not an HTTP/WebSocket service. Linux is the
+only currently supported daemon platform; the torrent path targets Linux GNU.
 
 ### Verifying a completed download
 
@@ -181,9 +186,11 @@ SQLite state, so it applies even when the GUI is closed. It is skipped on
 headless daemons without a graphical session environment and is not applied
 retroactively to tasks completed before the daemon started.
 
-The Post-download actions tab shows the current setting and links to Settings.
-Other placeholder actions (Close rGet, Verify checksum, Extract archive, Run
-antivirus scan, System power action) remain unimplemented.
+The tabbed Settings dialog exposes this global toggle under Post-download
+actions, and the redesigned Post-download actions tab shows its current value
+with a link to Settings. Other placeholder actions (Close rGet, Verify checksum,
+Extract archive, Run antivirus scan, System power action) remain unimplemented
+and are tracked in [`state.md`](state.md).
 
 ### V1 torrents
 

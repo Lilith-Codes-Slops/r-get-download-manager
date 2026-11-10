@@ -6,7 +6,7 @@ has been published.
 
 ## [0.1.0] — unreleased
 
-Status: PR #1 is open. Final verification at the exact post-feature SHA is
+Status: PR #1 is open. Final verification at the exact current SHA is
 pending, and no merge, tag, or GitHub Release has been created.
 
 ### Added
@@ -26,6 +26,11 @@ pending, and no merge, tag, or GitHub Release has been created.
 - A global **Open containing folder** post-download action, configured in GUI
   Settings, stored by the daemon and applied to HTTP, single-file torrent and
   multi-file torrent completions.
+- A redesigned `egui` GUI ported from the single-file browser mockup in
+  `docs/gui-design/index.html`: ribbon, action bar, collapsible left rail,
+  two-pane Tasks view, Downloads library, tabbed Settings and status bar.
+- `state.md`, a living backlog recording wired controls, disabled controls and
+  the long-term roadmap.
 
 ### Changed
 
@@ -36,6 +41,8 @@ pending, and no merge, tag, or GitHub Release has been created.
   variant. The serialized IPC event shape is unchanged.
 - Replace the disabled Post-download actions placeholder with a read-only
   status view and a link to the Settings control.
+- Replace the previous basic GUI layout with the ported design; keep every
+  daemon-unready control visible but disabled with `TODO(state.md)` comments.
 - Clarify Linux-only daemon support and the Linux GNU torrent target in
   `README.md`.
 - Mark `docs/torrent-phase-five.md` as an append-only engineering log and add a
@@ -53,10 +60,11 @@ pending, and no merge, tag, or GitHub Release has been created.
 - At `70c56e5`, the public-test guard suite reported 2 passed and 2 ignored.
 - A formatting/Clippy fix commit addressed the previously reported `rustfmt`
   diffs and `large_enum_variant` error at `07fd541`.
-- A post-download action feature commit changed the SHA again. The full matrix,
-  including `cargo fmt --check`, `cargo clippy -- -D warnings`, the Cargo test
-  suites and the release build, must still be rerun at the new final SHA. See
-  `docs/finalization.md`.
+- The post-download action feature commit and the subsequent GUI port commit each
+  changed the SHA again. The full matrix, including `cargo fmt --check`,
+  `cargo clippy -- -D warnings`, the Cargo test suites and the release build,
+  must still be rerun at the new final SHA. See `docs/finalization.md` and
+  `state.md`.
 
 ### Known limitations
 
@@ -70,10 +78,15 @@ pending, and no merge, tag, or GitHub Release has been created.
   independent implementation.
 - Cleanup assumes exclusive control of the private staging tree and is not
   hostile-same-user concurrency safe.
-- Windows daemon support, Metalink, mirrors, extraction, scheduling, GUI rate
-  limiting, file mutations, automatic checksums, unimplemented post-download
-  actions (close rGet, antivirus scans, system power actions) and a daemon-wide
-  graceful-shutdown barrier remain unimplemented. The global "open containing
-  folder" action is implemented; other automation is not.
+- Windows daemon support, Metalink, mirrors, extraction, scheduling, file
+  mutations, automatic checksums, unimplemented post-download actions (close
+  rGet, antivirus scans, system power actions) and a daemon-wide
+  graceful-shutdown barrier remain unimplemented. GUI rate limiting is now wired
+  as a global `SetLimit` control; the global "open containing folder" action is
+  implemented, other automation is not.
+- GUI-only preferences (theme, compact mode, alerts, categories) are
+  session-scoped. Upload/seeding, RSS, labels, favorites, editable categories,
+  magnets, sounds, native file picker and file mutations are disabled in the
+  ported GUI and tracked in `state.md`.
 - The earlier CachyOS single-file public run was a smoke test only and does not
   satisfy the multi-file acceptance criterion.
