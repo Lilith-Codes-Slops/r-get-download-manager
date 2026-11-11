@@ -85,6 +85,26 @@ fn restores_paused_state_and_truncates_only_uncheckpointed_tail() {
     assert_eq!(f.state.tasks["https://example.test/file"].state, "paused");
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn recovery_uses_task_root_not_the_fallback_root() {
+    let mut f = Fixture::new();
+    let other = f.dir.join("other");
+    std::fs::create_dir(&other).unwrap();
+    std::fs::copy(&f.partial, other.join(".rget-1-1.part")).unwrap();
+    std::fs::copy(&f.sidecar, other.join(".rget-1-1.part.meta")).unwrap();
+    f.state
+        .task_roots
+        .insert("https://example.test/file".into(), f.dir.clone());
+    let result = reconcile(&mut f.state, &other);
+    assert_eq!(result.len(), 1);
+    assert_eq!(std::fs::read(&f.partial).unwrap(), b"abcd");
+    assert_eq!(
+        std::fs::read(other.join(".rget-1-1.part")).unwrap(),
+        b"abcdtail"
+    );
+}
+
 #[test]
 fn missing_or_corrupt_sidecar_never_truncates_the_partial() {
     for corrupt in [false, true] {

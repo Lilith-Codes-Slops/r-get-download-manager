@@ -5,10 +5,11 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-/// Minimal single-stream HTTP download into ~/Downloads with live progress.
+/// Minimal single-stream HTTP download into the task's root with live progress.
 pub(super) async fn download_file(
     url: &str,
     connections: u8,
+    root: &std::path::Path,
     tasks: Arc<Mutex<BTreeMap<String, DownloadInfo>>>,
     limiter: Arc<super::bandwidth::BandwidthLimiter>,
     store: Arc<super::persistence::Persistence>,
@@ -118,10 +119,7 @@ pub(super) async fn download_file(
             }
         }
     }
-    let dest = dirs_home()
-        .ok_or("HOME is not set; cannot determine the Downloads directory")?
-        .join("Downloads")
-        .join(filename);
+    let dest = root.join(filename);
 
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -135,6 +133,7 @@ pub(super) async fn download_file(
         .ok_or("invalid destination filename")?;
     if let Some(task) = tasks.lock().await.get_mut(url) {
         task.filename = Some(filename.to_owned());
+        task.destination_path = Some(dest.to_string_lossy().into_owned());
     }
 
     // Stream into a uniquely-created side file. Publishing with hard_link is
@@ -292,6 +291,7 @@ pub(super) async fn download_file(
     let dest = super::collision::publish(&temporary, &dest).await?;
     if let Some(task) = guard.get_mut(url) {
         task.filename = dest.file_name().and_then(|n| n.to_str()).map(str::to_owned);
+        task.destination_path = Some(dest.to_string_lossy().into_owned());
     }
     drop(guard);
     // A cleanup failure leaves only a redundant .part file, not a corrupted
@@ -349,9 +349,6 @@ async fn create_temporary_file(
     ))
 }
 
-fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
-}
 fn safe_filename(name: &str) -> Result<&str, std::io::Error> {
     use std::path::Component;
     let mut components = std::path::Path::new(name).components();

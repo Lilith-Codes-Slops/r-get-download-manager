@@ -19,6 +19,12 @@ mod control;
 mod destination;
 mod persistence;
 #[cfg(target_os = "linux")]
+mod download_directory;
+#[cfg(target_os = "linux")]
+mod gui_settings;
+#[cfg(target_os = "linux")]
+mod task_directory;
+#[cfg(target_os = "linux")]
 mod post_download;
 mod progress;
 #[cfg(target_os = "linux")]

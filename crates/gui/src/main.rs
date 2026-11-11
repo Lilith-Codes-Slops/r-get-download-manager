@@ -3,8 +3,10 @@
 mod categories;
 mod chrome;
 mod clipboard;
+mod config;
 #[path = "dialogs.rs"]
 mod dialogs;
+mod directory_scan;
 mod download_link;
 mod downloads;
 mod fake_backend;
@@ -21,6 +23,7 @@ mod row_layout;
 mod row_ui;
 mod search_model;
 mod settings;
+mod settings_client;
 mod settings_layout;
 mod settings_logic;
 mod shortcut_logic;
@@ -40,7 +43,7 @@ use eframe::egui;
 
 use fake_backend::{Command, FakeBackend, Scope, Selection, State, View};
 
-/// This process controls only the simulated backend, never the real daemon.
+/// The prototype's task model remains simulated; settings are daemon-owned.
 struct DownloadsApp {
     backend: FakeBackend,
     chrome: chrome::Chrome,
@@ -50,6 +53,11 @@ struct DownloadsApp {
     settings: settings::SettingsModal,
     clipboard: clipboard::Clipboard,
     torrent_picker: Option<(Receiver<native_file_dialog::PickResult>, u64)>,
+    download_directory: PathBuf,
+    directory_picker: Option<Receiver<native_file_dialog::PickResult>>,
+    directory_scan: Option<
+        Receiver<std::io::Result<(PathBuf, std::io::Result<Vec<fake_backend::LibraryItem>>)>>,
+    >,
     message: Option<String>,
     toast: Option<(String, Instant, bool)>,
     simulation_clock: simulation_clock::SimulationClock,
@@ -57,24 +65,32 @@ struct DownloadsApp {
 }
 
 impl DownloadsApp {
-    fn new(cc: &eframe::CreationContext<'_>) -> std::io::Result<Self> {
-        let backend = FakeBackend::open(PathBuf::from("data/state.json"))?;
+    fn new(
+        ctx: &egui::Context,
+        overrides: settings_client::Overrides,
+        download_directory: PathBuf,
+    ) -> std::io::Result<Self> {
+        let backend = FakeBackend::open_daemon(PathBuf::from("data/state.json"), overrides)?;
         let chrome = chrome::Chrome {
             view: backend.snapshot().view,
             theme: backend.snapshot().settings.theme,
             picking_torrent: false,
             search_open: false,
         };
-        theme::apply_theme(&cc.egui_ctx, chrome.theme.preference());
+        theme::apply_theme(ctx, chrome.theme.preference());
+        let scan = Self::start_directory_scan(ctx, download_directory.clone(), false);
         Ok(Self {
             backend,
             chrome,
             downloads: downloads::DownloadsView::default(),
             dialogs: dialogs::Dialogs::default(),
-            rail: rail::Rail::new(&cc.egui_ctx),
+            rail: rail::Rail::new(ctx),
             settings: settings::SettingsModal::default(),
             clipboard: clipboard::Clipboard::default(),
             torrent_picker: None,
+            download_directory,
+            directory_picker: None,
+            directory_scan: Some(scan),
             message: None,
             toast: None,
             simulation_clock: simulation_clock::SimulationClock::new(Instant::now()),
@@ -83,6 +99,116 @@ impl DownloadsApp {
                 .map(|duration| duration.as_nanos() as u64)
                 .unwrap_or(0x9e3779b97f4a7c15),
         })
+    }
+
+    fn start_directory_scan(
+        ctx: &egui::Context,
+        path: PathBuf,
+        save: bool,
+    ) -> Receiver<std::io::Result<(PathBuf, std::io::Result<Vec<fake_backend::LibraryItem>>)>> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = if save {
+                settings_client::set_directory(&path)
+            } else {
+                Ok(path)
+            };
+            let result = result.map(|path| {
+                let files = directory_scan::scan(&path);
+                (path, files)
+            });
+            let _ = sender.send(result);
+            ctx.request_repaint();
+        });
+        receiver
+    }
+
+    fn refresh_directory(&mut self, ctx: &egui::Context) {
+        if self.directory_picker.is_some() || self.directory_scan.is_some() {
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = settings_client::load_directory().map(|path| {
+                let files = directory_scan::scan(&path);
+                (path, files)
+            });
+            let _ = sender.send(result);
+            ctx.request_repaint();
+        });
+        self.directory_scan = Some(receiver);
+    }
+
+    fn poll_directory(&mut self, ctx: &egui::Context) {
+        if let Some(receiver) = &self.directory_picker {
+            let result = match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Disconnected) => {
+                    Some(Err("The folder dialog closed unexpectedly.".into()))
+                }
+                Err(TryRecvError::Empty) => None,
+            };
+            if let Some(result) = result {
+                self.directory_picker = None;
+                match result {
+                    Ok(Some(path)) => {
+                        self.directory_scan = Some(Self::start_directory_scan(ctx, path, true))
+                    }
+                    Ok(None) => {}
+                    Err(error) => self
+                        .settings
+                        .save_error(error, &self.backend.snapshot().settings),
+                }
+            }
+        }
+        if let Some(receiver) = &self.directory_scan {
+            let result = match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Disconnected) => {
+                    Some(Err(std::io::Error::other("The directory worker stopped")))
+                }
+                Err(TryRecvError::Empty) => None,
+            };
+            if let Some(result) = result {
+                self.directory_scan = None;
+                match result {
+                    Ok((path, files)) => {
+                        self.download_directory = path;
+                        match files {
+                            Ok(files) => {
+                                let mut state = self.backend.snapshot().clone();
+                                directory_scan::merge(&mut state, files);
+                                if let Err(error) =
+                                    self.backend.dispatch(Command::ReplaceState(state))
+                                {
+                                    self.message =
+                                        Some(format!("Could not update Downloads: {error}"));
+                                }
+                            }
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                let mut state = self.backend.snapshot().clone();
+                                directory_scan::merge(&mut state, Vec::new());
+                                if let Err(error) =
+                                    self.backend.dispatch(Command::ReplaceState(state))
+                                {
+                                    self.message =
+                                        Some(format!("Could not update Downloads: {error}"));
+                                }
+                            }
+                            Err(error) => {
+                                self.message =
+                                    Some(format!("Could not scan download folder: {error}"))
+                            }
+                        }
+                    }
+                    Err(error) => self
+                        .settings
+                        .save_error(error.to_string(), &self.backend.snapshot().settings),
+                }
+            }
+        }
     }
 
     fn dispatch(&mut self, command: Command) -> bool {
@@ -176,7 +302,10 @@ impl DownloadsApp {
                 self.dialogs.open_add(ctx);
             }
             Action::Torrent => self.open_torrent_picker(ctx),
-            Action::Settings => self.settings.open(ctx, &self.backend.snapshot().settings),
+            Action::Settings => {
+                self.refresh_directory(ctx);
+                self.settings.open(ctx, &self.backend.snapshot().settings);
+            }
             Action::Search => {
                 self.chrome.search_open = !self.backend.snapshot().library_filter.trim().is_empty();
                 ctx.memory_mut(|memory| memory.request_focus(egui::Id::unique("global_search")));
@@ -330,6 +459,7 @@ impl eframe::App for DownloadsApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_picker(ui.ctx());
+        self.poll_directory(ui.ctx());
         // A popup takes Escape first; an open modal otherwise handles it itself.
         if self.chrome.search_open
             && !self.modal_open()
@@ -445,6 +575,7 @@ impl eframe::App for DownloadsApp {
                     && !self.downloads.has_dialog()
                     && !self.settings.is_open()
                 {
+                    self.refresh_directory(ui.ctx());
                     self.settings
                         .open(ui.ctx(), &self.backend.snapshot().settings);
                 }
@@ -534,7 +665,14 @@ impl eframe::App for DownloadsApp {
             }
         }
         let current_settings = self.backend.snapshot().settings.clone();
-        if let Some(updated) = self.settings.show(ui.ctx(), &current_settings, palette) {
+        let directory_busy = self.directory_picker.is_some() || self.directory_scan.is_some();
+        if let Some(updated) = self.settings.show(
+            ui.ctx(),
+            &current_settings,
+            &self.download_directory,
+            directory_busy,
+            palette,
+        ) {
             let choice = updated.theme;
             match self.backend.dispatch(Command::SetSettings(updated)) {
                 Ok(()) => {
@@ -546,6 +684,37 @@ impl eframe::App for DownloadsApp {
                 Err(error) => {
                     self.settings
                         .save_error(error.to_string(), &current_settings);
+                }
+            }
+        }
+        if self.settings.take_browse_request() && !directory_busy {
+            self.directory_picker = Some(native_file_dialog::pick_directory(ui.ctx().clone()));
+        }
+        if self.settings.take_reset_request() {
+            if self.directory_picker.is_some() || self.directory_scan.is_some() {
+                self.settings.save_error(
+                    "Wait for the folder selection to finish before resetting.".into(),
+                    &current_settings,
+                );
+            } else {
+                match settings_client::reset() {
+                    Ok(()) => {
+                        let restart = std::env::current_exe().and_then(|exe| {
+                            std::process::Command::new(exe)
+                                .args(std::env::args_os().skip(1))
+                                .spawn()
+                        });
+                        match restart {
+                        Ok(_) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
+                        Err(error) => self.settings.save_error(
+                            format!("Settings were reset, but the GUI could not restart: {error}. Please restart it manually."),
+                            &current_settings,
+                        ),
+                    }
+                    }
+                    Err(error) => self
+                        .settings
+                        .save_error(error.to_string(), &current_settings),
                 }
             }
         }
@@ -687,10 +856,144 @@ fn selected_name(state: &State, selection: &Selection) -> Option<String> {
     }
 }
 
+enum StartupMessage {
+    Ready(settings_client::Overrides, PathBuf),
+    Unavailable,
+}
+
+struct StartupApp {
+    started: Instant,
+    updates: Receiver<StartupMessage>,
+    app: Option<DownloadsApp>,
+    unavailable: bool,
+    initialization_error: Option<String>,
+}
+
+impl StartupApp {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let (sender, updates) = std::sync::mpsc::channel();
+        let ctx = cc.egui_ctx.clone();
+        std::thread::spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(_) => {
+                    let _ = sender.send(StartupMessage::Unavailable);
+                    ctx.request_repaint();
+                    return;
+                }
+            };
+            let binary = std::env::current_exe()
+                .ok()
+                .and_then(|exe| {
+                    exe.parent().map(|dir| {
+                        dir.join(if cfg!(windows) {
+                            "downloader-core.exe"
+                        } else {
+                            "downloader-core"
+                        })
+                    })
+                })
+                .filter(|path| path.exists())
+                .unwrap_or_else(|| PathBuf::from("downloader-core"));
+            let spawner = downloader_ipc::DaemonAutospawner::new(binary);
+            loop {
+                let result = runtime
+                    .block_on(spawner.ensure_running())
+                    .ok()
+                    .and_then(|()| {
+                        Some((
+                            settings_client::load().ok()?,
+                            settings_client::load_directory().ok()?,
+                        ))
+                    });
+                let ready = result.is_some();
+                let message = match result {
+                    Some((settings, path)) => StartupMessage::Ready(settings, path),
+                    None => StartupMessage::Unavailable,
+                };
+                if sender.send(message).is_err() {
+                    return;
+                }
+                ctx.request_repaint();
+                if ready {
+                    return;
+                }
+                std::thread::sleep(Duration::from_secs(2));
+            }
+        });
+        Self {
+            started: Instant::now(),
+            updates,
+            app: None,
+            unavailable: false,
+            initialization_error: None,
+        }
+    }
+}
+
+impl eframe::App for StartupApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        if let Some(app) = &mut self.app {
+            eframe::App::raw_input_hook(app, ctx, input);
+        } else if let Some(max_side) = &mut input.max_texture_side {
+            *max_side = (*max_side).min(graphics::FONT_ATLAS_MAX_SIDE);
+        }
+    }
+
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.app.is_none() {
+            while let Ok(message) = self.updates.try_recv() {
+                match message {
+                    StartupMessage::Ready(overrides, path) => {
+                        match DownloadsApp::new(ctx, overrides, path) {
+                            Ok(app) => self.app = Some(app),
+                            Err(error) => self.initialization_error = Some(error.to_string()),
+                        }
+                    }
+                    StartupMessage::Unavailable => self.unavailable = true,
+                }
+            }
+            if self.app.is_none() {
+                if self.started.elapsed() >= Duration::from_secs(38) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    ctx.request_repaint_after(Duration::from_millis(250));
+                }
+            }
+        }
+        if let Some(app) = &mut self.app {
+            eframe::App::logic(app, ctx, frame);
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        if let Some(app) = &mut self.app {
+            eframe::App::ui(app, ui, frame);
+            return;
+        }
+        egui::CentralPanel::default().show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                if let Some(error) = &self.initialization_error {
+                    ui.label(format!("Could not initialize the GUI: {error}"));
+                } else if self.unavailable {
+                    ui.label("Downloader daemon is not running");
+                    #[cfg(not(target_os = "linux"))]
+                    ui.label("The downloader daemon is currently supported on Linux only.");
+                } else {
+                    ui.label("Starting downloader daemon…");
+                }
+            });
+        });
+    }
+}
+
 fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Downloads",
         graphics::native_options(),
-        Box::new(|cc| Ok(Box::new(DownloadsApp::new(cc)?))),
+        Box::new(|cc| Ok(Box::new(StartupApp::new(cc)))),
     )
 }

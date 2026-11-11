@@ -16,6 +16,8 @@ pub(super) struct SavedState {
     pub global_kbps: u64,
     pub task_kbps: HashMap<String, u64>,
     pub prior_states: HashMap<String, String>,
+    #[cfg(target_os = "linux")]
+    pub task_roots: HashMap<String, PathBuf>,
     pub checkpoints: HashMap<String, RecoveryRecord>,
     #[cfg(target_os = "linux")]
     pub split_checkpoints: HashMap<String, super::split::checkpoint::SplitRecord>,
@@ -313,6 +315,7 @@ fn load(path: &Path) -> StoreResult<SavedState> {
     }
     #[cfg(target_os = "linux")]
     {
+        result.task_roots = super::task_directory::load_queue_roots(&conn)?;
         result.split_checkpoints = super::split::startup::load_records(&conn)?;
     }
     let mut statement = conn.prepare("SELECT id, kbps FROM rget_rates_v1")?;

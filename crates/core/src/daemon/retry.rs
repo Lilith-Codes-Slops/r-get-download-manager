@@ -58,15 +58,16 @@ pub(super) async fn run(
     control: watch::Receiver<TransferControl>,
 ) -> Result<PathBuf> {
     let mut decision = Decision::Fresh;
+    let root = store.task_directory(url).await?;
     if let Some(old) = prior
         .as_ref()
         .filter(|task| task.state != "completed" && task.state != "canceled")
     {
         let mut saved = store.load().await?;
-        let root =
-            PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join("Downloads");
+        let task_root = root.clone();
         let old = old.clone();
-        decision = tokio::task::spawn_blocking(move || decide(&mut saved, &root, &old)).await?;
+        decision =
+            tokio::task::spawn_blocking(move || decide(&mut saved, &task_root, &old)).await?;
     }
     {
         let mut guard = tasks.lock().await;
@@ -77,6 +78,11 @@ pub(super) async fn run(
         match &decision {
             Decision::Single(item) => {
                 task.filename = Some(item.record.filename.clone());
+                task.destination_path = Some(
+                    root.join(&item.record.filename)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
                 task.partial_name = Some(item.record.partial_name.clone());
                 task.downloaded = item.record.downloaded;
                 task.total = Some(item.record.total);
@@ -85,6 +91,11 @@ pub(super) async fn run(
             }
             Decision::Split(item) => {
                 task.filename = Some(item.record.filename.clone());
+                task.destination_path = Some(
+                    root.join(&item.record.filename)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
                 task.partial_name = Some(item.record.partial_name.clone());
                 task.downloaded = item
                     .record
@@ -111,9 +122,7 @@ pub(super) async fn run(
             super::recovered_transfer::run(*item, tasks, limiter, store, control).await
         }
         Decision::Split(item) => {
-            let partial = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?)
-                .join("Downloads")
-                .join(&item.record.partial_name);
+            let partial = root.join(&item.record.partial_name);
             let client = reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(30))
                 .read_timeout(std::time::Duration::from_secs(60))
@@ -125,6 +134,7 @@ pub(super) async fn run(
             super::transfer::download_file(
                 url,
                 connections,
+                &root,
                 tasks,
                 limiter,
                 store,

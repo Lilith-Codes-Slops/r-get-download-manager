@@ -17,7 +17,7 @@ use librqbit::{
     storage::StorageFactoryExt, AddTorrent, AddTorrentOptions, AddTorrentResponse, Session,
 };
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -62,12 +62,12 @@ pub(super) async fn run(
     if *control.borrow() == TransferControl::Canceled {
         return Err("torrent canceled".into());
     }
+    let root = store.task_directory(id).await?;
     // The metadata state and task identity must be durable before reservation.
     store.save(tasks, limiter).await?;
     let reservation = store
         .save_manifest_info_and_reserve(tasks, id, &prepared.info_hash, &manifest, &bytes)
         .await?;
-    let root = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join("Downloads");
     tokio::fs::create_dir_all(&root).await?;
     let opened = open_root(&root).await?;
     let stage = reservation.allocate(opened).await?;

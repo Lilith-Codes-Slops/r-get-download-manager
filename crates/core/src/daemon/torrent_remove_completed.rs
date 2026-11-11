@@ -215,6 +215,9 @@ impl Persistence {
         let root = root.to_owned();
         tokio::task::spawn_blocking(move || -> Result<()> {
             let (_lifecycle, _gate) = (lifecycle, gate);
+            if super::task_directory::resolve(&database, &task.url, &root)? != root {
+                return Err("task directory changed during removal; retry".into());
+            }
             execute(&database, &root, &task, false)?;
             tasks.remove(&task.url);
             Ok(())

@@ -2,7 +2,7 @@
 use super::bandwidth::BandwidthLimiter;
 use super::control::{Controls, Tasks, TransferControl};
 use downloader_ipc::{DaemonEvent, DownloadInfo};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -54,8 +54,10 @@ pub(super) async fn remove(
     tasks: &Tasks,
     controls: &Controls,
     limiter: &Arc<BandwidthLimiter>,
+    store: &super::persistence::Persistence,
     id: String,
     delete_file: bool,
+    root: Option<&Path>,
 ) -> DaemonEvent {
     // Wait for the worker to close/clean its partial before unlinking or allowing
     // a new transfer with the same URL. Do not hold the task lock while waiting.
@@ -78,7 +80,17 @@ pub(super) async fn remove(
             drop(guard);
         } else {
             if delete_file {
-                if let Err(error) = remove_owned_files(task).await {
+                #[cfg(target_os = "linux")]
+                match store.task_directory(&id).await {
+                    Ok(current) if root == Some(current.as_path()) => {}
+                    Ok(_) => return failed(id, "task directory changed during removal; retry"),
+                    Err(error) => {
+                        return failed(id, &format!("cannot resolve task directory: {error}"))
+                    }
+                }
+                #[cfg(not(target_os = "linux"))]
+                let _ = store;
+                if let Err(error) = remove_owned_files(task, root).await {
                     return failed(id, &error);
                 }
             }
@@ -132,7 +144,7 @@ async fn unlink_if_present(path: &Path) -> Result<(), String> {
     }
 }
 
-async fn remove_owned_files(task: &DownloadInfo) -> Result<(), String> {
+async fn remove_owned_files(task: &DownloadInfo, root: Option<&Path>) -> Result<(), String> {
     if task.final_path.is_none()
         && task.partial_name.is_none()
         && task
@@ -143,8 +155,8 @@ async fn remove_owned_files(task: &DownloadInfo) -> Result<(), String> {
     {
         return Ok(());
     }
-    let root = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join("Downloads");
-    remove_files_in(task, &root).await
+    let root = root.ok_or("task download root is unavailable")?;
+    remove_files_in(task, root).await
 }
 
 async fn remove_files_in(task: &DownloadInfo, root: &Path) -> Result<(), String> {

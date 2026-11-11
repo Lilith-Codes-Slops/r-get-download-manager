@@ -18,6 +18,52 @@ pub fn pick_torrent(ctx: eframe::egui::Context) -> Receiver<PickResult> {
     receiver
 }
 
+/// Choose a directory without blocking the UI thread.
+pub fn pick_directory(ctx: eframe::egui::Context) -> Receiver<PickResult> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(pick_directory_impl());
+        ctx.request_repaint();
+    });
+    receiver
+}
+
+#[cfg(target_os = "linux")]
+fn pick_directory_impl() -> PickResult {
+    let candidates: &[(&str, &[&str])] = &[
+        (
+            "zenity",
+            &[
+                "--file-selection",
+                "--directory",
+                "--title=Choose download folder",
+            ],
+        ),
+        (
+            "kdialog",
+            &[
+                "--title",
+                "Choose download folder",
+                "--getexistingdirectory",
+                "",
+            ],
+        ),
+    ];
+    for (program, args) in candidates {
+        match Command::new(program).args(*args).output() {
+            Ok(output) => return parse_output(output, *program == "zenity"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("Could not open the folder dialog: {error}")),
+        }
+    }
+    Err("A native folder dialog needs zenity or kdialog installed.".into())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pick_directory_impl() -> PickResult {
+    Err("The downloader daemon is supported on Linux only.".into())
+}
+
 #[cfg(target_os = "linux")]
 fn pick() -> PickResult {
     let candidates: &[(&str, &[&str])] = &[

@@ -130,6 +130,7 @@ pub(super) async fn run(
             .file_name()
             .and_then(|n| n.to_str())
             .map(str::to_owned);
+        task.destination_path = Some(final_path.to_string_lossy().into_owned());
     }
     drop(guard);
     let _ = tokio::fs::remove_file(&item.partial).await;

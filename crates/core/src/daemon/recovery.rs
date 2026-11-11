@@ -55,6 +55,10 @@ fn choose(
 pub(super) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<PreparedRecovery> {
     let mut prepared = Vec::new();
     for (id, previous_state) in saved.prior_states.clone() {
+        #[cfg(target_os = "linux")]
+        let task_root = saved.task_roots.get(&id).cloned();
+        #[cfg(target_os = "linux")]
+        let root = task_root.as_deref().unwrap_or(root);
         if restore_published_file(saved, root, &id) {
             continue;
         }
@@ -66,6 +70,11 @@ pub(super) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<PreparedReco
                     task.downloaded = item.record.downloaded;
                     task.total = Some(item.record.total);
                     task.filename = Some(item.record.filename.clone());
+                    task.destination_path = Some(
+                        root.join(&item.record.filename)
+                            .to_string_lossy()
+                            .into_owned(),
+                    );
                     task.resume_supported = true;
                     task.speed_bps = 0;
                 }

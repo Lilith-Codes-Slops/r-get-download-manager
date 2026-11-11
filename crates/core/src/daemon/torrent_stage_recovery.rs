@@ -33,23 +33,6 @@ pub(super) fn recover(database: &Path, root: &Path) -> Result<Report> {
     if entries.is_empty() {
         return Ok(report);
     }
-    let active = entries.iter().any(|entry| entry.state == State::Staging);
-    let area = if active {
-        match OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(root)
-            .and_then(|root| StageArea::open_existing(&root))
-        {
-            Ok(area) => Some(area),
-            Err(error) => {
-                tracing::warn!(%error, root = %root.display(), "staging parent unavailable; recovery retains records");
-                None
-            }
-        }
-    } else {
-        None
-    };
     for entry in entries {
         match entry.state {
             State::Retained => {
@@ -60,9 +43,20 @@ pub(super) fn recover(database: &Path, root: &Path) -> Result<Report> {
                 tracing::warn!(task_id = %entry.task_id, stage = %entry.name, "unconfirmed staging reservation retained for inspection");
             }
             State::Staging => {
-                let Some(area) = &area else {
-                    report.unresolved += 1;
-                    continue;
+                let area = match (|| -> Result<StageArea> {
+                    let task_root = super::task_directory::resolve(database, &entry.task_id, root)?;
+                    let opened = OpenOptions::new()
+                        .read(true)
+                        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                        .open(&task_root)?;
+                    Ok(StageArea::open_existing(&opened)?)
+                })() {
+                    Ok(area) => area,
+                    Err(error) => {
+                        report.unresolved += 1;
+                        tracing::warn!(task_id = %entry.task_id, %error, "staging parent unavailable; recovery retains record");
+                        continue;
+                    }
                 };
                 let Some(identity) = entry.identity.as_ref() else {
                     report.unresolved += 1;
@@ -76,7 +70,7 @@ pub(super) fn recover(database: &Path, root: &Path) -> Result<Report> {
                 match eligible {
                     Ok(true) => match torrent_stage_store::cleanup_recorded(
                         database,
-                        area,
+                        &area,
                         &entry.task_id,
                         &entry.name,
                         false,

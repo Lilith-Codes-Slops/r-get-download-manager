@@ -2,7 +2,7 @@
 
 High-performance Rust download manager for Linux.
 
-> Torrent support targets Linux GNU. Windows daemon support is not implemented.
+> The daemon and daemon-connected GUI currently support Linux only. Windows and macOS daemon transport is not implemented; the GUI gates startup on those platforms. Torrent support targets Linux GNU.
 
 ## Build
 
@@ -146,8 +146,10 @@ implemented.
 
 The GUI is being rebuilt as a native `eframe`/`egui` prototype, using
 [`docs/gui-design/index.html`](docs/gui-design/index.html) as a visual and
-behavioral reference. It uses a **simulated** backend only: neither the sample
-items nor actions control the real downloader daemon. The old daemon-connected
+behavioral reference. Its tasks and download actions use a **simulated** backend:
+neither the sample items nor those actions control the real downloader daemon.
+The GUI starts the Linux daemon and uses its IPC socket for settings, category
+overrides and the download directory. Closing the GUI does not shut down the daemon. The old daemon-connected
 GUI sources remain in `crates/gui/src` but are not compiled by the prototype
 entry point.
 
@@ -168,9 +170,11 @@ while system-font fallback remains enabled. GPU drivers and display settings
 influence memory use; no specific RSS or responsiveness is guaranteed.
 
 The prototype creates `data/state.json` relative to its working directory on
-first launch, with sample tasks, a seed and a library item. Changes are saved
-there, and an existing empty state is not reseeded. Invalid state files are not
-overwritten. The file is ignored by Git. The Add download dialog accepts up to five
+first launch, with sample tasks, a seed and a library item. Simulated task and
+library changes are saved there; settings and category overrides are stored by
+the daemon in its database instead. Reset to Defaults clears those overrides and
+restarts the GUI without deleting task history or files. An existing empty state
+is not reseeded. Invalid state files are not overwritten. The file is ignored by Git. The Add download dialog accepts up to five
 nonempty link entries and creates simulated tasks; it does not validate or fetch them.
 Properties for one selected
 task, seed, or library item are available from its row context menu. The prototype's native
@@ -191,7 +195,12 @@ progress, eight segments, and pause/resume/retry controls; seeds can be stopped
 and restarted. Rows support multi-selection and compact spacing. The Downloads library supports
 search and editable, persisted categories. Settings (top bar or Ctrl/Cmd+,)
 are saved immediately, including theme, compact mode, alerts, delete confirmation,
-concurrency, speed limit and seed ratio. The speed limit is shared across the
+concurrency, speed limit and seed ratio. Downloads settings show the daemon's
+current folder and offer a native folder picker (on Linux, zenity or kdialog is
+required). The selected folder is scanned without moving files. New daemon tasks
+use that folder; existing task and recovery records retain their original root.
+Pre-upgrade tasks are bound to the historical `$HOME/Downloads` root, because that
+is where earlier versions actually wrote files, even if the XDG setting differs. The speed limit is shared across the
 Downloads and Network sections. Sound switches are disabled: this prototype never
 plays audio. Row context menus and ribbon Help/Commands dropdowns operate on the fake
 state. Keyboard shortcuts include Ctrl/Cmd+N or O to add, Ctrl/Cmd+M (or

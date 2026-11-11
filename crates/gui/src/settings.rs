@@ -1,4 +1,4 @@
-//! The native settings modal, backed exclusively by the persisted fake state.
+//! The native settings modal; the caller persists changes through the daemon.
 use eframe::egui::{
     self, Align, Button, Color32, FontId, Frame, Id, Layout, Margin, RichText, ScrollArea, Sense,
     Stroke, UiBuilder, Vec2,
@@ -38,6 +38,9 @@ pub struct SettingsModal {
     speed_text: String,
     speed_dirty: bool,
     error: Option<String>,
+    reset_confirmation: bool,
+    reset_requested: bool,
+    browse_requested: bool,
 }
 
 impl Default for SettingsModal {
@@ -50,6 +53,9 @@ impl Default for SettingsModal {
             speed_text: String::new(),
             speed_dirty: false,
             error: None,
+            reset_confirmation: false,
+            reset_requested: false,
+            browse_requested: false,
         }
     }
 }
@@ -66,6 +72,12 @@ impl SettingsModal {
         self.speed_text = format_speed(settings.speed_limit_kbps);
         self.speed_dirty = false;
         self.error = None;
+    }
+    pub fn take_reset_request(&mut self) -> bool {
+        std::mem::take(&mut self.reset_requested)
+    }
+    pub fn take_browse_request(&mut self) -> bool {
+        std::mem::take(&mut self.browse_requested)
     }
     pub fn save_error(&mut self, message: String, settings: &Settings) {
         self.open = true;
@@ -98,9 +110,32 @@ impl SettingsModal {
         &mut self,
         ctx: &egui::Context,
         current: &Settings,
+        download_directory: &std::path::Path,
+        picking_directory: bool,
         palette: Theme,
     ) -> Option<Settings> {
         if !self.open {
+            return None;
+        }
+        if self.reset_confirmation {
+            let mut cancel = false;
+            let response = modal_style::modal("reset_settings_confirmation", palette).show(ctx, |ui| {
+                ui.set_width(modal_style::width(ctx, 420.0));
+                ui.label(RichText::new("Reset to Defaults?").size(17.0).strong().color(palette.text));
+                ui.add_space(12.0);
+                ui.label("Settings and categories will be reset. Tasks and download history will be kept. The GUI will restart.");
+                ui.add_space(16.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() { cancel = true; }
+                    if ui.button("Reset to Defaults").clicked() {
+                        self.reset_requested = true;
+                        cancel = true;
+                    }
+                });
+            });
+            if cancel || response.should_close() {
+                self.reset_confirmation = false;
+            }
             return None;
         }
         let mut settings = current.clone();
@@ -153,6 +188,35 @@ impl SettingsModal {
                             );
                         }
                         Tab::Downloads => {
+                            setting_row(
+                                ui,
+                                palette,
+                                "Download folder",
+                                &download_directory.to_string_lossy(),
+                                false,
+                                false,
+                                |ui| {
+                                    let response = ui.add_enabled(
+                                        !picking_directory,
+                                        Button::new(crate::icons::atom(
+                                            crate::icons::Icon::Folder,
+                                            16.0,
+                                            palette.text,
+                                        ))
+                                        .min_size(Vec2::splat(30.0)),
+                                    );
+                                    response.widget_info(|| {
+                                        egui::WidgetInfo::labeled(
+                                            egui::Role::Button,
+                                            !picking_directory,
+                                            "Browse download folder",
+                                        )
+                                    });
+                                    if response.on_hover_text("Browse download folder").clicked() {
+                                        self.browse_requested = true;
+                                    }
+                                },
+                            );
                             setting_row(
                                 ui,
                                 palette,
@@ -269,6 +333,19 @@ impl SettingsModal {
                                         &mut settings.confirm_delete,
                                         "Confirm before delete",
                                     );
+                                },
+                            );
+                            setting_row(
+                                ui,
+                                palette,
+                                "Reset to Defaults",
+                                "Restore settings and categories to their defaults",
+                                false,
+                                false,
+                                |ui| {
+                                    if ui.button("Reset to Defaults").clicked() {
+                                        self.reset_confirmation = true;
+                                    }
                                 },
                             );
                         }

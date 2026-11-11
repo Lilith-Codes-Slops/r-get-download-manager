@@ -29,19 +29,13 @@ pub(super) struct Report {
 pub(super) fn recover(database: &Path, path: &Path) -> Result<Report> {
     let intents = torrent_publish_intent::load(database)?;
     let mut report = Report::default();
-    let has_retained = torrent_stage_store::load(database)?
-        .iter()
-        .any(|entry| entry.state == torrent_stage_store::State::Retained);
-    if intents.is_empty() && !has_retained {
-        return Ok(report);
-    }
-    let root = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(path)?;
-    let area = StageArea::open_existing(&root)?;
     for intent in intents {
-        match reconcile_one(database, path, &root, &area, &intent) {
+        let result = (|| -> Result<bool> {
+            let task_root = super::task_directory::resolve(database, &intent.stage.task_id, path)?;
+            let (root, area) = open_area(&task_root)?;
+            reconcile_one(database, &task_root, &root, &area, &intent)
+        })();
+        match result {
             Ok(true) => report.completed += 1,
             Ok(false) => {
                 report.unresolved += 1;
@@ -60,7 +54,12 @@ pub(super) fn recover(database: &Path, path: &Path) -> Result<Report> {
         if entry.state != torrent_stage_store::State::Retained {
             continue;
         }
-        match clean_completed(database, &area, &entry) {
+        let result = (|| -> Result<bool> {
+            let task_root = super::task_directory::resolve(database, &entry.task_id, path)?;
+            let (_, area) = open_area(&task_root)?;
+            clean_completed(database, &area, &entry)
+        })();
+        match result {
             Ok(true) => report.cleaned += 1,
             Ok(false) => {}
             Err(error) => {
@@ -70,6 +69,15 @@ pub(super) fn recover(database: &Path, path: &Path) -> Result<Report> {
         }
     }
     Ok(report)
+}
+
+fn open_area(path: &Path) -> Result<(File, StageArea)> {
+    let root = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)?;
+    let area = StageArea::open_existing(&root)?;
+    Ok((root, area))
 }
 
 fn clean_completed(

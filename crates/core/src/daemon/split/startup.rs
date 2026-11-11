@@ -91,6 +91,8 @@ fn already_published(saved: &mut SavedState, root: &Path, id: &str, partial: &Pa
 pub(in crate::daemon) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<PreparedSplit> {
     let mut result = Vec::new();
     for (id, prior) in saved.prior_states.clone() {
+        let task_root = saved.task_roots.get(&id).cloned();
+        let root = task_root.as_deref().unwrap_or(root);
         let Some(name) = saved
             .tasks
             .get(&id)
@@ -141,6 +143,11 @@ pub(in crate::daemon) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<P
                     task.downloaded = item.record.segments.iter().map(|s| s.downloaded).sum();
                     task.total = Some(item.record.total);
                     task.filename = Some(item.record.filename.clone());
+                    task.destination_path = Some(
+                        root.join(&item.record.filename)
+                            .to_string_lossy()
+                            .into_owned(),
+                    );
                     task.speed_bps = 0;
                     task.resume_supported = true;
                     task.requested_connections = Some(

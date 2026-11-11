@@ -214,6 +214,14 @@ pub enum DaemonEvent {
     QueueSnapshot {
         tasks: Vec<String>,
     },
+    /// User-specified GUI settings; missing keys fall back to defaults.
+    GuiSettings {
+        overrides: std::collections::BTreeMap<String, serde_json::Value>,
+    },
+    /// Directory used for newly admitted tasks.
+    DownloadDirectory {
+        path: String,
+    },
     /// Current daemon-wide post-download action settings.
     PostDownloadSettings {
         settings: PostDownloadSettings,
@@ -347,6 +355,26 @@ mod tests {
                 .files,
             None
         );
+    }
+
+    #[test]
+    fn gui_settings_overrides_roundtrip() {
+        let event = DaemonEvent::GuiSettings {
+            overrides: [("theme".to_owned(), serde_json::json!("dark"))]
+                .into_iter()
+                .collect(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
+    }
+
+    #[test]
+    fn download_directory_roundtrips() {
+        let event = DaemonEvent::DownloadDirectory {
+            path: "/tmp/downloads".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
     }
 
     #[test]

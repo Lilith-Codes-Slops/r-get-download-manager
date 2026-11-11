@@ -22,7 +22,13 @@ impl CommandDispatcher {
             ClientRequest::AddMirror { .. } => Ok(()),
             ClientRequest::SelectMediaQuality { .. } => Ok(()),
             ClientRequest::VerifyChecksum { .. } => Ok(()),
-            ClientRequest::GetPostDownloadSettings
+            ClientRequest::GetGuiSettings
+            | ClientRequest::SetGuiSetting { .. }
+            | ClientRequest::UpdateGuiSettings { .. }
+            | ClientRequest::ResetGuiSettings
+            | ClientRequest::GetDownloadDirectory
+            | ClientRequest::SetDownloadDirectory { .. }
+            | ClientRequest::GetPostDownloadSettings
             | ClientRequest::SetPostDownloadSettings { .. } => Ok(()),
             ClientRequest::Shutdown => Ok(()),
         }

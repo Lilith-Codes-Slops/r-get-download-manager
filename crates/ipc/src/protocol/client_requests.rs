@@ -68,6 +68,27 @@ pub enum ClientRequest {
         algorithm: String,
         expected: String,
     },
+    /// Read GUI setting overrides; absent keys use the GUI's hardcoded defaults.
+    GetGuiSettings,
+    /// Atomically set or remove one GUI setting override. Clients remove an
+    /// override when its value equals the hardcoded default. `None` removes it;
+    /// JSON null is not an override value.
+    SetGuiSetting {
+        key: String,
+        value: Option<serde_json::Value>,
+    },
+    /// Apply multiple override changes in one transaction. A null value removes
+    /// an override and lets the client use its hardcoded default.
+    UpdateGuiSettings {
+        changes: std::collections::BTreeMap<String, Option<serde_json::Value>>,
+    },
+    /// Clear GUI setting overrides without modifying tasks or history.
+    ResetGuiSettings,
+    /// Read or update the daemon-wide directory for new downloads.
+    GetDownloadDirectory,
+    SetDownloadDirectory {
+        path: String,
+    },
     /// Read the daemon-wide post-download action settings.
     GetPostDownloadSettings,
     /// Update the daemon-wide post-download action settings.
@@ -75,4 +96,43 @@ pub enum ClientRequest {
         settings: PostDownloadSettings,
     },
     Shutdown,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gui_settings_requests_round_trip() {
+        for request in [
+            ClientRequest::GetGuiSettings,
+            ClientRequest::SetGuiSetting {
+                key: "theme".into(),
+                value: Some(serde_json::json!("dark")),
+            },
+            ClientRequest::SetGuiSetting {
+                key: "theme".into(),
+                value: None,
+            },
+            ClientRequest::UpdateGuiSettings {
+                changes: [
+                    ("theme".into(), Some(serde_json::json!("dark"))),
+                    ("compact".into(), None),
+                ]
+                .into_iter()
+                .collect(),
+            },
+            ClientRequest::ResetGuiSettings,
+            ClientRequest::GetDownloadDirectory,
+            ClientRequest::SetDownloadDirectory {
+                path: "/tmp/downloads".into(),
+            },
+        ] {
+            let json = serde_json::to_string(&request).unwrap();
+            assert_eq!(
+                serde_json::from_str::<ClientRequest>(&json).unwrap(),
+                request
+            );
+        }
+    }
 }

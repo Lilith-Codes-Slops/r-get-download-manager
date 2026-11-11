@@ -146,6 +146,7 @@ pub(in crate::daemon) async fn run(
     let dest = crate::daemon::collision::publish(&partial, &dest).await?;
     if let Some(task) = guard.get_mut(&id) {
         task.filename = dest.file_name().and_then(|n| n.to_str()).map(str::to_owned);
+        task.destination_path = Some(dest.to_string_lossy().into_owned());
     }
     drop(guard);
     let _ = tokio::fs::remove_file(&partial).await;

@@ -74,6 +74,7 @@ pub(super) async fn add(
             false
         }
     };
+    let admission = store.gate.lock().await;
     let mut guard = tasks.lock().await;
     let duplicate = guard
         .values()
@@ -99,6 +100,9 @@ pub(super) async fn add(
             return DaemonEvent::TaskFailed { task_id: task.url.clone(), error: "remove the failed task with keep or delete before retrying its retained partial".into() };
         }
     }
+    let retry = duplicate
+        .as_ref()
+        .is_some_and(|task| task.state.starts_with("failed:") || task.state == "canceled");
     let (id, created_at, seed) = match duplicate {
         Some(task)
             if (task.torrent.as_ref().is_some_and(|t| t.source == source)
@@ -159,11 +163,18 @@ pub(super) async fn add(
         connection_note: Some("Torrent: pause, resume and speed limits are not available".into()),
         live_connections_supported: false,
     };
+    if let Err(error) = store.bind_task_directory_locked(&task, retry).await {
+        return DaemonEvent::TaskFailed {
+            task_id: id,
+            error: format!("could not bind task directory: {error}"),
+        };
+    }
     guard.insert(id.clone(), task);
     let ticket = concurrency_queue::global().register(id.clone());
     let (tx, rx) = watch::channel(TransferControl::Running);
     controls.lock().await.insert(id.clone(), tx);
     drop(guard);
+    drop(admission);
     let task_id = id.clone();
     tokio::spawn(async move {
         let mut receiver = rx.clone();
@@ -184,7 +195,7 @@ pub(super) async fn add(
                     )
                     .await
                 } else {
-                    run(&task_id, connections, &tasks, rx.clone(), prepared).await
+                    run(&task_id, connections, &tasks, &store, rx.clone(), prepared).await
                 };
                 (result, Some(permit))
             }
@@ -234,10 +245,11 @@ async fn run(
     id: &str,
     connections: u8,
     tasks: &Tasks,
+    store: &Persistence,
     mut control: watch::Receiver<TransferControl>,
     prepared: Prepared,
 ) -> Result<()> {
-    let root = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join("Downloads");
+    let root = store.task_directory(id).await?;
     tokio::fs::create_dir_all(&root).await?;
     let stage = make_stage(&root).await?;
     super::torrent_cleanup::write_marker(&stage, id).await?;
@@ -382,6 +394,7 @@ async fn download(
         task.filename = proposed
             .file_name()
             .map(|s| s.to_string_lossy().into_owned());
+        task.destination_path = Some(proposed.to_string_lossy().into_owned());
         task.total = meta.info.info().length;
         if let Some(identity) = &mut task.torrent {
             identity.metrics = Some(metrics.snapshot.clone());

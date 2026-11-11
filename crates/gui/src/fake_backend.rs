@@ -1,4 +1,4 @@
-//! Simulated data source. Nothing in this module starts or talks to a daemon.
+//! Simulated task data source; GUI settings can be persisted by the daemon.
 //! The `open`, `snapshot`, and `dispatch` method signatures remain unchanged.
 //! New behavior can be added as `Command` variants without changing that API.
 use std::fs::{self, OpenOptions};
@@ -120,10 +120,12 @@ pub struct State {
     pub selections: Vec<Selection>,
     pub selection_anchor: Option<Selection>,
     pub next_id: u64,
+    #[serde(default = "crate::config::default_settings")]
     pub settings: Settings,
     pub tasks: Vec<Task>,
     pub seeds: Vec<Seed>,
     pub library: Vec<LibraryItem>,
+    #[serde(default = "crate::config::default_categories")]
     pub categories: Vec<Category>,
     pub labels: Vec<String>,
     pub feeds: Vec<String>,
@@ -202,11 +204,17 @@ pub enum Command {
 pub struct FakeBackend {
     path: PathBuf,
     state: Arc<State>,
+    daemon_settings: bool,
 }
 
 impl FakeBackend {
     // FAKE_CONNECTION
+    #[allow(dead_code)]
     pub fn open(path: PathBuf) -> io::Result<Self> {
+        Self::open_internal(path, false)
+    }
+
+    fn open_internal(path: PathBuf, daemon_settings: bool) -> io::Result<Self> {
         let state = match fs::read(&path) {
             Ok(bytes) => {
                 let state: State = serde_json::from_slice(&bytes).map_err(invalid_data)?;
@@ -220,7 +228,11 @@ impl FakeBackend {
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 let state = sample_state();
-                save_state(&path, &state)?;
+                if daemon_settings {
+                    save_state_without_settings(&path, &state)?;
+                } else {
+                    save_state(&path, &state)?;
+                }
                 state
             }
             Err(error) => return Err(error),
@@ -228,7 +240,57 @@ impl FakeBackend {
         Ok(Self {
             path,
             state: Arc::new(state),
+            daemon_settings,
         })
+    }
+
+    /// Use daemon-owned settings while retaining the prototype's non-settings state.
+    pub fn open_daemon(
+        path: PathBuf,
+        mut overrides: crate::settings_client::Overrides,
+    ) -> io::Result<Self> {
+        let had_legacy_settings = match fs::read(&path) {
+            Ok(bytes) => {
+                let value: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(invalid_data)?;
+                value.get("settings").is_some() || value.get("categories").is_some()
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error),
+        };
+        let mut backend = Self::open_internal(path, true)?;
+        // Migrate an existing prototype's settings once, without overwriting a
+        // daemon database that already contains user overrides.
+        if had_legacy_settings && overrides.is_empty() {
+            let changes = crate::config::override_changes(
+                &crate::config::default_settings(),
+                &crate::config::default_categories(),
+                &backend.state.settings,
+                &backend.state.categories,
+            )
+            .map_err(io::Error::other)?;
+            if !changes.is_empty() {
+                overrides = crate::settings_client::update(changes)?;
+            }
+        }
+        let (settings, categories) =
+            crate::config::apply_overrides(&overrides).map_err(io::Error::other)?;
+        let mut state = (*backend.state).clone();
+        apply_command(&mut state, Command::SetSettings(settings))?;
+        state.categories = categories;
+        if state.selected_category != "all"
+            && state.selected_category != "other"
+            && !state
+                .categories
+                .iter()
+                .any(|category| category.id == state.selected_category)
+        {
+            state.selected_category = "all".into();
+        }
+        save_state_without_settings(&backend.path, &state)?;
+        backend.state = Arc::new(state);
+        backend.daemon_settings = true;
+        Ok(backend)
     }
 
     // FAKE_CONNECTION
@@ -262,7 +324,21 @@ impl FakeBackend {
                 "Unsupported prototype state version",
             ));
         }
-        save_state(&self.path, &next)?;
+        if self.daemon_settings {
+            let changes = crate::config::override_changes(
+                &self.state.settings,
+                &self.state.categories,
+                &next.settings,
+                &next.categories,
+            )
+            .map_err(io::Error::other)?;
+            save_state_without_settings(&self.path, &next)?;
+            if !changes.is_empty() {
+                crate::settings_client::update(changes)?;
+            }
+        } else {
+            save_state(&self.path, &next)?;
+        }
         self.state = Arc::new(next);
         Ok(())
     }
@@ -273,6 +349,20 @@ fn invalid_data(error: serde_json::Error) -> io::Error {
 }
 
 fn save_state(path: &Path, state: &State) -> io::Result<()> {
+    save_json(path, state)
+}
+
+fn save_state_without_settings(path: &Path, state: &State) -> io::Result<()> {
+    let mut value = serde_json::to_value(state).map_err(invalid_data)?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| io::Error::other("invalid prototype state"))?;
+    object.remove("settings");
+    object.remove("categories");
+    save_json(path, &value)
+}
+
+fn save_json(path: &Path, state: &impl Serialize) -> io::Result<()> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -780,34 +870,6 @@ fn select(state: &mut State, item: Selection, mode: SelectionMode, visible: &[Se
 }
 
 fn sample_state() -> State {
-    let categories = [
-        (
-            "images",
-            "Images",
-            "image",
-            "jpg jpeg png gif webp bmp dng heic",
-        ),
-        ("videos", "Videos", "video", "mkv mp4 avi mov webm"),
-        ("pdfs", "PDFs", "file", "pdf"),
-        (
-            "compressed",
-            "Compressed",
-            "archive",
-            "zip tar gz 7z rar bz2 xz",
-        ),
-        ("documents", "Documents", "file", "docx doc txt xlsx pptx"),
-        ("audio", "Audio", "music", "mp3 flac wav m4a ogg"),
-        ("software", "Software", "disc", "iso exe msi dmg deb apk"),
-    ]
-    .into_iter()
-    .map(|(id, name, icon, extensions)| Category {
-        id: id.into(),
-        name: name.into(),
-        icon: icon.into(),
-        extensions: extensions.split_whitespace().map(str::to_owned).collect(),
-        builtin: true,
-    })
-    .collect();
     State {
         version: 1,
         daemon_connected: true,
@@ -820,15 +882,7 @@ fn sample_state() -> State {
         selections: Vec::new(),
         selection_anchor: None,
         next_id: 20,
-        settings: Settings {
-            theme: ThemeChoice::System,
-            compact: false,
-            confirm_delete: true,
-            alerts: true,
-            max_concurrent: 5,
-            seed_ratio: 2.0,
-            speed_limit_kbps: None,
-        },
+        settings: crate::config::default_settings(),
         // Example URLs are deliberately non-routable. No sample points at a real local file.
         tasks: vec![Task {
             id: "t1".into(),
@@ -863,7 +917,7 @@ fn sample_state() -> State {
             size_mb: 12.0,
             finished: "Just now".into(),
         }],
-        categories,
+        categories: crate::config::default_categories(),
         labels: Vec::new(),
         feeds: Vec::new(),
         favorites: Vec::new(),
@@ -889,6 +943,24 @@ mod tests {
 
     fn remove_test_dir(path: &Path) {
         let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn daemon_state_file_excludes_settings_but_preserves_other_data() {
+        let path = test_path();
+        let mut state = sample_state();
+        state.settings.theme = ThemeChoice::Dark;
+        state.categories.clear();
+        let task_count = state.tasks.len();
+        save_state_without_settings(&path, &state).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(json.get("settings").is_none());
+        assert!(json.get("categories").is_none());
+        let restored: State = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.tasks.len(), task_count);
+        assert_eq!(restored.settings, crate::config::default_settings());
+        assert_eq!(restored.categories, crate::config::default_categories());
+        remove_test_dir(&path);
     }
 
     #[test]
