@@ -1,12 +1,13 @@
 //! Downloads library and editable category chips.
 use eframe::egui::{
-    self, Align2, Button, Color32, FontId, Id, Layout, Margin, Pos2, Rect, RichText, ScrollArea,
-    Sense, Stroke, TextEdit, UiBuilder, Vec2,
+    self, Align2, Button, Color32, FontId, Id, Layout, Pos2, Rect, RichText, ScrollArea, Sense,
+    Stroke, TextEdit, UiBuilder, Vec2,
 };
 
 use crate::categories::{category_name, category_of, filtered_library};
 use crate::fake_backend::{Command, LibraryItem, Scope, Selection, SelectionMode, State};
 use crate::icons::{self, Icon};
+use crate::modal_style;
 use crate::row_layout::{self, LIBRARY_COLUMNS};
 use crate::theme::Theme;
 
@@ -24,6 +25,7 @@ enum Dialog {
         id: Option<String>,
         name: String,
         extensions: String,
+        icon: String,
         error: Option<String>,
     },
     Delete {
@@ -149,6 +151,7 @@ impl DownloadsView {
                                         id: Some(category.id.clone()),
                                         name: category.name.clone(),
                                         extensions: category.extensions.join(", "),
+                                        icon: category.icon.clone(),
                                         error: None,
                                     });
                                     ui.close();
@@ -173,6 +176,7 @@ impl DownloadsView {
                                 id: None,
                                 name: String::new(),
                                 extensions: String::new(),
+                                icon: "folder".into(),
                                 error: None,
                             });
                         }
@@ -268,17 +272,10 @@ impl DownloadsView {
         let dialog = self.dialog.as_mut()?;
         let mut command = None;
         let mut close = false;
-        let frame = egui::Frame::NONE
-            .fill(palette.surface)
-            .stroke(Stroke::new(1.0, palette.border))
-            .corner_radius(14)
-            .inner_margin(Margin::same(20));
-        let response = egui::Modal::new(Id::unique("category_dialog"))
-            .frame(frame)
-            .backdrop_color(Color32::from_black_alpha(153))
+        let response = modal_style::modal("category_dialog", palette)
             .show(ctx, |ui| {
-                ui.set_width((ctx.content_rect().width() - 72.0).clamp(0.0, 360.0));
-                let max_height = (ctx.content_rect().height() * 0.82 - 40.0).max(0.0);
+                ui.set_width(modal_style::width(ctx, 420.0));
+                let max_height = modal_style::max_height(ctx);
                 ScrollArea::vertical()
                     .id_salt("category_dialog_scroll")
                     .min_scrolled_height(0.0)
@@ -286,8 +283,9 @@ impl DownloadsView {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 10.0;
                         match dialog {
-                            Dialog::Edit { id, name, extensions, error } => {
-                                ui.heading(if id.is_some() { "Edit Category" } else { "New Category" });
+                            Dialog::Edit { id, name, extensions, icon, error } => {
+                                ui.label(RichText::new(if id.is_some() { "Edit Category" } else { "New Category" }).size(16.0).strong().color(palette.text));
+                                ui.separator();
                                 ui.label("Name");
                                 let name_response = ui.add(TextEdit::singleline(name)
                                     .id(Id::unique("category_name"))
@@ -306,32 +304,43 @@ impl DownloadsView {
                                     let mut info = egui::WidgetInfo::text_edit(ui.is_enabled(), &*extensions, &*extensions, "epub, mobi, azw3");
                                     info.label = Some("File extensions".into()); info
                                 });
+                                ui.label("Icon");
+                                ui.horizontal_wrapped(|ui| {
+                                    for (key, label) in [("folder", "Folder"), ("image", "Image"), ("video", "Video"), ("file", "File"), ("archive", "Archive"), ("music", "Music"), ("disc", "Disc")] {
+                                        if chip(ui, label, icons::category(key), icon == key, palette).clicked() {
+                                            *icon = key.into();
+                                        }
+                                    }
+                                });
                                 if let Some(error) = error.as_ref() {
                                     ui.colored_label(palette.red, error);
                                 }
                                 let enter = (extensions_response.has_focus() || name_response.has_focus())
                                     && ui.input(|input| input.key_pressed(egui::Key::Enter));
                                 ui.horizontal(|ui| {
-                                    if ui.button("Cancel").clicked() { close = true; }
-                                    let button = Button::new(if id.is_some() { "Save" } else { "Create" })
-                                        .fill(palette.accent)
-                                        .stroke(Stroke::new(1.0, palette.accent));
-                                    if ui.add(button).clicked() || enter {
-                                        let extensions = extensions
-                                            .split(|ch: char| ch == ',' || ch.is_whitespace())
-                                            .filter(|s| !s.is_empty())
-                                            .map(str::to_owned)
-                                            .collect();
-                                        command = Some(if let Some(id) = id {
-                                            Command::UpdateCategory { id: id.clone(), name: name.clone(), extensions }
-                                        } else {
-                                            Command::CreateCategory { name: name.clone(), extensions }
-                                        });
-                                    }
+                                    ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let button = Button::new(RichText::new(if id.is_some() { "Save" } else { "Create" }).color(Color32::WHITE))
+                                            .fill(palette.accent)
+                                            .stroke(Stroke::new(1.0, palette.accent));
+                                        if ui.add(button).clicked() || enter {
+                                            let extensions = extensions
+                                                .split(|ch: char| ch == ',' || ch.is_whitespace())
+                                                .filter(|s| !s.is_empty())
+                                                .map(str::to_owned)
+                                                .collect();
+                                            command = Some(if let Some(id) = id {
+                                                Command::UpdateCategoryWithIcon { id: id.clone(), name: name.clone(), extensions, icon: icon.clone() }
+                                            } else {
+                                                Command::CreateCategoryWithIcon { name: name.clone(), extensions, icon: icon.clone() }
+                                            });
+                                        }
+                                        if ui.button("Cancel").clicked() { close = true; }
+                                    });
                                 });
                             }
                             Dialog::Delete { id, name, error } => {
-                                ui.heading("Delete category?");
+                                ui.label(RichText::new("Delete category?").size(16.0).strong().color(palette.text));
+                                ui.separator();
                                 ui.label(format!("Delete the {name} category?"));
                                 ui.label(RichText::new("Its files will move to Uncategorized. No files are deleted from disk.").color(palette.text_dim));
                                 if let Some(error) = error.as_ref() { ui.colored_label(palette.red, error); }

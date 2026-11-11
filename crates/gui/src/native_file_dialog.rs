@@ -42,7 +42,9 @@ fn pick() -> PickResult {
     ];
     for (program, args) in candidates {
         match Command::new(program).args(*args).output() {
-            Ok(output) => return parse_output(output),
+            // Zenity documents exit status 1 as cancellation, even when GTK
+            // emitted unrelated warnings (for example, a locale warning).
+            Ok(output) => return parse_output(output, *program == "zenity"),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => return Err(format!("Could not open the file dialog: {error}")),
         }
@@ -62,7 +64,7 @@ fn pick() -> PickResult {
     if !output.status.success() && String::from_utf8_lossy(&output.stderr).contains("-128") {
         return Ok(None);
     }
-    parse_output(output)
+    parse_output(output, false)
 }
 
 #[cfg(target_os = "windows")]
@@ -72,7 +74,7 @@ fn pick() -> PickResult {
         .args(["-NoProfile", "-STA", "-Command", script])
         .output()
         .map_err(|error| format!("Could not open the file dialog: {error}"))?;
-    parse_output(output)
+    parse_output(output, false)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -81,10 +83,10 @@ fn pick() -> PickResult {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn parse_output(output: std::process::Output) -> PickResult {
+fn parse_output(output: std::process::Output, cancel_with_stderr: bool) -> PickResult {
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr);
-        if output.status.code() == Some(1) && message.trim().is_empty() {
+        if output.status.code() == Some(1) && (cancel_with_stderr || message.trim().is_empty()) {
             return Ok(None);
         }
         return Err(format!("File dialog failed: {}", message.trim()));
@@ -117,14 +119,19 @@ mod tests {
     #[test]
     fn picker_preserves_spaces_and_handles_cancellation() {
         assert_eq!(
-            parse_output(output(0, b"/tmp/a file.torrent\n", b"")).unwrap(),
+            parse_output(output(0, b"/tmp/a file.torrent\n", b""), true).unwrap(),
             Some(PathBuf::from("/tmp/a file.torrent"))
         );
-        assert_eq!(parse_output(output(1, b"", b"")).unwrap(), None);
+        assert_eq!(parse_output(output(1, b"", b""), false).unwrap(), None);
+        assert_eq!(
+            parse_output(output(1, b"", b"Gtk-WARNING: Locale not supported"), true).unwrap(),
+            None
+        );
     }
 
     #[test]
     fn picker_reports_real_errors() {
-        assert!(parse_output(output(1, b"", b"cannot open display")).is_err());
+        assert!(parse_output(output(1, b"", b"cannot open display"), false).is_err());
+        assert!(parse_output(output(255, b"", b"cannot open display"), true).is_err());
     }
 }

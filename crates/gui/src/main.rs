@@ -11,6 +11,7 @@ mod fake_backend;
 mod icons;
 mod menu_model;
 mod menus;
+mod modal_style;
 mod native_file_dialog;
 mod properties;
 mod rail;
@@ -43,9 +44,9 @@ struct DownloadsApp {
     rail: rail::Rail,
     settings: settings::SettingsModal,
     clipboard: clipboard::Clipboard,
-    torrent_picker: Option<Receiver<native_file_dialog::PickResult>>,
+    torrent_picker: Option<(Receiver<native_file_dialog::PickResult>, u64)>,
     message: Option<String>,
-    toast: Option<(String, Instant)>,
+    toast: Option<(String, Instant, bool)>,
     simulation_clock: simulation_clock::SimulationClock,
     simulation_seed: u64,
 }
@@ -97,12 +98,23 @@ impl DownloadsApp {
 
     fn notify(&mut self, text: String) {
         if self.backend.snapshot().settings.alerts || toast_logic::visible_with_alerts_off(&text) {
-            self.toast = Some((text, Instant::now()));
+            let forced = toast_logic::visible_with_alerts_off(&text);
+            self.toast = Some((text, Instant::now(), forced));
         }
     }
 
     fn modal_open(&self) -> bool {
         self.downloads.has_dialog() || self.settings.is_open() || self.dialogs.is_open()
+    }
+
+    fn open_torrent_picker(&mut self, ctx: &egui::Context) {
+        if self.chrome.picking_torrent || self.modal_open() {
+            return;
+        }
+        self.message = None;
+        let generation = self.dialogs.open_add(ctx);
+        self.chrome.picking_torrent = true;
+        self.torrent_picker = Some((native_file_dialog::pick_torrent(ctx.clone()), generation));
     }
 
     fn copy_items(&mut self, items: &[Selection], link_only: bool, cut: bool) {
@@ -153,14 +165,11 @@ impl DownloadsApp {
         use menu_model::RowCommand;
         use menus::Action;
         match action {
-            Action::Add => self.dialogs.open_add(ctx),
-            Action::Torrent => {
-                if !self.chrome.picking_torrent {
-                    self.message = None;
-                    self.chrome.picking_torrent = true;
-                    self.torrent_picker = Some(native_file_dialog::pick_torrent(ctx.clone()));
-                }
+            Action::Add => {
+                self.message = None;
+                self.dialogs.open_add(ctx);
             }
+            Action::Torrent => self.open_torrent_picker(ctx),
             Action::Settings => self.settings.open(ctx, &self.backend.snapshot().settings),
             Action::Search => {
                 let id = match self.backend.snapshot().view {
@@ -250,35 +259,29 @@ impl DownloadsApp {
         }
     }
 
-    fn poll_picker(&mut self) {
-        let Some(receiver) = &self.torrent_picker else {
+    fn poll_picker(&mut self, ctx: &egui::Context) {
+        let Some((receiver, generation)) = &self.torrent_picker else {
             return;
         };
-        match receiver.try_recv() {
-            Ok(result) => {
-                self.chrome.picking_torrent = false;
-                self.torrent_picker = None;
-                match result {
-                    Ok(Some(path)) => {
-                        let name = path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .into_owned();
-                        if self.dispatch(Command::AddTorrent(path)) {
-                            self.chrome.view = self.backend.snapshot().view;
-                            self.notify(format!("Added {name}"));
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(error) => self.message = Some(error),
-                }
+        let generation = *generation;
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err("The file dialog closed unexpectedly.".into()),
+        };
+        self.chrome.picking_torrent = false;
+        self.torrent_picker = None;
+        match result {
+            Ok(Some(path)) => {
+                // A closed or replaced modal must never receive an old picker result.
+                self.dialogs.set_torrent(generation, path);
             }
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => {
-                self.chrome.picking_torrent = false;
-                self.torrent_picker = None;
-                self.message = Some("The file dialog closed unexpectedly.".into());
+            Ok(None) => self.dialogs.cancel_add(ctx, generation),
+            Err(error) => {
+                self.message = None;
+                if !self.dialogs.set_add_error(generation, error.clone()) {
+                    self.toast = Some((error, Instant::now(), true));
+                }
             }
         }
     }
@@ -315,7 +318,7 @@ impl eframe::App for DownloadsApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.poll_picker();
+        self.poll_picker(ui.ctx());
         // A popup takes Escape first; an open modal otherwise handles it itself.
         if egui::Popup::is_any_open(ui.ctx())
             && ui
@@ -400,6 +403,7 @@ impl eframe::App for DownloadsApp {
                     && !self.settings.is_open()
                     && !self.dialogs.is_open()
                 {
+                    self.message = None;
                     self.dialogs.open_add(ui.ctx());
                 }
             }
@@ -411,21 +415,7 @@ impl eframe::App for DownloadsApp {
                     self.settings.open(ui.ctx(), &snapshot.settings);
                 }
             }
-            Some(chrome::ChromeAction::PickTorrent) => {
-                self.message = None;
-                self.chrome.picking_torrent = true;
-                self.torrent_picker = Some(native_file_dialog::pick_torrent(ui.ctx().clone()));
-            }
-            Some(chrome::ChromeAction::ToggleDaemon) => {
-                if self.dispatch(Command::ToggleDaemon) {
-                    let text = if self.backend.snapshot().daemon_connected {
-                        "Daemon connected"
-                    } else {
-                        "Daemon disconnected: downloads paused until reconnected"
-                    };
-                    self.notify(text.into());
-                }
-            }
+            Some(chrome::ChromeAction::PickTorrent) => self.open_torrent_picker(ui.ctx()),
             Some(chrome::ChromeAction::PauseAll) => {
                 self.dispatch(Command::PauseAll);
             }
@@ -522,7 +512,10 @@ impl eframe::App for DownloadsApp {
                 }
                 _ => None,
             };
-            let adding = matches!(&command, Command::AddDownload(_));
+            let adding = matches!(
+                &command,
+                Command::AddDownload(_) | Command::AddLinks(_) | Command::AddInputs { .. }
+            );
             match self.backend.dispatch(command) {
                 Ok(()) => {
                     self.message = None;
@@ -551,14 +544,11 @@ impl eframe::App for DownloadsApp {
             }
         }
         if !self.backend.snapshot().settings.alerts
-            && self
-                .toast
-                .as_ref()
-                .is_some_and(|(text, _)| !toast_logic::visible_with_alerts_off(text))
+            && self.toast.as_ref().is_some_and(|(_, _, forced)| !forced)
         {
             self.toast = None;
         }
-        if let Some((text, since)) = &self.toast {
+        if let Some((text, since, _)) = &self.toast {
             let remaining = Duration::from_secs(2).saturating_sub(since.elapsed());
             if remaining.is_zero() {
                 self.toast = None;

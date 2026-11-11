@@ -10,22 +10,6 @@ use crate::theme::Theme;
 use crate::fake_backend::{State, ThemeChoice, View};
 
 impl ThemeChoice {
-    fn next(self) -> Self {
-        match self {
-            Self::System => Self::Dark,
-            Self::Dark => Self::Light,
-            Self::Light => Self::System,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::System => "Theme: System",
-            Self::Dark => "Theme: Dark",
-            Self::Light => "Theme: Light",
-        }
-    }
-
     pub fn preference(self) -> egui::ThemePreference {
         match self {
             Self::System => egui::ThemePreference::System,
@@ -37,7 +21,6 @@ impl ThemeChoice {
 
 pub enum ChromeAction {
     PickTorrent,
-    ToggleDaemon,
     PauseAll,
     ResumeAll,
     OpenSettings,
@@ -66,16 +49,14 @@ pub struct Chrome {
 }
 
 impl Chrome {
-    /// Reference-style ribbon; Help/Commands remain available in both views.
+    /// Minimal title and view tabs.
     pub fn show_ribbon(
         &mut self,
         ui: &mut egui::Ui,
         palette: Theme,
-        state: &State,
+        _state: &State,
     ) -> (bool, Option<ChromeAction>) {
         let mut view_clicked = false;
-        let mut action = None;
-        let width = ui.available_width();
         egui::Panel::top("ribbon")
             .exact_size(52.0)
             .frame(
@@ -143,82 +124,6 @@ impl Chrome {
                                     view_clicked = true;
                                 }
                             }
-                            ui.add_space((width - 1040.0).max(12.0));
-                            let (dot, status) = if state.daemon_connected {
-                                (palette.green, "Daemon connected")
-                            } else {
-                                (palette.red, "Daemon disconnected")
-                            };
-                            if ui
-                                .add(
-                                    Button::new(
-                                        RichText::new(format!("● {status}")).color(dot).size(12.0),
-                                    )
-                                    .frame_when_inactive(false),
-                                )
-                                .on_hover_text("Toggle simulated daemon connection")
-                                .clicked()
-                            {
-                                action = Some(ChromeAction::ToggleDaemon);
-                            }
-                            if ui
-                                .add(
-                                    Button::new(RichText::new("Settings").color(palette.text_dim))
-                                        .frame_when_inactive(false),
-                                )
-                                .clicked()
-                            {
-                                action = Some(ChromeAction::OpenSettings);
-                            }
-                            if ui
-                                .add(
-                                    Button::new((
-                                        icons::atom(Icon::Theme, 16.0, palette.text_dim),
-                                        self.theme.label(),
-                                    ))
-                                    .frame_when_inactive(false),
-                                )
-                                .on_hover_text("Cycle between System, Dark and Light")
-                                .clicked()
-                            {
-                                self.theme = self.theme.next();
-                                crate::theme::apply_theme(ui.ctx(), self.theme.preference());
-                            }
-                            for (label, commands) in [("Help", false), ("Commands", true)] {
-                                let response = ui.add(
-                                    Button::new(RichText::new(label).color(palette.text_dim))
-                                        .frame_when_inactive(false),
-                                );
-                                crate::theme::focus_outline(ui, &response, palette);
-                                let mut selected = None;
-                                egui::Popup::menu(&response).show(|ui| {
-                                    crate::menus::dropdown(
-                                        ui,
-                                        state,
-                                        commands,
-                                        palette,
-                                        &mut selected,
-                                    )
-                                });
-                                if let Some(selected) = selected {
-                                    response.request_focus();
-                                    action = Some(ChromeAction::Menu(selected));
-                                }
-                            }
-                            for (icon, tooltip) in [
-                                (Icon::Minimize, "Minimize"),
-                                (Icon::Maximize, "Maximize"),
-                                (Icon::Close, "Close"),
-                            ] {
-                                ui.add_enabled(
-                                    false,
-                                    Button::new(icons::atom(icon, 16.0, palette.text_muted))
-                                        .frame(false),
-                                )
-                                .on_hover_text(format!(
-                                    "{tooltip}: use the system window controls"
-                                ));
-                            }
                         });
                     });
                 ui.painter().hline(
@@ -227,7 +132,7 @@ impl Chrome {
                     Stroke::new(1.0, palette.border),
                 );
             });
-        (view_clicked, action)
+        (view_clicked, None)
     }
 
     pub fn show_actions(
@@ -236,9 +141,6 @@ impl Chrome {
         palette: Theme,
         state: &State,
     ) -> Option<ChromeAction> {
-        if state.view != View::Tasks {
-            return None;
-        }
         let mut action = None;
         egui::Panel::top("actions")
             .exact_size(48.0)
@@ -270,6 +172,9 @@ impl Chrome {
                                 ("Remove Completed", Icon::Trash, !state.library.is_empty()),
                                 ("Settings", Icon::Settings, true),
                             ] {
+                                if state.view != View::Tasks && label != "Settings" {
+                                    continue;
+                                }
                                 let primary = label == "+ URL";
                                 let mut button = Button::new((
                                     icons::atom(
@@ -319,38 +224,40 @@ impl Chrome {
                                     };
                                 }
                             }
-                            let more = ui
-                                .add_enabled(
-                                    !state.selections.is_empty(),
-                                    Button::new("···")
-                                        .fill(palette.surface_2)
-                                        .stroke(Stroke::new(1.0, palette.border))
-                                        .corner_radius(8),
-                                )
-                                .on_hover_text("More actions for selected download");
-                            crate::theme::focus_outline(ui, &more, palette);
-                            more.widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::Role::Button,
-                                    ui.is_enabled() && !state.selections.is_empty(),
-                                    "More actions for selected download",
-                                )
-                            });
-                            let mut selected_action = None;
-                            if let Some(item) = state.selections.first() {
-                                egui::Popup::menu(&more).show(|ui| {
-                                    crate::menus::row(
-                                        ui,
-                                        state,
-                                        item,
-                                        palette,
-                                        &mut selected_action,
+                            if state.view == View::Tasks {
+                                let more = ui
+                                    .add_enabled(
+                                        !state.selections.is_empty(),
+                                        Button::new("···")
+                                            .fill(palette.surface_2)
+                                            .stroke(Stroke::new(1.0, palette.border))
+                                            .corner_radius(8),
+                                    )
+                                    .on_hover_text("More actions for selected download");
+                                crate::theme::focus_outline(ui, &more, palette);
+                                more.widget_info(|| {
+                                    egui::WidgetInfo::labeled(
+                                        egui::Role::Button,
+                                        ui.is_enabled() && !state.selections.is_empty(),
+                                        "More actions for selected download",
                                     )
                                 });
-                            }
-                            if let Some(selected) = selected_action {
-                                more.request_focus();
-                                action = Some(ChromeAction::Menu(selected));
+                                let mut selected_action = None;
+                                if let Some(item) = state.selections.first() {
+                                    egui::Popup::menu(&more).show(|ui| {
+                                        crate::menus::row(
+                                            ui,
+                                            state,
+                                            item,
+                                            palette,
+                                            &mut selected_action,
+                                        )
+                                    });
+                                }
+                                if let Some(selected) = selected_action {
+                                    more.request_focus();
+                                    action = Some(ChromeAction::Menu(selected));
+                                }
                             }
                             for (label, icon, commands) in [
                                 ("Help", Icon::Help, false),

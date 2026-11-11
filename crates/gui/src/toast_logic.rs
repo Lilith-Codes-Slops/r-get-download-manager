@@ -5,8 +5,12 @@ pub fn action_message(command: &Command, state: &State) -> Option<String> {
     match command {
         Command::PauseAll => Some("Paused all downloads".into()),
         Command::ResumeAll => Some("Resumed all downloads".into()),
-        Command::CreateCategory { name, .. } => Some(format!("Category created: {}", name.trim())),
-        Command::UpdateCategory { name, .. } => Some(format!("Category updated: {}", name.trim())),
+        Command::CreateCategory { name, .. } | Command::CreateCategoryWithIcon { name, .. } => {
+            Some(format!("Category created: {}", name.trim()))
+        }
+        Command::UpdateCategory { name, .. } | Command::UpdateCategoryWithIcon { name, .. } => {
+            Some(format!("Category updated: {}", name.trim()))
+        }
         Command::DeleteCategory(id) => state
             .categories
             .iter()

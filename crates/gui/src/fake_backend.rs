@@ -157,10 +157,26 @@ pub enum Command {
         name: String,
         extensions: Vec<String>,
     },
+    CreateCategoryWithIcon {
+        name: String,
+        extensions: Vec<String>,
+        icon: String,
+    },
+    UpdateCategoryWithIcon {
+        id: String,
+        name: String,
+        extensions: Vec<String>,
+        icon: String,
+    },
     DeleteCategory(String),
     ToggleDaemon,
     AddTorrent(PathBuf),
     AddDownload(String),
+    AddLinks(Vec<String>),
+    AddInputs {
+        links: Vec<String>,
+        torrent: Option<PathBuf>,
+    },
     PauseAll,
     ResumeAll,
     Tick {
@@ -344,6 +360,42 @@ fn apply_command(state: &mut State, command: Command) -> io::Result<()> {
             category.name = name;
             category.extensions = extensions;
         }
+        Command::CreateCategoryWithIcon {
+            name,
+            extensions,
+            icon,
+        } => {
+            validate_icon(&icon)?;
+            apply_command(state, Command::CreateCategory { name, extensions })?;
+            let category = state
+                .categories
+                .iter_mut()
+                .find(|category| category.id == state.selected_category)
+                .expect("created category");
+            category.icon = icon;
+        }
+        Command::UpdateCategoryWithIcon {
+            id,
+            name,
+            extensions,
+            icon,
+        } => {
+            validate_icon(&icon)?;
+            apply_command(
+                state,
+                Command::UpdateCategory {
+                    id: id.clone(),
+                    name,
+                    extensions,
+                },
+            )?;
+            state
+                .categories
+                .iter_mut()
+                .find(|category| category.id == id)
+                .expect("updated category")
+                .icon = icon;
+        }
         Command::DeleteCategory(id) => {
             if id == "all"
                 || id == "other"
@@ -363,36 +415,24 @@ fn apply_command(state: &mut State, command: Command) -> io::Result<()> {
         Command::AddDownload(input) => {
             let (source, name) = crate::download_link::parse(&input)
                 .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
-            let id = next_task_id(state)?;
-            // Seeded locally for preview data only; never opens the URL or a daemon.
-            let seed = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos() as u64)
-                .unwrap_or(0)
-                ^ state.next_id;
-            let size_mb = 300.0 + (seed % 2701) as f64;
-            let base_kbps = 2500.0 + ((seed >> 16) % 6501) as f64;
-            state.tasks.push(Task {
-                id: id.clone(),
-                name,
-                source,
-                path: None,
-                size_mb,
-                progress: 0.0,
-                status: TaskStatus::Active,
-                base_kbps,
-                speed_kbps: 0.0,
-                connections: 8,
-                queued: false,
-                fail_at: None,
-            });
-            state.view = View::Tasks;
-            let selection = Selection {
-                scope: Scope::Task,
-                id,
-            };
-            state.selections = vec![selection.clone()];
-            state.selection_anchor = Some(selection);
+            add_download(state, source, name)?;
+        }
+        Command::AddLinks(links) => {
+            for input in links.into_iter().take(5) {
+                let input = input.trim();
+                if input.is_empty() {
+                    continue;
+                }
+                let (source, name) = crate::download_link::parse(input)
+                    .unwrap_or_else(|_| (input.to_owned(), input.to_owned()));
+                add_download(state, source, name)?;
+            }
+        }
+        Command::AddInputs { links, torrent } => {
+            if let Some(path) = torrent {
+                apply_command(state, Command::AddTorrent(path))?;
+            }
+            apply_command(state, Command::AddLinks(links))?;
         }
         Command::AddTorrent(path) => {
             let name = path
@@ -523,6 +563,55 @@ fn apply_command(state: &mut State, command: Command) -> io::Result<()> {
         } => select(state, item, mode, &visible),
         Command::ReplaceState(next) => *state = next,
     }
+    Ok(())
+}
+
+fn validate_icon(icon: &str) -> io::Result<()> {
+    if [
+        "folder", "image", "video", "file", "archive", "music", "disc",
+    ]
+    .contains(&icon)
+    {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Unknown category icon",
+        ))
+    }
+}
+
+fn add_download(state: &mut State, source: String, name: String) -> io::Result<()> {
+    let id = next_task_id(state)?;
+    // Seeded locally for preview data only; never opens the URL or a daemon.
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0)
+        ^ state.next_id;
+    let size_mb = 300.0 + (seed % 2701) as f64;
+    let base_kbps = 2500.0 + ((seed >> 16) % 6501) as f64;
+    state.tasks.push(Task {
+        id: id.clone(),
+        name,
+        source,
+        path: None,
+        size_mb,
+        progress: 0.0,
+        status: TaskStatus::Active,
+        base_kbps,
+        speed_kbps: 0.0,
+        connections: 8,
+        queued: false,
+        fail_at: None,
+    });
+    state.view = View::Tasks;
+    let selection = Selection {
+        scope: Scope::Task,
+        id,
+    };
+    state.selections = vec![selection.clone()];
+    state.selection_anchor = Some(selection);
     Ok(())
 }
 
@@ -813,6 +902,102 @@ mod tests {
         let magnet = restored.snapshot().tasks.last().unwrap();
         assert_eq!(magnet.name, "My file.zip");
         assert_eq!(magnet.source, "magnet:?xt=urn:btih:abc&dn=My+file.zip");
+        remove_test_dir(&path);
+    }
+
+    #[test]
+    fn multi_link_inputs_accept_nonempty_entries_and_persist_atomically() {
+        let path = test_path();
+        let mut backend = FakeBackend::open(path.clone()).unwrap();
+        let before = backend.snapshot().tasks.len();
+        backend
+            .dispatch(Command::AddLinks(vec![
+                "  ".into(),
+                " arbitrary input ".into(),
+                "https://example.com/a.zip".into(),
+                "magnet:?dn=sample".into(),
+                "ftp://example.com/file".into(),
+            ]))
+            .unwrap();
+        let restored = FakeBackend::open(path.clone()).unwrap();
+        let tasks = &restored.snapshot().tasks[before..];
+        assert_eq!(tasks.len(), 4);
+        assert_eq!(tasks[0].source, "arbitrary input");
+        assert_eq!(tasks[0].name, "arbitrary input");
+        assert_eq!(tasks[1].name, "a.zip");
+        assert_eq!(tasks[2].name, "sample");
+        assert_eq!(tasks[3].source, "ftp://example.com/file");
+        remove_test_dir(&path);
+    }
+
+    #[test]
+    fn torrent_and_links_from_add_dialog_are_committed_together() {
+        let path = test_path();
+        let mut backend = FakeBackend::open(path.clone()).unwrap();
+        let before = backend.snapshot().tasks.len();
+        backend
+            .dispatch(Command::AddInputs {
+                torrent: Some(PathBuf::from("/tmp/sample.torrent")),
+                links: vec!["custom link".into()],
+            })
+            .unwrap();
+        let restored = FakeBackend::open(path.clone()).unwrap();
+        assert_eq!(restored.snapshot().tasks.len(), before + 2);
+        assert_eq!(restored.snapshot().tasks[before].name, "sample.torrent");
+        assert_eq!(restored.snapshot().tasks[before + 1].source, "custom link");
+        let before = backend.snapshot().clone();
+        assert!(backend
+            .dispatch(Command::AddInputs {
+                torrent: Some(PathBuf::from("/tmp/not-torrent.txt")),
+                links: vec!["must not be added".into()],
+            })
+            .is_err());
+        assert_eq!(backend.snapshot(), &before);
+        remove_test_dir(&path);
+    }
+
+    #[test]
+    fn category_icon_is_saved_for_create_and_edit() {
+        let path = test_path();
+        let mut backend = FakeBackend::open(path.clone()).unwrap();
+        backend
+            .dispatch(Command::CreateCategoryWithIcon {
+                name: "Books".into(),
+                extensions: vec!["epub".into()],
+                icon: "music".into(),
+            })
+            .unwrap();
+        let id = backend.snapshot().selected_category.clone();
+        assert_eq!(backend.snapshot().categories.last().unwrap().icon, "music");
+        backend
+            .dispatch(Command::UpdateCategoryWithIcon {
+                id: id.clone(),
+                name: "Books".into(),
+                extensions: vec!["epub".into()],
+                icon: "file".into(),
+            })
+            .unwrap();
+        let restored = FakeBackend::open(path.clone()).unwrap();
+        assert_eq!(
+            restored
+                .snapshot()
+                .categories
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .icon,
+            "file"
+        );
+        let before = backend.snapshot().clone();
+        assert!(backend
+            .dispatch(Command::UpdateCategoryWithIcon {
+                id,
+                name: "Books".into(),
+                extensions: vec!["epub".into()],
+                icon: "invalid".into(),
+            })
+            .is_err());
+        assert_eq!(backend.snapshot(), &before);
         remove_test_dir(&path);
     }
 

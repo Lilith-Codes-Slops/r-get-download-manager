@@ -158,8 +158,9 @@ future assets and contains no icon files.
 The prototype creates `data/state.json` relative to its working directory on
 first launch, with sample tasks, a seed and a library item. Changes are saved
 there, and an existing empty state is not reseeded. Invalid state files are not
-overwritten. The file is ignored by Git. The Add download dialog accepts HTTP(S)
-and magnet links and creates selected simulated tasks. Properties for one selected
+overwritten. The file is ignored by Git. The Add download dialog accepts up to five
+nonempty link entries and creates simulated tasks; it does not validate or fetch them.
+Properties for one selected
 task, seed, or library item are available from the row context menu or More menu. The prototype's native
 torrent chooser records a simulated task, not a real download; on Linux it requires `zenity` or
 `kdialog`. The rail and its side panels use the same simulated state; its pin is
@@ -168,7 +169,7 @@ panes, with both running and stopped seeds shown in Transfers. The panes stack o
 narrow windows. Task rows include status-colored
 progress, eight segments, and pause/resume/retry controls; seeds can be stopped
 and restarted. Rows support multi-selection and compact spacing. The Downloads library supports
-search and editable, persisted categories. Settings (ribbon or Ctrl/Cmd+,)
+search and editable, persisted categories. Settings (action bar or Ctrl/Cmd+,)
 are saved immediately, including theme, compact mode, alerts, delete confirmation,
 concurrency, speed limit and seed ratio. The speed limit is shared across the
 Downloads and Network sections. Sound switches are disabled: this prototype never
