@@ -42,7 +42,7 @@ impl Default for GuiPreferences {
 }
 
 impl GuiPreferences {
-    fn to_json(&self) -> Value {
+    fn to_json(self) -> Value {
         json!({
             "version": PREFS_VERSION,
             "theme": theme_key(self.theme),

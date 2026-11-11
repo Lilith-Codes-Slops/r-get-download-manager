@@ -238,7 +238,7 @@ impl AppState {
                     egui::TextEdit::singleline(&mut active_filter)
                         .hint_text("Filter…")
                         .desired_width(160.0)
-                        .id(egui::Id::new("rget_active_filter")),
+                        .id(egui::Id::unique("rget_active_filter")),
                 );
                 if focus_filter {
                     response.request_focus();
@@ -680,7 +680,7 @@ impl AppState {
                 egui::TextEdit::singleline(&mut library_filter)
                     .hint_text("Search downloads…")
                     .desired_width(180.0)
-                    .id(egui::Id::new("rget_library_filter")),
+                    .id(egui::Id::unique("rget_library_filter")),
             );
             if focus_filter {
                 response.request_focus();
@@ -1219,7 +1219,7 @@ impl AppState {
                         egui::TextEdit::singleline(&mut self.palette_query)
                             .hint_text("Search commands…")
                             .desired_width(400.0)
-                            .id(egui::Id::new("rget_palette_query")),
+                            .id(egui::Id::unique("rget_palette_query")),
                     );
                     if focus {
                         response.request_focus();
