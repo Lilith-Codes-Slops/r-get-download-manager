@@ -1,6 +1,6 @@
 //! Tasks view: independent Active and Transfers panes.
 use eframe::egui::{
-    self, Align2, FontId, Id, Layout, Pos2, Rect, ScrollArea, Sense, Stroke, UiBuilder, Vec2,
+    self, Align2, FontId, Layout, Pos2, Rect, ScrollArea, Sense, Stroke, UiBuilder, Vec2,
 };
 
 use crate::fake_backend::{Command, Scope, Selection, SelectionMode, State, TaskStatus};
@@ -150,7 +150,6 @@ pub fn show(
         palette,
         "Active",
         state.tasks.len(),
-        &state.active_filter,
         ACTIVE_EMPTY,
         &active_rows,
         state,
@@ -164,7 +163,6 @@ pub fn show(
         palette,
         "Transfers",
         state.seeds.len(),
-        &state.seed_filter,
         TRANSFERS_EMPTY,
         &transfer_rows,
         state,
@@ -193,7 +191,6 @@ fn pane(
     palette: Theme,
     title: &str,
     count: usize,
-    filter: &str,
     empty: &str,
     rows: &[Row],
     state: &State,
@@ -209,61 +206,15 @@ fn pane(
         [header.left_bottom(), header.right_bottom()],
         Stroke::new(1.0, palette.border),
     );
-    let search_width = 150.0_f32.min((rect.width() * 0.42).max(0.0));
-    let search_right = (header.right() - 14.0).max(header.left());
-    let search_rect = Rect::from_min_max(
-        Pos2::new(
-            (search_right - search_width).max(header.left()),
-            header.center().y - 14.0,
-        ),
-        Pos2::new(search_right, header.center().y + 14.0),
-    )
-    .intersect(header);
-    let title_clip = Rect::from_min_max(
-        header.min,
-        Pos2::new(search_rect.left().max(header.left()), header.bottom()),
-    );
-    painter.with_clip_rect(title_clip).text(
-        Pos2::new(header.left() + 18.0, header.center().y),
-        Align2::LEFT_CENTER,
-        format!("{title} ({count})"),
-        FontId::proportional(13.0),
-        palette.text_dim,
-    );
-    let mut filter_text = filter.to_owned();
-    if search_rect.is_positive() {
-        let response = ui.put(
-            search_rect,
-            egui::TextEdit::singleline(&mut filter_text)
-                .id(Id::unique(if active {
-                    "active_filter"
-                } else {
-                    "transfer_filter"
-                }))
-                .hint_text("Filter…")
-                .desired_width(search_width),
+    painter
+        .with_clip_rect(header.intersect(ui.clip_rect()))
+        .text(
+            header.center(),
+            Align2::CENTER_CENTER,
+            format!("{title} ({count})"),
+            FontId::proportional(13.0),
+            palette.text_dim,
         );
-        response.widget_info(|| {
-            let mut info =
-                egui::WidgetInfo::text_edit(ui.is_enabled(), &filter_text, &filter_text, "Filter…");
-            info.label = Some(
-                if active {
-                    "Filter active downloads"
-                } else {
-                    "Filter transfers"
-                }
-                .into(),
-            );
-            info
-        });
-        if response.changed() {
-            actions.push(if active {
-                Command::SetActiveFilter(filter_text)
-            } else {
-                Command::SetSeedFilter(filter_text)
-            });
-        }
-    }
     let body = Rect::from_min_max(Pos2::new(rect.left(), header.bottom()), rect.max);
     if !body.is_positive() {
         return;

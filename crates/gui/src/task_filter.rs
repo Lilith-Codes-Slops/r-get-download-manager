@@ -1,37 +1,29 @@
 //! Filtering rules shared by the native Tasks panes.
 use crate::fake_backend::{Seed, State, Task};
 
+// Legacy pane filters remain in saved state for compatibility, but no longer
+// affect visibility now that their controls have been removed.
 pub fn active_items(state: &State) -> Vec<&Task> {
-    let query = state.active_filter.trim().to_lowercase();
     let shared = state.library_filter.trim().to_lowercase();
     state
         .tasks
         .iter()
         .filter(|task| {
-            matches_name(&task.name, &query)
-                && (shared.is_empty()
-                    || (task.progress.is_finite()
-                        && task.progress >= 100.0
-                        && crate::search_model::matches_query(&task.name, &shared)))
+            shared.is_empty()
+                || (task.progress.is_finite()
+                    && task.progress >= 100.0
+                    && crate::search_model::matches_query(&task.name, &shared))
         })
         .collect()
 }
 
 pub fn transfer_items(state: &State) -> Vec<&Seed> {
-    let query = state.seed_filter.trim().to_lowercase();
     let shared = state.library_filter.trim().to_lowercase();
     state
         .seeds
         .iter()
-        .filter(|seed| {
-            matches_name(&seed.name, &query)
-                && crate::search_model::matches_query(&seed.name, &shared)
-        })
+        .filter(|seed| crate::search_model::matches_query(&seed.name, &shared))
         .collect()
-}
-
-fn matches_name(name: &str, query: &str) -> bool {
-    query.is_empty() || name.to_lowercase().contains(query)
 }
 
 #[cfg(test)]
@@ -40,7 +32,7 @@ mod tests {
     use crate::fake_backend::{Command, FakeBackend, TaskStatus};
 
     #[test]
-    fn shared_search_combines_with_independent_pane_filters() {
+    fn shared_search_still_filters_tasks_and_transfers() {
         let path = std::env::temp_dir()
             .join(format!("rget-shared-search-{}", std::process::id()))
             .join("state.json");
@@ -50,8 +42,8 @@ mod tests {
         state.tasks[0].name = "Report.pdf".into();
         state.tasks[0].progress = 100.0;
         state.seeds[0].name = "Report.iso".into();
-        state.active_filter = "pdf".into();
-        state.seed_filter = "iso".into();
+        state.active_filter = "unrelated".into();
+        state.seed_filter = "unrelated".into();
         state.library_filter = " report ".into();
         assert_eq!(active_items(&state).len(), 1);
         assert_eq!(transfer_items(&state).len(), 1);
@@ -67,7 +59,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_are_independent_and_stopped_seeds_remain_visible() {
+    fn legacy_filters_do_not_hide_items_and_stopped_seeds_remain_visible() {
         let dir = std::env::temp_dir().join(format!("rget-task-filter-{}", std::process::id()));
         let path = dir.join("state.json");
         let _ = std::fs::remove_dir_all(&dir);
@@ -86,16 +78,12 @@ mod tests {
         state.seeds.push(stopped);
         state.active_filter = " zIp ".into();
         state.seed_filter = "VIDEO".into();
-        assert_eq!(active_items(&state).len(), 2);
-        assert_eq!(transfer_items(&state).len(), 1);
-        state.seed_filter = "stopped".into();
-        assert_eq!(transfer_items(&state).len(), 1);
-        assert!(!transfer_items(&state)[0].running);
-        assert_eq!(active_items(&state).len(), 2);
-        state.seed_filter.clear();
+        assert_eq!(active_items(&state).len(), 3);
+        assert_eq!(transfer_items(&state).len(), 2);
+        assert!(transfer_items(&state).iter().any(|seed| !seed.running));
         state.daemon_connected = false;
         assert_eq!(transfer_items(&state).len(), 2);
-        assert_eq!(active_items(&state).len(), 2);
+        assert_eq!(active_items(&state).len(), 3);
         backend
             .dispatch(Command::SetActiveFilter("paused".into()))
             .unwrap();
@@ -105,6 +93,8 @@ mod tests {
         let restored = FakeBackend::open(dir.join("state.json")).unwrap();
         assert_eq!(restored.snapshot().active_filter, "paused");
         assert_eq!(restored.snapshot().seed_filter, "video");
+        assert_eq!(active_items(restored.snapshot()).len(), 1);
+        assert_eq!(transfer_items(restored.snapshot()).len(), 1);
         let _ = std::fs::remove_dir_all(dir);
     }
 }
