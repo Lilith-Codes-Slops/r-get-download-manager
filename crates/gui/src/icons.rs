@@ -30,10 +30,6 @@ pub enum Icon {
     Help,
     Command,
     Plus,
-    Theme,
-    Close,
-    Minimize,
-    Maximize,
     Download,
     Upload,
 }
@@ -304,28 +300,6 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             line((-5.5, 0.0), (5.5, 0.0));
             line((0.0, -5.5), (0.0, 5.5));
         }
-        Icon::Theme => {
-            circle(0.0, 0.0, 3.4);
-            for i in 0..8 {
-                let a = i as f32 * PI / 4.0;
-                line(
-                    (5.0 * a.cos(), 5.0 * a.sin()),
-                    (6.7 * a.cos(), 6.7 * a.sin()),
-                );
-            }
-        }
-        Icon::Close => {
-            line((-5.0, -5.0), (5.0, 5.0));
-            line((5.0, -5.0), (-5.0, 5.0));
-        }
-        Icon::Minimize => line((-5.5, 2.5), (5.5, 2.5)),
-        Icon::Maximize => path(&[
-            (-5.5, -5.0),
-            (5.5, -5.0),
-            (5.5, 5.0),
-            (-5.5, 5.0),
-            (-5.5, -5.0),
-        ]),
         Icon::Download => {
             line((0.0, -6.2), (0.0, 3.0));
             path(&[(-3.5, -0.2), (0.0, 3.4), (3.5, -0.2)]);
@@ -383,10 +357,6 @@ mod tests {
             Icon::Help,
             Icon::Command,
             Icon::Plus,
-            Icon::Theme,
-            Icon::Close,
-            Icon::Minimize,
-            Icon::Maximize,
             Icon::Download,
             Icon::Upload,
         ];
