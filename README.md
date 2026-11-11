@@ -162,9 +162,13 @@ matrix and the long-term backlog. Controls whose daemon support is not ready are
 visible but disabled with `// TODO(state.md):` comments in the source rather than
 hidden.
 
-Theme, compact mode, confirm-before-delete and in-app alerts are GUI-only and
-session-scoped. The Downloads view lists regular files from `~/Downloads`, not a
-persistent history; opening files uses the system file association. Upload,
+Theme, compact mode, confirm-before-delete, in-app alerts, rail pinning, sort
+order and the active Settings tab are GUI-only preferences persisted locally in
+`gui-preferences.json` under `$XDG_CONFIG_HOME/rget/` or `~/.config/rget/` and
+restored on startup. `Ctrl+K` opens a searchable command palette over the wired
+actions; Help lists every wired shortcut and names the design-only shortcuts
+that stay disabled. The Downloads view lists regular files from `~/Downloads`,
+not a persistent history; opening files uses the system file association. Upload,
 seeding, RSS, labels, favorites, editable categories, magnets, sounds, file
 mutations and the remaining post-download automation are deferred. The GUI uses
 the existing local IPC transport, not an HTTP/WebSocket service. Linux is the
@@ -214,9 +218,10 @@ this branch. See [finalization status](docs/finalization.md) and
 
 See the [isolated manual verification procedure](docs/manual-live-verification.md)
 for real-host, GUI, checkpoint-kill and v1 checks, and the
-[finalization checklist](docs/finalization.md) for the release-SHA test matrix
-and merge gate. The current live connection and segment event shapes are
-recorded in the [IPC contract](docs/ipc-segment-contract.md).
+[finalization record](docs/finalization.md) for the completed PR #1 merge and
+the current GUI follow-up verification list. The current live connection and
+segment event shapes are recorded in the
+[IPC contract](docs/ipc-segment-contract.md).
 
 ### Split checkpoint hardening tests (Linux)
 

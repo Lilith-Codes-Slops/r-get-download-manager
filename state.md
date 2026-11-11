@@ -16,9 +16,12 @@ gates on reserved core helpers document that intent without weakening
 
 ## Branch / PR
 
-- Branch: `arena/4f707bcb-r-get-download-manager`
-- PR: #1 (open; `--squash` only after the full matrix is green at the exact final SHA)
-- Exact final SHA: recorded in the PR #1 body (it changes with every commit).
+- Active branch: `arena/1c81e486-r-get-download-manager` (post-merge GUI-only slice).
+- PR #1: **MERGED** with `gh pr merge 1 --squash`; head
+  `6cc0baf7766142d4b3ab7daff0672736650c3129`, merge commit
+  `99c845fd3f496008b2a585ae7592671f332eba68` on `master`.
+- The nine-step user-side pre-merge matrix was green at `6cc0baf…`. No tag,
+  GitHub Release, checksums or CI workflow were created.
 - Design source: [`docs/gui-design/index.html`](docs/gui-design/index.html) — the
   single-file browser mockup the Rust `egui` GUI is ported from.
 - Shipped GUI: `crates/gui` (`eframe`/`egui`), using the existing local
@@ -63,25 +66,32 @@ to a disabled button, checkbox or placeholder in `views.rs`.
 | Refresh URL / Add mirror / media quality / torrent-event UI | IPC variants exist but are not surfaced in the ported GUI yet. | Add dedicated detail tabs or dialogs. |
 | Rename / move / delete in Downloads view | No daemon file-mutation API; the view lists `~/Downloads` directly. | Add a safe file-mutation request with ownership checks. |
 | Manual daemon toggle | `IpcBridgeWorker` auto-spawns and reconnects; toggling would be fake. | Add an explicit connect/disconnect command if wanted. |
-| Full Help dropdown / command palette | Only a subset of keyboard shortcuts is wired. | Add the full palette from the design mockup. |
 
 ## GUI-only, wired (no daemon change needed)
 
 - Ribbon, action bar, collapsible/pinned left rail, two-pane Tasks view,
   Downloads library, Settings tabs and status bar.
-- Theme (System / Light / Dark) and Compact mode — **session-only**; persistence
-  is deferred.
-- Confirm before delete and Show alerts in app toggles.
+- Local preference persistence: theme, compact mode, confirm-before-delete,
+  in-app alerts, rail pinning, sort field/direction and the active Settings tab.
+  Versioned JSON lives at `gui-preferences.json` under `$XDG_CONFIG_HOME/rget/`
+  or `~/.config/rget/`; missing, unreadable or malformed values fall back to
+  defaults and are rewritten on the next change.
+- `Ctrl+K` command palette over existing wired actions only, with
+  case-insensitive label/shortcut/keyword search; the Help window lists every
+  wired shortcut and names the design-only shortcuts that stay disabled.
 - Active / Transfers search filters, Downloads search, category chips,
   name/size/date/type sorting, row selection.
-- Keyboard shortcuts: `Ctrl+N` add, `Ctrl+S` settings, `Ctrl+P` pause all,
-  `Ctrl+R` resume all, `Ctrl+B` pin/unpin rail.
+- Keyboard shortcuts: `Ctrl+N`/`Ctrl+O` add, `Ctrl+S`/`Ctrl+,` settings,
+  `Ctrl+P` pause all, `Ctrl+R` resume all, `Ctrl+B` pin/unpin rail,
+  `Ctrl+K` command palette, `Ctrl+1` Tasks, `Ctrl+2` Downloads, `Ctrl+F`
+  focus filter, `Ctrl+Shift+Enter` open Downloads folder, `Esc` close dialog.
 - Downloads view file listing, Open file/folder, Copy path.
 
 ## Deferred / long-term
 
-- Persist GUI preferences (theme, compact, alerts, speed limit, categories)
-  across restarts.
+- Persist editable categories and other in-memory GUI view state; the
+  daemon-side global speed limit is already stored by the daemon. Appearance and
+  behavior preference persistence is done.
 - Fast resume, magnets, v2/hybrid/private torrents, webseeds, file priorities,
   upload/seeding, global upload cap.
 - Mirrors, extraction, scheduling, Metalink, Trash, automatic checksums,
@@ -94,19 +104,19 @@ to a disabled button, checkbox or placeholder in `views.rs`.
   default `7` threshold under `-D warnings`.
 - Windows daemon support.
 
-## Merge gate (unchanged)
+## Verification status
 
-1. Full eight-step matrix (`cargo test …`, `cargo fmt --all -- --check`,
-   `cargo clippy --workspace --all-targets --locked -- -D warnings`,
-   `cargo build --release --locked`) **at the exact final SHA**.
-2. `git status --short` empty, PR #1 `MERGEABLE`.
-3. `gh pr merge 1 --squash` (never `--auto`), then verify `origin/master` and
-   PR state.
-4. No `v0.1.0` tag or GitHub Release in this flow.
-
-A new integration-test `unnecessary_unwrap` fix commit changes the SHA again,
-so the matrix request must be reissued at the new head; earlier results at
-`07fd541`, `65f5f1e`, the post-download feature commit, the GUI port commit,
-the compile-fix/warning-cleanup commit, the window borrow-check fix commit, the
-Clippy `io_other_error` fix commit and the consolidated Clippy cleanup commit
-are history, not a green gate.
+- PR #1 was merged at `99c845f…` after the user-side nine-step matrix was green
+  at `6cc0baf…` (workspace tests, no-default-features tests, fault suite,
+  public harness, split live suite, `cargo fmt --all -- --check`, Clippy with
+  `-D warnings`, `cargo build --release --locked -j 2`, and a clean tree). No
+  `-D warnings` waiver, skipped release build, tag, Release or checksums.
+- The current dependency-free GUI-only slice is on the active branch. Its own
+  six-step user-side verification is pending at the new SHA:
+  `cargo check -p downloader-gui --locked`, `cargo test --workspace --locked`,
+  `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked
+  -- -D warnings`, `cargo build --release --locked -j 2`, and a clean tree.
+  The old matrix steps 2–5 remain optional full-parity checks.
+- `state.md` is the long-term backlog, not a merge gate. Native file picker,
+  sound on completion and manual daemon toggle stay disabled with their
+  `TODO(state.md)` comments.
