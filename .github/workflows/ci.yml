@@ -1,0 +1,105 @@
+name: CI
+
+# Run on pushes to master, main and every Arena/work branch, and on pull
+# requests into any base branch. The PR base remains master; GitHub's default
+# branch is main and is not silently switched here.
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Six-step verification
+    # GitHub-hosted Ubuntu is currently 24.04; ubuntu-latest keeps the label
+    # recognized by older workflow linters as the image rolls forward.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # rust-toolchain.toml pins stable with profile=minimal plus rustfmt/clippy.
+      # cargo --version makes rustup materialize that override; the explicit
+      # component add covers runners whose stable image lacks either component.
+      - name: Install Rust toolchain and components
+        run: |
+          rustup show
+          cargo --version
+          rustc --version
+          rustup component add rustfmt clippy
+
+      # System libraries for the locked eframe/egui/winit/wgpu/openssl/rusqlite
+      # graph. The upstream egui 0.37.0 CI list is included; pkg-config and
+      # libfontconfig1-dev keep the fontconfig pkg-config path buildable even
+      # though the egui workspace selects fontconfig-dlopen.
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+            build-essential \
+            pkg-config \
+            cmake \
+            clang \
+            perl \
+            libssl-dev \
+            libsqlite3-dev \
+            libfontconfig1-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libegl-dev \
+            libgl-dev \
+            libvulkan-dev \
+            libgtk-3-dev
+
+      - name: Cache Cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
+
+      # Mirrors the historical six-step user-side matrix. The check, test,
+      # Clippy and release-build commands keep --locked; cargo fmt is unchanged.
+      # Clippy keeps -D warnings and the -j 2 release build is never skipped.
+      # Step 6 also fails if verification changed tracked files.
+      - name: '1/6: cargo check -p downloader-gui --locked'
+        run: cargo check -p downloader-gui --locked
+
+      - name: '2/6: cargo test --workspace --locked'
+        run: cargo test --workspace --locked
+
+      - name: '3/6: cargo fmt --all -- --check'
+        run: cargo fmt --all -- --check
+
+      - name: '4/6: cargo clippy --workspace --all-targets --locked -- -D warnings'
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: '5/6: cargo build --release --locked -j 2'
+        run: cargo build --release --locked -j 2
+
+      - name: '6/6: clean tree, HEAD and disk'
+        run: |
+          git status --short
+          git rev-parse HEAD
+          /bin/df -h "$HOME"
+          test -z "$(git status --porcelain)"
