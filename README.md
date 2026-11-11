@@ -155,6 +155,16 @@ Icons are drawn as theme-colored native vector strokes in `crates/gui/src/icons.
 (at 16 or 18 logical pixels); `crates/gui/assets/icons/` is reserved for
 future assets and contains no icon files.
 
+The wgpu renderer prefers a compatible integrated GPU, then discrete or other
+hardware, with software rendering only as a last resort. On Linux it prefers
+Vulkan among adapters of the same type. The chosen adapter, device type and
+backend are printed to stderr at startup; actual availability depends on the
+driver and display surface. `WGPU_BACKEND` can restrict the backends wgpu
+considers. Driver enumeration can still load other GPU libraries. The on-demand
+egui font atlas is limited to a 4096-pixel side (or the device limit if smaller),
+while system-font fallback remains enabled. GPU drivers and display settings
+influence memory use; no specific RSS or responsiveness is guaranteed.
+
 The prototype creates `data/state.json` relative to its working directory on
 first launch, with sample tasks, a seed and a library item. Changes are saved
 there, and an existing empty state is not reseeded. Invalid state files are not

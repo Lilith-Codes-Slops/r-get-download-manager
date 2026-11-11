@@ -8,6 +8,7 @@ mod dialogs;
 mod download_link;
 mod downloads;
 mod fake_backend;
+mod graphics;
 mod icons;
 mod menu_model;
 mod menus;
@@ -288,13 +289,21 @@ impl DownloadsApp {
 }
 
 impl eframe::App for DownloadsApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
+        // Preserve a smaller limit reported by the device. This value persists
+        // in egui between input batches and applies to the on-demand atlas.
+        if let Some(max_side) = &mut input.max_texture_side {
+            *max_side = (*max_side).min(graphics::FONT_ATLAS_MAX_SIDE);
+        }
+    }
+
     // eframe calls logic even for a minimized/occluded viewport, unlike ui().
     // Schedule the next logic pass regardless of focus, visibility, or modals.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let now = Instant::now();
         let mut steps = 0;
         while self.simulation_clock.due(now) && steps < 8 {
-            let before = self.backend.snapshot().clone();
+            let before = self.backend.shared_snapshot();
             self.simulation_seed = self.simulation_seed.wrapping_add(0x9e3779b97f4a7c15);
             match self.backend.dispatch(Command::Tick {
                 seed: self.simulation_seed,
@@ -376,22 +385,26 @@ impl eframe::App for DownloadsApp {
         } else {
             theme::Theme::LIGHT
         };
-        let before = self.backend.snapshot().clone();
-        let (view_clicked, ribbon_action) = self.chrome.show_ribbon(ui, palette, &before);
+        let previous_view = self.backend.snapshot().view;
+        let previous_theme = self.backend.snapshot().settings.theme;
+        let (view_clicked, ribbon_action) =
+            self.chrome
+                .show_ribbon(ui, palette, self.backend.snapshot());
         if view_clicked {
             self.rail.close_panel();
         }
-        if self.chrome.view != before.view && !self.dispatch(Command::SetView(self.chrome.view)) {
-            self.chrome.view = before.view;
+        if self.chrome.view != previous_view && !self.dispatch(Command::SetView(self.chrome.view)) {
+            self.chrome.view = previous_view;
         }
-        if self.chrome.theme != before.settings.theme
+        if self.chrome.theme != previous_theme
             && !self.dispatch(Command::SetTheme(self.chrome.theme))
         {
-            self.chrome.theme = before.settings.theme;
+            self.chrome.theme = previous_theme;
             theme::apply_theme(ui.ctx(), self.chrome.theme.preference());
         }
-        let snapshot = self.backend.snapshot().clone();
-        let bar_action = self.chrome.show_actions(ui, palette, &snapshot);
+        let bar_action = self
+            .chrome
+            .show_actions(ui, palette, self.backend.snapshot());
         match ribbon_action.or(bar_action) {
             Some(chrome::ChromeAction::Menu(action)) => {
                 if !self.modal_open() {
@@ -412,7 +425,8 @@ impl eframe::App for DownloadsApp {
                     && !self.downloads.has_dialog()
                     && !self.settings.is_open()
                 {
-                    self.settings.open(ui.ctx(), &snapshot.settings);
+                    self.settings
+                        .open(ui.ctx(), &self.backend.snapshot().settings);
                 }
             }
             Some(chrome::ChromeAction::PickTorrent) => self.open_torrent_picker(ui.ctx()),
@@ -424,7 +438,7 @@ impl eframe::App for DownloadsApp {
             }
             None => {}
         }
-        let snapshot = self.backend.snapshot().clone();
+        let snapshot = self.backend.shared_snapshot();
         self.chrome.show_status(ui, palette, &snapshot);
         let rail_rect = self.rail.reserve(ui, palette);
         let mut view_actions = Vec::new();
@@ -504,11 +518,13 @@ impl eframe::App for DownloadsApp {
                 }
             }
         }
-        let dialog_state = self.backend.snapshot().clone();
-        if let Some(command) = self.dialogs.show(ui.ctx(), &dialog_state, palette) {
+        if let Some(command) = self
+            .dialogs
+            .show(ui.ctx(), self.backend.snapshot(), palette)
+        {
             let removed_name = match &command {
                 Command::RemoveItems(items) if items.len() == 1 => {
-                    selected_name(&dialog_state, &items[0])
+                    selected_name(self.backend.snapshot(), &items[0])
                 }
                 _ => None,
             };
@@ -643,7 +659,7 @@ fn selected_name(state: &State, selection: &Selection) -> Option<String> {
 fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Downloads",
-        eframe::NativeOptions::default(),
+        graphics::native_options(),
         Box::new(|cc| Ok(Box::new(DownloadsApp::new(cc)?))),
     )
 }

@@ -1,9 +1,10 @@
 //! Simulated data source. Nothing in this module starts or talks to a daemon.
-//! The UI uses only the frozen `open`, `snapshot`, and `dispatch` methods.
+//! The `open`, `snapshot`, and `dispatch` method signatures remain unchanged.
 //! New behavior can be added as `Command` variants without changing that API.
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -198,7 +199,7 @@ pub enum Command {
 
 pub struct FakeBackend {
     path: PathBuf,
-    state: State,
+    state: Arc<State>,
 }
 
 impl FakeBackend {
@@ -222,7 +223,10 @@ impl FakeBackend {
             }
             Err(error) => return Err(error),
         };
-        Ok(Self { path, state })
+        Ok(Self {
+            path,
+            state: Arc::new(state),
+        })
     }
 
     // FAKE_CONNECTION
@@ -230,12 +234,24 @@ impl FakeBackend {
         &self.state
     }
 
+    /// Hold a stable view across a dispatch without cloning the whole queue.
+    pub fn shared_snapshot(&self) -> Arc<State> {
+        Arc::clone(&self.state)
+    }
+
     // FAKE_CONNECTION
     pub fn dispatch(&mut self, command: Command) -> io::Result<()> {
+        // An empty simulation has nothing to recalculate or persist.
+        if matches!(&command, Command::Tick { .. })
+            && self.state.tasks.is_empty()
+            && self.state.seeds.is_empty()
+        {
+            return Ok(());
+        }
         // Only publish changes after the atomic save succeeds.
-        let mut next = self.state.clone();
+        let mut next = (*self.state).clone();
         apply_command(&mut next, command)?;
-        if next == self.state {
+        if next == *self.state {
             return Ok(());
         }
         if next.version != 1 {
@@ -245,7 +261,7 @@ impl FakeBackend {
             ));
         }
         save_state(&self.path, &next)?;
-        self.state = next;
+        self.state = Arc::new(next);
         Ok(())
     }
 }
@@ -861,6 +877,39 @@ mod tests {
 
     fn remove_test_dir(path: &Path) {
         let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn shared_snapshots_remain_stable_across_successful_and_failed_dispatches() {
+        let path = test_path();
+        let mut backend = FakeBackend::open(path.clone()).unwrap();
+        let original = backend.shared_snapshot();
+        let original_count = original.tasks.len();
+        backend
+            .dispatch(Command::AddLinks(vec!["one".into()]))
+            .unwrap();
+        assert_eq!(original.tasks.len(), original_count);
+        assert_eq!(backend.snapshot().tasks.len(), original_count + 1);
+        let current = backend.shared_snapshot();
+        assert!(backend
+            .dispatch(Command::AddDownload("file:///invalid".into()))
+            .is_err());
+        assert!(Arc::ptr_eq(&current, &backend.shared_snapshot()));
+        remove_test_dir(&path);
+    }
+
+    #[test]
+    fn empty_tick_does_not_allocate_a_new_snapshot() {
+        let path = test_path();
+        let mut backend = FakeBackend::open(path.clone()).unwrap();
+        let mut empty = backend.snapshot().clone();
+        empty.tasks.clear();
+        empty.seeds.clear();
+        backend.dispatch(Command::ReplaceState(empty)).unwrap();
+        let before = backend.shared_snapshot();
+        backend.dispatch(Command::Tick { seed: 7 }).unwrap();
+        assert!(Arc::ptr_eq(&before, &backend.shared_snapshot()));
+        remove_test_dir(&path);
     }
 
     #[test]
