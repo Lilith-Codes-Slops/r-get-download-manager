@@ -142,7 +142,7 @@ fn cat_of(categories: &[Category], name: &str) -> String {
         let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
         if let Some(category) = categories
             .iter()
-            .find(|category| category.exts.iter().any(|candidate| *candidate == ext))
+            .find(|category| category.exts.contains(&ext))
         {
             return category.id.clone();
         }

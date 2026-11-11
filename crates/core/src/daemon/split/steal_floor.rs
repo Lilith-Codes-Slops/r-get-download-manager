@@ -21,8 +21,8 @@ impl Default for StealFloor {
 impl StealFloor {
     fn bucket(rtt_ms: Option<f64>) -> u64 {
         match rtt_ms {
-            Some(rtt) if rtt.is_finite() && rtt >= 0.0 && rtt < 50.0 => 2 * MIB,
-            Some(rtt) if rtt.is_finite() && rtt >= 0.0 && rtt < 200.0 => 4 * MIB,
+            Some(rtt) if rtt.is_finite() && (0.0..50.0).contains(&rtt) => 2 * MIB,
+            Some(rtt) if rtt.is_finite() && (0.0..200.0).contains(&rtt) => 4 * MIB,
             Some(rtt) if rtt.is_finite() && rtt >= 0.0 => 8 * MIB,
             _ => MIN_TARGET,
         }
@@ -43,7 +43,7 @@ impl StealFloor {
         self.base = self.base.min((target / 2).max(MIN_TARGET));
     }
     pub fn target_increased(&mut self, target: u64) {
-        self.base = (target / 4).min(8 * MIB).max(MIN_TARGET);
+        self.base = (target / 4).clamp(MIN_TARGET, 8 * MIB);
     }
     pub fn current(&self, cooling: bool) -> u64 {
         if cooling || self.relaxed > 0 {

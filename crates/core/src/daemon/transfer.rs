@@ -121,7 +121,7 @@ pub(super) async fn download_file(
     let dest = dirs_home()
         .ok_or("HOME is not set; cannot determine the Downloads directory")?
         .join("Downloads")
-        .join(&filename);
+        .join(filename);
 
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent).await?;

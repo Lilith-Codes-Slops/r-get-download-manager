@@ -73,7 +73,7 @@ impl SplitCheckpoint {
         }
         let mut expected = partial.as_os_str().to_os_string();
         expected.push(".meta");
-        if self.sidecar != PathBuf::from(expected) {
+        if self.sidecar.as_os_str() != expected.as_os_str() {
             return Err("unexpected split sidecar path".into());
         }
         let owned = tasks

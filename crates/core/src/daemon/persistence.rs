@@ -172,6 +172,7 @@ pub(super) fn open(path: &Path) -> StoreResult<Connection> {
         let _ = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(false)
             .mode(0o600)
             .open(path)?;
     }
@@ -334,6 +335,10 @@ fn load(path: &Path) -> StoreResult<SavedState> {
 }
 
 #[cfg(test)]
+#[path = "persistence_identity_tests.rs"]
+mod identity_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -454,6 +459,3 @@ mod tests {
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 }
-#[cfg(test)]
-#[path = "persistence_identity_tests.rs"]
-mod identity_tests;

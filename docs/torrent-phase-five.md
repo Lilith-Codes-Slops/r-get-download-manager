@@ -636,3 +636,27 @@ to rerun the release build with `-j 2` (or `CARGO_BUILD_JOBS=2`) and to use
 `/bin/df -h "$HOME"` if `df` is aliased to `duf`. This commit changes the SHA
 again, so the full matrix in `docs/finalization.md` must be rerun before
 merging.
+
+
+## Consolidated Clippy cleanup (append-only note)
+
+STEP 7 at `623c763...` exited 101 with 30 errors reported for
+`downloader-core` (lib) and 36 for its test target. The compact diagnostic
+extraction produced 39 unique sites, mostly the same findings re-reported for
+both targets. A follow-up commit fixes all of them: `Default` implementations
+for `EventBroadcaster`, `TrayService`, `SleepInhibitorManager`,
+`BackoffRetryPolicy`, `MirrorPoolManager`, `TransferPerformanceModel`,
+`ProtocolRegistry` and `PriorityHeap`; boxed `Decision::Single`/`Split`
+payloads; `checked_div`, `clamp`, `Range::contains`, `contains_key`,
+`next_back`, `truncate(false)`, elided lifetimes, `OsStr` comparison and a
+collapsed match guard. `Option::is_none_or` (stable since 1.82) is replaced by
+an MSRV-1.80-safe `match`. `clippy.toml` now declares
+`too-many-arguments-threshold = 12` for the daemon's wide internal transfer
+and repository signatures; `-D warnings` remains enforced and the planned
+parameter-struct refactor is recorded in `state.md`.
+
+Steps 1 through 6 were green at `623c763...`, STEP 7 was red, STEP 8 was
+stopped as memory-heavy and STEP 9 was not run. Because this commit changes the
+SHA again, the full matrix in `docs/finalization.md` must be rerun before
+merging. No `-D warnings` waiver, release-build skip, tag or Release was
+accepted.

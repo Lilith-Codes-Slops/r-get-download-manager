@@ -88,6 +88,10 @@ to a disabled button, checkbox or placeholder in `views.rs`.
   a daemon-wide graceful-shutdown barrier.
 - Packaging smoke tests, browser-extension handoff lab, real 429/503 split
   observation, ≥1 GB split GUI run, checkpoint-boundary SIGKILL/restart.
+- Refactor the daemon's wide internal transfer and repository function
+  signatures into parameter structs, then remove
+  `too-many-arguments-threshold = 12` from `clippy.toml` and restore the
+  default `7` threshold under `-D warnings`.
 - Windows daemon support.
 
 ## Merge gate (unchanged)
@@ -100,8 +104,8 @@ to a disabled button, checkbox or placeholder in `views.rs`.
    PR state.
 4. No `v0.1.0` tag or GitHub Release in this flow.
 
-A new Clippy `io_other_error` fix commit changes the SHA again, so the matrix
+A new consolidated Clippy cleanup commit changes the SHA again, so the matrix
 request must be reissued at the new head; earlier results at `07fd541`,
 `65f5f1e`, the post-download feature commit, the GUI port commit, the
-compile-fix/warning-cleanup commit and the window borrow-check fix commit are
-history, not a green gate.
+compile-fix/warning-cleanup commit, the window borrow-check fix commit and the
+Clippy `io_other_error` fix commit are history, not a green gate.

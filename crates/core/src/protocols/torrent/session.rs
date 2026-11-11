@@ -17,6 +17,22 @@ pub fn download_only_options() -> librqbit::SessionOptions {
     }
 }
 
+/// Discovery for one task. Each info-hash uses its own cache directory because
+/// librqbit 9.1.0 sessions otherwise share a process-wide temp filename.
+pub fn with_discovery(cache_file: std::path::PathBuf) -> librqbit::SessionOptions {
+    let mut options = download_only_options();
+    options.disable_local_service_discovery = false;
+    options.listen = Some(librqbit::ListenerOptions::default());
+    options.dht = Some(librqbit::DhtSessionConfig {
+        persistence: Some(librqbit::dht::DhtPersistenceConfig {
+            config_filename: Some(cache_file),
+            dump_interval: Some(std::time::Duration::from_secs(10)),
+        }),
+        ..Default::default()
+    });
+    options
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -42,20 +58,4 @@ mod tests {
             .as_ref()
             .is_some_and(|dht| dht.persistence.is_some()));
     }
-}
-
-/// Discovery for one task. Each info-hash uses its own cache directory because
-/// librqbit 9.1.0 sessions otherwise share a process-wide temp filename.
-pub fn with_discovery(cache_file: std::path::PathBuf) -> librqbit::SessionOptions {
-    let mut options = download_only_options();
-    options.disable_local_service_discovery = false;
-    options.listen = Some(librqbit::ListenerOptions::default());
-    options.dht = Some(librqbit::DhtSessionConfig {
-        persistence: Some(librqbit::dht::DhtPersistenceConfig {
-            config_filename: Some(cache_file),
-            dump_interval: Some(std::time::Duration::from_secs(10)),
-        }),
-        ..Default::default()
-    });
-    options
 }

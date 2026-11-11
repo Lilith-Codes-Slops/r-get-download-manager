@@ -11,7 +11,7 @@ impl ContentDisposition {
                 }
             }
         }
-        url.split('/').last().unwrap_or("download").to_string()
+        url.split('/').next_back().unwrap_or("download").to_string()
     }
 
     fn parse_filename(cd: &str) -> Option<String> {

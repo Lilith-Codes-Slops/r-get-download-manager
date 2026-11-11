@@ -23,3 +23,9 @@ impl SleepInhibitorManager {
         self.active.load(Ordering::Acquire) > 0
     }
 }
+
+impl Default for SleepInhibitorManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}

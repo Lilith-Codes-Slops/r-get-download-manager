@@ -9,3 +9,9 @@ impl TrayService {
         // Platform tray integration would live here.
     }
 }
+
+impl Default for TrayService {
+    fn default() -> Self {
+        Self::new()
+    }
+}

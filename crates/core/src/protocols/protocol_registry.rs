@@ -25,3 +25,9 @@ impl ProtocolRegistry {
         None
     }
 }
+
+impl Default for ProtocolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}

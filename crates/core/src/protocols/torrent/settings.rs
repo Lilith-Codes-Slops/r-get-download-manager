@@ -63,8 +63,10 @@ mod tests {
     }
     #[test]
     fn invalid_limits_are_rejected() {
-        let mut settings = TorrentSettings::default();
-        settings.download_time_upload_cap_bps = 0;
+        let mut settings = TorrentSettings {
+            download_time_upload_cap_bps: 0,
+            ..Default::default()
+        };
         assert!(settings.validate().is_err());
         settings.download_time_upload_cap_bps = 1;
         settings.max_active_checks = 0;

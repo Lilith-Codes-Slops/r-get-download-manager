@@ -36,8 +36,10 @@ impl Default for SizingState {
 }
 impl SizingState {
     pub fn remembered(memory: super::host_memory::Remembered) -> Self {
-        let mut state = Self::default();
-        state.sizer = AdaptiveSizer::new(Some(memory.target));
+        let mut state = Self {
+            sizer: AdaptiveSizer::new(Some(memory.target)),
+            ..Default::default()
+        };
         let rtt = memory.bucket.representative_ms();
         state.sizer.recent_rtt_ms = Some(rtt);
         state.floor.observe_latency(Some(rtt), true);
@@ -67,11 +69,8 @@ impl SizingState {
             self.floor.target_reduced(target);
         }
         if target > old {
-            self.floor_cap = Some(
-                (target / 4)
-                    .min(8 * 1024 * 1024)
-                    .max(super::adaptive_sizer::MIN_TARGET),
-            );
+            self.floor_cap =
+                Some((target / 4).clamp(super::adaptive_sizer::MIN_TARGET, 8 * 1024 * 1024));
             self.floor.target_increased(target);
         }
     }

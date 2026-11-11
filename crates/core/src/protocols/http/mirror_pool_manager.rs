@@ -26,3 +26,9 @@ impl MirrorPoolManager {
             .collect()
     }
 }
+
+impl Default for MirrorPoolManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}

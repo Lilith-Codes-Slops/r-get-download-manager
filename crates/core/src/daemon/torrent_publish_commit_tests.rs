@@ -259,12 +259,12 @@ async fn journaled_removal_deletes_owned_stage_published_files_and_task() {
         .await
         .unwrap();
     assert!(!lab.downloads.join("bundle").exists());
-    assert!(lab.tasks.lock().await.get("task").is_none());
+    assert!(!lab.tasks.lock().await.contains_key("task"));
     assert!(stages::load(&database).unwrap().is_empty());
     assert!(super::torrent_published_store::load(&database, "task")
         .unwrap()
         .is_none());
-    assert!(lab.store.load().await.unwrap().tasks.get("task").is_none());
+    assert!(!lab.store.load().await.unwrap().tasks.contains_key("task"));
     fs::remove_dir_all(lab.root).unwrap();
 }
 
@@ -336,7 +336,7 @@ async fn removal_recovery_resumes_only_when_identity_is_still_proven() {
     let report = super::torrent_remove_recovery::recover(&database, &lab.downloads).unwrap();
     assert_eq!(report.removed, 1);
     assert!(!lab.downloads.join("bundle").exists());
-    assert!(lab.store.load().await.unwrap().tasks.get("task").is_none());
+    assert!(!lab.store.load().await.unwrap().tasks.contains_key("task"));
     fs::remove_dir_all(lab.root).unwrap();
 }
 
@@ -354,7 +354,7 @@ async fn remove_from_list_keeps_published_and_detached_stage() {
         .forget_torrent_keep_files(&lab.tasks, "task", Some(&lab.downloads))
         .await
         .unwrap();
-    assert!(lab.tasks.lock().await.get("task").is_none());
+    assert!(!lab.tasks.lock().await.contains_key("task"));
     assert!(lab.downloads.join("bundle").is_dir());
     assert!(lab.area.verify(&lab.stage).is_ok());
     assert_eq!(
@@ -364,7 +364,7 @@ async fn remove_from_list_keeps_published_and_detached_stage() {
     assert!(super::torrent_published_store::load(&database, "task")
         .unwrap()
         .is_some());
-    assert!(lab.store.load().await.unwrap().tasks.get("task").is_none());
+    assert!(!lab.store.load().await.unwrap().tasks.contains_key("task"));
     let report = super::torrent_stage_recovery::recover(&database, &lab.downloads).unwrap();
     assert_eq!(report.retained, 1);
     assert!(lab.area.verify(&lab.stage).is_ok());

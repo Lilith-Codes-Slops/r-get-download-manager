@@ -372,11 +372,9 @@ impl AppState {
                                 &format!("{}/s (average)", format_bytes(task.speed_bps)),
                             );
                             let eta = task.total.and_then(|total| {
-                                if task.speed_bps > 0 {
-                                    Some(total.saturating_sub(task.downloaded) / task.speed_bps)
-                                } else {
-                                    None
-                                }
+                                total
+                                    .saturating_sub(task.downloaded)
+                                    .checked_div(task.speed_bps)
                             });
                             metric(
                                 ui,

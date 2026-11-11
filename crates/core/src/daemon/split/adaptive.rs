@@ -162,7 +162,7 @@ pub(super) async fn supervise(mut inputs: Inputs) -> Result<(), String> {
         } else {
             inputs.stop.send_replace(true);
             if workers.is_empty() {
-                return Err(first_error.unwrap());
+                return Err(first_error.unwrap_or_else(|| "split stopped".into()));
             }
         }
         tokio::select! {
@@ -195,7 +195,7 @@ pub(super) async fn supervise(mut inputs: Inputs) -> Result<(), String> {
             } => {
                 if changed {
                     let count = inputs.desired.as_mut().map(|rx| *rx.borrow_and_update()).unwrap_or(1) as usize;
-                    let new_max = count.clamp(1, 32).min((inputs.info.total / (1024 * 1024)).max(1).min(32) as usize);
+                    let new_max = count.clamp(1, 32).min((inputs.info.total / (1024 * 1024)).clamp(1, 32) as usize);
                     let old_max = aimd.max;
                     aimd.max = new_max;
                     if new_max > old_max {

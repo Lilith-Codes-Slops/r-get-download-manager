@@ -14,8 +14,8 @@ use tokio::sync::watch;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 enum Decision {
-    Single(super::recovery::PreparedRecovery),
-    Split(super::split::recovery::PreparedSplit),
+    Single(Box<super::recovery::PreparedRecovery>),
+    Split(Box<super::split::recovery::PreparedSplit>),
     Fresh,
 }
 
@@ -39,11 +39,11 @@ fn decide(saved: &mut SavedState, root: &Path, prior: &DownloadInfo) -> Decision
         .get(&prior.url)
         .filter(|record| record.partial_name == name);
     if let Ok(item) = super::split::recovery::prepare(&sidecar, &partial, &prior.url, db) {
-        return Decision::Split(item);
+        return Decision::Split(Box::new(item));
     }
     saved.tasks.insert(prior.url.clone(), prior.clone());
     match super::recovery::prepare_one(saved, root, &prior.url, "downloading") {
-        Ok(item) => Decision::Single(item),
+        Ok(item) => Decision::Single(Box::new(item)),
         Err(_) => Decision::Fresh,
     }
 }
@@ -108,7 +108,7 @@ pub(super) async fn run(
     }
     match decision {
         Decision::Single(item) => {
-            super::recovered_transfer::run(item, tasks, limiter, store, control).await
+            super::recovered_transfer::run(*item, tasks, limiter, store, control).await
         }
         Decision::Split(item) => {
             let partial = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?)
@@ -119,7 +119,7 @@ pub(super) async fn run(
                 .read_timeout(std::time::Duration::from_secs(60))
                 .redirect(reqwest::redirect::Policy::limited(10))
                 .build()?;
-            super::split::live::run(item, partial, client, tasks, limiter, store, control).await
+            super::split::live::run(*item, partial, client, tasks, limiter, store, control).await
         }
         Decision::Fresh => {
             super::transfer::download_file(

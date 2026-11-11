@@ -52,6 +52,16 @@ pending, and no merge, tag, or GitHub Release has been created.
 - Replace `std::io::Error::new(ErrorKind::Other, ...)` with
   `std::io::Error::other(...)` in the CLI IPC client to satisfy
   `clippy::io_other_error` under `-D warnings`.
+- Clear the remaining `cargo clippy --workspace --all-targets --locked --
+  -D warnings` findings surfaced by the second STEP 7 run: add `Default`
+  implementations, box the two large `Decision` variants, use `checked_div`,
+  `clamp`, range `contains`, `contains_key`, `next_back`, explicit
+  `truncate(false)`, elided lifetimes and `OsStr` comparison, and replace the
+  1.82-only `Option::is_none_or` with a `match`. Set
+  `too-many-arguments-threshold = 12` in `clippy.toml` for the daemon's wide
+  internal transfer/repository signatures; this is a project lint
+  configuration, not an `#[allow]` or a `-D warnings` waiver, and the
+  parameter-struct refactor is tracked in `state.md`.
 - Clarify Linux-only daemon support and the Linux GNU torrent target in
   `README.md`.
 - Mark `docs/torrent-phase-five.md` as an append-only engineering log and add a
@@ -70,11 +80,12 @@ pending, and no merge, tag, or GitHub Release has been created.
 - A formatting/Clippy fix commit addressed the previously reported `rustfmt`
   diffs and `large_enum_variant` error at `07fd541`.
 - The post-download action feature commit, the subsequent GUI port commit, the
-  compile-fix/warning-cleanup commit, the window borrow-check fix commit and the
-  Clippy `io_other_error` fix commit each changed the SHA again. The full matrix,
-  including `cargo fmt --check`, `cargo clippy -- -D warnings`, the Cargo test
-  suites and the release build, must still be rerun at the new final SHA. See
-  `docs/finalization.md` and `state.md`.
+  compile-fix/warning-cleanup commit, the window borrow-check fix commit, the
+  Clippy `io_other_error` fix commit and the consolidated Clippy cleanup commit
+  each changed the SHA again. The full matrix, including `cargo fmt --check`,
+  `cargo clippy -- -D warnings`, the Cargo test suites and the release build,
+  must still be rerun at the new final SHA. See `docs/finalization.md` and
+  `state.md`.
 
 ### Known limitations
 

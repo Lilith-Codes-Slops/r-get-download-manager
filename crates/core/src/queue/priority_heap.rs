@@ -46,3 +46,9 @@ impl PriorityHeap {
         self.heap.pop().map(|i| i.id)
     }
 }
+
+impl Default for PriorityHeap {
+    fn default() -> Self {
+        Self::new()
+    }
+}

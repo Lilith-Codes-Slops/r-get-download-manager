@@ -23,3 +23,9 @@ impl EventBroadcaster {
         let _ = self.tx.send(event);
     }
 }
+
+impl Default for EventBroadcaster {
+    fn default() -> Self {
+        Self::new()
+    }
+}

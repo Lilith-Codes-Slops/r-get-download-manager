@@ -50,10 +50,10 @@ pub(super) async fn run(mut ctx: Context) -> Result<Exit, String> {
             if *ctx.retire.borrow() || *ctx.drain.borrow() {
                 return Ok(Exit::Retired);
             }
-            let allow_steal = ctx
-                .desired
-                .as_ref()
-                .is_none_or(|receiver| *receiver.borrow() > 1);
+            let allow_steal = match ctx.desired.as_ref() {
+                Some(receiver) => *receiver.borrow() > 1,
+                None => true,
+            };
             map.claim(ctx.owner).or_else(|| {
                 if allow_steal {
                     map.steal(ctx.owner)

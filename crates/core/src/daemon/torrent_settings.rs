@@ -79,8 +79,10 @@ mod tests {
     fn missing_row_defaults_and_roundtrip() {
         let path = path();
         assert_eq!(load(&path).unwrap(), TorrentSettings::default());
-        let mut settings = TorrentSettings::default();
-        settings.max_active_seeds = 0;
+        let settings = TorrentSettings {
+            max_active_seeds: 0,
+            ..Default::default()
+        };
         save(&path, &settings).unwrap();
         assert_eq!(load(&path).unwrap(), settings);
         let mut invalid = settings.clone();

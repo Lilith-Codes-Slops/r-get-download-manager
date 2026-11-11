@@ -37,14 +37,12 @@ impl Policies {
             DaemonEvent::SegmentPolicyRemoved {
                 task_id,
                 generation,
-            } => {
-                if self
-                    .0
-                    .get(&task_id)
-                    .is_some_and(|policy| policy.generation == generation)
-                {
-                    self.0.remove(&task_id);
-                }
+            } if self
+                .0
+                .get(&task_id)
+                .is_some_and(|policy| policy.generation == generation) =>
+            {
+                self.0.remove(&task_id);
             }
             _ => {}
         }

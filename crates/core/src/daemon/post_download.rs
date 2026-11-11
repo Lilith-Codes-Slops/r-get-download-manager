@@ -53,7 +53,7 @@ fn save(path: &Path, settings: &PostDownloadSettings) -> Result<()> {
 impl Persistence {
     pub(super) async fn load_post_download_settings(&self) -> Result<PostDownloadSettings> {
         let path = self.database_path();
-        Ok(tokio::task::spawn_blocking(move || load(&path)).await??)
+        tokio::task::spawn_blocking(move || load(&path)).await?
     }
 
     pub(super) async fn save_post_download_settings(

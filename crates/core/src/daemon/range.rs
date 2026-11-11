@@ -20,10 +20,10 @@ pub(super) fn strong_etag(value: &str) -> bool {
             .all(|&b| b == 0x21 || (0x23..=0x7e).contains(&b) || b >= 0x80)
 }
 
-fn one_header<'a>(
-    headers: &'a header::HeaderMap,
+fn one_header(
+    headers: &header::HeaderMap,
     name: header::HeaderName,
-) -> Result<Option<&'a str>, String> {
+) -> Result<Option<&str>, String> {
     let values = headers.get_all(name);
     let mut iter = values.iter();
     let Some(first) = iter.next() else {
