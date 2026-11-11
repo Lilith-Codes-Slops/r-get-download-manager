@@ -1,9 +1,10 @@
 # Finalization status and merge gate
 
 This document records the decisions made for the finalization flowchart, the
-completed merge of PR #1, and the verification status of the post-merge GUI-only
-slice. It is deliberately conservative: a public-network pass is reported by the
-user, but a verbatim final log was not attached to this branch.
+completed merges of PR #1 and PR #2, and the verification status of the
+post-merge GUI-only slice and its docs-only follow-up. It is deliberately
+conservative: a public-network pass is reported by the user, but a verbatim
+final log was not attached to this branch.
 
 ## Recorded decisions
 
@@ -11,14 +12,16 @@ user, but a verbatim final log was not attached to this branch.
 | --- | --- |
 | Public multi-file acceptance | User-reported pass; verbatim final log not attached. Do not quote `test result: ok` as an observed line. |
 | Earlier single-file smoke run | Not multi-file acceptance. Close it out and clean its isolated files on the user's PC. |
-| Final matrix status | Green on the user's PC at `6cc0baf…` (nine steps, including the release build). PR #1 was then merged as `99c845f…` on `master`. |
-| Scope | Merge PR #1 only; done. No `v0.1.0` tag, GitHub Release or checksums were created. |
-| Merge strategy | Executed with `--squash`; PR #1 is `MERGED`. |
-| Current action | Verify the dependency-free GUI-only slice on `arena/1c81e486-r-get-download-manager` at its new SHA; the six-step user-side list is in `state.md`. |
+| Final matrix status | PR #1: nine-step matrix green at `6cc0baf…`, merged as `99c845f…`. PR #2: six-step matrix green at `8bd754e…`, merged as `524a35b…`. Both on `master`. |
+| Scope | Merge PR #1 and PR #2 only; both done. No `v0.1.0` tag, GitHub Release or checksums were created. |
+| Merge strategy | Executed with `--squash` for both PRs; PR #1 and PR #2 are `MERGED`. |
+| Current action | Verify the docs-only follow-up on `arena/af64881e-r-get-download-manager` at its new SHA; the six-step user-side list is below and in `state.md`. |
 
 The nine-step deterministic matrix was rerun at `6cc0baf…` and confirmed green,
 then `gh pr merge 1 --squash` produced merge commit
-`99c845fd3f496008b2a585ae7592671f332eba68`. Earlier results at `251cb71`,
+`99c845fd3f496008b2a585ae7592671f332eba68`. A later six-step matrix was green at
+`8bd754e…` before `gh pr merge 2 --squash` produced merge commit
+`524a35b8fd5660970c98af0b9de302e36c12c390`. Earlier results at `251cb71`,
 `70c56e5`, `07fd541`, `65f5f1e`, the post-download feature commit, the GUI port
 commit and the follow-up fix commits are useful history but are not the current
 verification gate.
@@ -74,12 +77,12 @@ unset RGET_TEST_CHECKPOINT_HOOK RGET_TEST_CHECKPOINT_MARKER RGET_TEST_WRITE_BLOC
 The CachyOS single-file run does not satisfy multi-file acceptance. Leaving it
 out of scope is acceptable; do not describe its partial output as a pass.
 
-## 3. Historical final matrix (green at `6cc0baf…`)
+## 3. Historical matrices and current verification list
 
-The commands below were run on the user's PC from the repository root and were
-green at `6cc0baf…` immediately before the squash merge. They are recorded as
-evidence, not as a pending gate. For the current branch use the six-step list in
-`state.md`.
+The first block below was run on the user's PC from the repository root and was
+green at `6cc0baf…` immediately before PR #1 was squash-merged. It is recorded
+as evidence, not as a pending gate. The GUI-only follow-up used the shorter
+six-step list in `state.md` and was green at `8bd754e…` before PR #2 was merged.
 
 ```sh
 git pull --ff-only origin arena/4f707bcb-r-get-download-manager
@@ -98,6 +101,30 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo build --release --locked
 ```
+
+A second, shorter matrix was green at
+`8bd754e91be1b941b6a74f4430561e2a6d627550` before PR #2 was squash-merged as
+`524a35b…`:
+
+```sh
+cargo check -p downloader-gui --locked
+cargo test --workspace --locked
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo build --release --locked -j 2
+git status --short; git rev-parse HEAD; /bin/df -h "$HOME"
+```
+
+All six steps exited 0; STEP 0 and STEP 8 produced no warnings; STEP 7 needed
+no `-D warnings` waiver. The dependency guard against `99c845f…` printed
+nothing. The PR #2 body is the authoritative green record. No tag, Release,
+checksums or CI workflow were created.
+
+The docs-only follow-up on `arena/af64881e-r-get-download-manager` changes the
+SHA without code changes, so rerun exactly these six commands at its new SHA
+after `git pull --ff-only origin arena/af64881e-r-get-download-manager`; use
+`524a35b…` as the dependency-guard base. Old matrix steps 2–5 remain optional
+full-parity checks.
 
 If the release build is memory-heavy, rerun it with `-j 2` (or
 `CARGO_BUILD_JOBS=2`); this workspace links `wgpu`, `egui` and `librqbit`. If
@@ -193,31 +220,44 @@ Use the named filter; bare `--ignored` would also try the single-file test.
   command palette, extends the Help shortcut list, and removes stale open-PR and
   pre-merge gate wording from `state.md`, `docs/finalization.md`,
   `CHANGELOG.md` and `README.md`.
+- A docs-only follow-up commit records PR #2 merged as `524a35b…`, marks the
+  six-step matrix green at `8bd754e…`, and updates `state.md`,
+  `docs/finalization.md`, `CHANGELOG.md` and `README.md`. It contains no code
+  changes.
 
 No `.github/workflows` CI was added; validation remains manual on the user's PC.
 There are no assistant-side Cargo runs, GUI checks or peer connections.
 
-## 5. Merge completed
+## 5. Merges completed
 
-`gh pr merge 1 --squash` was executed after the green matrix at `6cc0baf…`.
-Verified state:
+`gh pr merge 1 --squash` was executed after the green nine-step matrix at
+`6cc0baf…`, and `gh pr merge 2 --squash` after the green six-step matrix at
+`8bd754e…`. Verified state:
 
-- `state: MERGED`, `closed: true`, `baseRefName: master`.
-- `headRefOid: 6cc0baf7766142d4b3ab7daff0672736650c3129`.
-- `mergeCommit: 99c845fd3f496008b2a585ae7592671f332eba68`.
-- `mergedAt: 2026-11-11T00:34:09Z`, `mergedBy: Lilith-Codes-Slops`.
-- `git ls-remote origin refs/heads/master` = `99c845f…`.
+- PR #1: `state: MERGED`, `closed: true`, `baseRefName: master`,
+  `headRefOid: 6cc0baf7766142d4b3ab7daff0672736650c3129`,
+  `mergeCommit: 99c845fd3f496008b2a585ae7592671f332eba68`,
+  `mergedAt: 2026-11-11T00:34:09Z`, `mergedBy: Lilith-Codes-Slops`.
+- PR #2: `state: MERGED`, `closed: true`, `baseRefName: master`,
+  `headRefOid: 8bd754e91be1b941b6a74f4430561e2a6d627550`,
+  `mergeCommit: 524a35b8fd5660970c98af0b9de302e36c12c390`,
+  `mergedAt: 2026-11-11T08:29:57Z`, `mergedBy: Lilith-Codes-Slops`.
+- `git ls-remote origin refs/heads/master` = `524a35b…` after PR #2.
+- `statusCheckRollup: []` for both PRs; no CI workflow was added.
 
-No `--auto`, tag, GitHub Release or checksums were created. If a public release
-is wanted later, complete the manual GUI/live-HTTP checks in
-`docs/manual-live-verification.md` and `docs/collision-live-verification.md`,
-then add release notes, binary checksums and a tag.
+No `--auto`, `--delete-branch`, tag, GitHub Release or checksums were created.
+Both merge commands were the last command in their shell chain with an explicit
+PR number. If a public release is wanted later, complete the manual GUI/live-HTTP
+checks in `docs/manual-live-verification.md` and
+`docs/collision-live-verification.md`, then add release notes, binary checksums
+and a tag.
 
 ## 6. Current conclusion
 
-PR #1 is merged; the pre-merge matrix is closed out. The active branch
-`arena/1c81e486-r-get-download-manager` carries a dependency-free GUI-only
-slice (preference persistence, `Ctrl+K` command palette, extended Help shortcuts
-and docs cleanup). Its six-step user-side verification at the new SHA is the
-only outstanding gate; see `state.md`. The long-term backlog is not a merge
-blocker.
+PR #1 and PR #2 are merged; both pre-merge matrices are closed out and green.
+The active branch `arena/af64881e-r-get-download-manager` carries only
+documentation updates that record those merges and the green six-step record at
+`8bd754e…`. No code changed in this follow-up, but the commit changes the SHA,
+so its own six-step user-side verification at the new SHA is the only outstanding
+gate; see `state.md`. No tag, Release, checksums or CI workflow exist. The
+long-term backlog is not a merge blocker.

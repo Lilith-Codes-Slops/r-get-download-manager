@@ -16,12 +16,17 @@ gates on reserved core helpers document that intent without weakening
 
 ## Branch / PR
 
-- Active branch: `arena/1c81e486-r-get-download-manager` (post-merge GUI-only slice).
+- Active branch: `arena/af64881e-r-get-download-manager` (docs-only follow-up to PR #2).
 - PR #1: **MERGED** with `gh pr merge 1 --squash`; head
   `6cc0baf7766142d4b3ab7daff0672736650c3129`, merge commit
   `99c845fd3f496008b2a585ae7592671f332eba68` on `master`.
-- The nine-step user-side pre-merge matrix was green at `6cc0baf…`. No tag,
-  GitHub Release, checksums or CI workflow were created.
+- PR #2: **MERGED** with `gh pr merge 2 --squash`; head
+  `8bd754e91be1b941b6a74f4430561e2a6d627550`, merge commit
+  `524a35b8fd5660970c98af0b9de302e36c12c390` on `master`.
+- The nine-step user-side pre-merge matrix was green at `6cc0baf…`. The
+  dependency-free GUI-only follow-up's six-step user-side matrix was green at
+  `8bd754e…` (no warnings, no `-D warnings` waiver, no skipped release build).
+  No tag, GitHub Release, checksums or CI workflow were created.
 - Design source: [`docs/gui-design/index.html`](docs/gui-design/index.html) — the
   single-file browser mockup the Rust `egui` GUI is ported from.
 - Shipped GUI: `crates/gui` (`eframe`/`egui`), using the existing local
@@ -109,14 +114,18 @@ to a disabled button, checkbox or placeholder in `views.rs`.
 - PR #1 was merged at `99c845f…` after the user-side nine-step matrix was green
   at `6cc0baf…` (workspace tests, no-default-features tests, fault suite,
   public harness, split live suite, `cargo fmt --all -- --check`, Clippy with
-  `-D warnings`, `cargo build --release --locked -j 2`, and a clean tree). No
-  `-D warnings` waiver, skipped release build, tag, Release or checksums.
-- The current dependency-free GUI-only slice is on the active branch. Its own
-  six-step user-side verification is pending at the new SHA:
-  `cargo check -p downloader-gui --locked`, `cargo test --workspace --locked`,
-  `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked
-  -- -D warnings`, `cargo build --release --locked -j 2`, and a clean tree.
-  The old matrix steps 2–5 remain optional full-parity checks.
+  `-D warnings`, `cargo build --release --locked -j 2`, and a clean tree).
+- PR #2 was merged at `524a35b…` after the user-side six-step matrix was green
+  at `8bd754e…`: `cargo check -p downloader-gui --locked`,
+  `cargo test --workspace --locked`, `cargo fmt --all -- --check`,
+  `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo build --release --locked -j 2`, and a clean tree. STEP 0 and STEP 8
+  produced no warnings; STEP 7 exited 0 with no waiver. PR #2's body is the
+  authoritative green record. No tag, Release, checksums or CI workflow.
+- This docs-only follow-up changes the SHA without touching code. Its own
+  six-step user-side verification is pending at the new SHA; the command list is
+  in `docs/finalization.md`. Old matrix steps 2–5 remain optional full-parity
+  checks.
 - `state.md` is the long-term backlog, not a merge gate. Native file picker,
   sound on completion and manual daemon toggle stay disabled with their
   `TODO(state.md)` comments.

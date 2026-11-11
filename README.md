@@ -212,15 +212,17 @@ with `RGET_PUBLIC_TORRENT`; a separate single-file smoke test uses
 multi-file acceptance criterion. The user reported that the public v1
 multi-file test passed on their PC; the verbatim final log was not attached to
 this branch. See [finalization status](docs/finalization.md) and
-[Phase 5 notes](docs/torrent-phase-five.md) for evidence and current gates.
+[Phase 5 notes](docs/torrent-phase-five.md) for the completed merges, green
+verification records and historical evidence.
 
 ### Manual live verification and IPC contract
 
 See the [isolated manual verification procedure](docs/manual-live-verification.md)
 for real-host, GUI, checkpoint-kill and v1 checks, and the
-[finalization record](docs/finalization.md) for the completed PR #1 merge and
-the current GUI follow-up verification list. The current live connection and
-segment event shapes are recorded in the
+[finalization record](docs/finalization.md) for the completed PR #1 and PR #2
+merges and their green verification records. The docs-only follow-up verification
+list is in [`state.md`](state.md) and [`docs/finalization.md`](docs/finalization.md).
+The current live connection and segment event shapes are recorded in the
 [IPC contract](docs/ipc-segment-contract.md).
 
 ### Split checkpoint hardening tests (Linux)
