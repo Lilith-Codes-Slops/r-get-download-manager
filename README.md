@@ -215,13 +215,27 @@ this branch. See [finalization status](docs/finalization.md) and
 [Phase 5 notes](docs/torrent-phase-five.md) for the completed merges, green
 verification records and historical evidence.
 
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the six-step
+verification matrix on every push and pull request, covering `master`, `main`
+and any other base branch without changing the PR base. The check, test, Clippy
+and release-build commands all use `--locked`; `cargo fmt --all -- --check`,
+Clippy with `-D warnings` and the `-j 2` release build are all included. The
+GitHub Actions run at the exact pushed SHA is the verification record for later
+changes, so the repeated manual six-step matrices in
+[`docs/finalization.md`](docs/finalization.md) are historical evidence rather
+than a recurring gate. CI does not run real GUI, live-daemon or
+public-torrent-network checks; those remain manual/user-side.
+
 ### Manual live verification and IPC contract
 
 See the [isolated manual verification procedure](docs/manual-live-verification.md)
 for real-host, GUI, checkpoint-kill and v1 checks, and the
-[finalization record](docs/finalization.md) for the completed PR #1 and PR #2
-merges and their green verification records. The docs-only follow-up verification
-list is in [`state.md`](state.md) and [`docs/finalization.md`](docs/finalization.md).
+[finalization record](docs/finalization.md) for the completed PR #1, PR #2 and
+PR #3 merges and their green user-side verification records. The historical
+six-step command list is in [`state.md`](state.md) and
+[`docs/finalization.md`](docs/finalization.md).
 The current live connection and segment event shapes are recorded in the
 [IPC contract](docs/ipc-segment-contract.md).
 

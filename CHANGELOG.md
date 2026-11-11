@@ -8,10 +8,12 @@ has been published.
 
 Status: PR #1 was squash-merged as
 `99c845fd3f496008b2a585ae7592671f332eba68` after a green nine-step matrix at
-`6cc0baf…`, and PR #2 was squash-merged as
-`524a35b8fd5660970c98af0b9de302e36c12c390` after a green six-step matrix at
-`8bd754e…`. The active branch `arena/af64881e-r-get-download-manager` carries a
-docs-only follow-up; no tag, GitHub Release, checksums or CI workflow exist.
+`6cc0baf…`, PR #2 as `524a35b8fd5660970c98af0b9de302e36c12c390` after a green
+six-step matrix at `8bd754e…`, and PR #3 as
+`c9e8a8bf6398bc29e1ff945ed73e70221e42c0a4` after the docs-only six-step matrix
+was green at `1c26bf9…` (PR #3's body is the authoritative record). The active
+branch `arena/b93940a1-r-get-download-manager` adds `.github/workflows/ci.yml`
+first; no tag, GitHub Release, checksums or `--auto` exist.
 
 ### Added
 
@@ -43,6 +45,12 @@ docs-only follow-up; no tag, GitHub Release, checksums or CI workflow exist.
 - A `Ctrl+K` command palette over existing wired actions only, with
   case-insensitive label/shortcut/keyword search, arrow/Enter navigation, unit
   tests and a Commands ribbon button; no new daemon calls or dependencies.
+- GitHub Actions CI in `.github/workflows/ci.yml`: on pushes and pull requests it
+  runs the six-step matrix with `--locked` on every Cargo command that supports
+  it, `cargo fmt --all -- --check`, Clippy `-D warnings`, the `-j 2` release
+  build and a clean-tree check. The exact pushed SHA's run replaces repeated
+  manual six-step matrices for later changes; no Cargo dependencies, manifests or
+  lockfile changes were added.
 - Extended Help shortcut list and wired aliases (`Ctrl+O`, `Ctrl+,`, `Ctrl+1`,
   `Ctrl+2`, `Ctrl+F`, `Ctrl+Shift+Enter`, `Esc`). Design-only shortcuts for
   still-disabled controls are named in Help and tracked in `state.md`.
@@ -85,9 +93,11 @@ docs-only follow-up; no tag, GitHub Release, checksums or CI workflow exist.
   `README.md`.
 - Mark `docs/torrent-phase-five.md` as an append-only engineering log and add a
   finalization status section.
-- Record PR #2 merged as `524a35b…` and the green six-step GUI-only matrix at
-  `8bd754e…` in `state.md`, `docs/finalization.md` and `README.md`; this is a
-  documentation-only change with no code, dependency or lockfile edits.
+- Record PR #2 merged as `524a35b…` and PR #3 merged as `c9e8a8b…`, the green
+  six-step GUI-only matrix at `8bd754e…` and the green docs-only matrix at
+  `1c26bf9…` in `state.md`, `docs/finalization.md` and `README.md`; these were
+  documentation-only changes with no code, dependency or lockfile edits. PR #3's
+  body is the authoritative green record at `1c26bf9…`.
 
 ### Validation
 
@@ -111,10 +121,17 @@ docs-only follow-up; no tag, GitHub Release, checksums or CI workflow exist.
   tree) was green at `8bd754e…` with no warnings and no `-D warnings` waiver;
   `gh pr merge 2 --squash` then produced `524a35b…` on `master`. PR #2's body is
   the authoritative green record. No skipped release build, tag, Release,
-  checksums or CI workflow.
-- The current docs-only follow-up changes the SHA without code changes, so its
-  own six-step verification at the new SHA is listed in `state.md` and
-  `docs/finalization.md`.
+  checksums or CI workflow existed for PR #1–#3.
+- The docs-only follow-up's six-step user-side matrix was green at `1c26bf9…`
+  before `gh pr merge 3 --squash` produced `c9e8a8b…` on `master`; PR #3's body
+  is the authoritative green record. All three PRs predate CI.
+- `.github/workflows/ci.yml` now runs the same six-step matrix on every push and
+  pull request. The check, test, Clippy and release-build commands all keep
+  `--locked`; Clippy keeps `-D warnings`; the release build keeps `-j 2`; no
+  step is skipped. The GitHub Actions run at the exact pushed SHA is the
+  verification record for later changes, so repeated manual six-step matrices
+  are no longer required. Results are reported only from an actually observed
+  GitHub Actions run.
 
 ### Known limitations
 
@@ -138,5 +155,8 @@ docs-only follow-up; no tag, GitHub Release, checksums or CI workflow exist.
   categories and other in-memory GUI view state are not. Upload/seeding, RSS,
   labels, favorites, editable categories, magnets, sounds, native file picker
   and file mutations are disabled in the ported GUI and tracked in `state.md`.
+- CI runs the deterministic six-step matrix only; real GUI, live-daemon and
+  public-torrent-network checks remain manual/user-side. No assistant-side real
+  Cargo/Clippy, GUI or peer-connection results are claimed.
 - The earlier CachyOS single-file public run was a smoke test only and does not
   satisfy the multi-file acceptance criterion.

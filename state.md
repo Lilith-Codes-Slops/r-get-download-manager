@@ -16,17 +16,28 @@ gates on reserved core helpers document that intent without weakening
 
 ## Branch / PR
 
-- Active branch: `arena/af64881e-r-get-download-manager` (docs-only follow-up to PR #2).
+- Active branch: `arena/b93940a1-r-get-download-manager` (CI-first follow-up to
+  PR #3), branched from
+  `c9e8a8bf6398bc29e1ff945ed73e70221e42c0a4` on `master`.
 - PR #1: **MERGED** with `gh pr merge 1 --squash`; head
   `6cc0baf7766142d4b3ab7daff0672736650c3129`, merge commit
   `99c845fd3f496008b2a585ae7592671f332eba68` on `master`.
 - PR #2: **MERGED** with `gh pr merge 2 --squash`; head
   `8bd754e91be1b941b6a74f4430561e2a6d627550`, merge commit
   `524a35b8fd5660970c98af0b9de302e36c12c390` on `master`.
+- PR #3: **MERGED** with `gh pr merge 3 --squash`; head
+  `1c26bf9f2d9fc8c828d34b019834dacf6a1b603d`, merge commit
+  `c9e8a8bf6398bc29e1ff945ed73e70221e42c0a4` on `master`. Its docs-only
+  six-step user-side matrix was green at `1c26bf9…`; PR #3's body is the
+  authoritative green record.
 - The nine-step user-side pre-merge matrix was green at `6cc0baf…`. The
   dependency-free GUI-only follow-up's six-step user-side matrix was green at
   `8bd754e…` (no warnings, no `-D warnings` waiver, no skipped release build).
-  No tag, GitHub Release, checksums or CI workflow were created.
+  PR #1–#3 predate CI. No tag, GitHub Release or checksums were created for
+  them; `.github/workflows/ci.yml` is now added on the active branch and runs
+  the same six-step matrix on pushes and pull requests. The GitHub Actions run
+  at the exact pushed SHA is the verification record for later changes, so
+  repeated manual six-step matrices are no longer required.
 - Design source: [`docs/gui-design/index.html`](docs/gui-design/index.html) — the
   single-file browser mockup the Rust `egui` GUI is ported from.
 - Shipped GUI: `crates/gui` (`eframe`/`egui`), using the existing local
@@ -121,11 +132,20 @@ to a disabled button, checkbox or placeholder in `views.rs`.
   `cargo clippy --workspace --all-targets --locked -- -D warnings`,
   `cargo build --release --locked -j 2`, and a clean tree. STEP 0 and STEP 8
   produced no warnings; STEP 7 exited 0 with no waiver. PR #2's body is the
-  authoritative green record. No tag, Release, checksums or CI workflow.
-- This docs-only follow-up changes the SHA without touching code. Its own
-  six-step user-side verification is pending at the new SHA; the command list is
-  in `docs/finalization.md`. Old matrix steps 2–5 remain optional full-parity
-  checks.
+  authoritative green record. No tag, Release, checksums or CI workflow existed
+  for PR #1–#3.
+- PR #3 was merged at `c9e8a8b…` after the docs-only follow-up's six-step
+  user-side matrix was green at `1c26bf9…` (the same five Cargo commands plus a
+  clean tree). PR #3's body is the authoritative green record; its exact-SHA
+  results were user-side, not assistant-observed.
+- `.github/workflows/ci.yml` now runs the same six-step matrix on every push and
+  pull request. The check, test, Clippy and release-build commands all use
+  `--locked`; `cargo fmt --all -- --check`, Clippy with `-D warnings` and the
+  `-j 2` release build are all present, with no waiver or skipped release build.
+  The GitHub Actions run at the exact pushed SHA is the verification record for
+  later changes; the historical user-side matrices for PR #1–#3 remain evidence.
+  Old matrix steps 2–5 remain optional full-parity checks. No Cargo
+  dependencies, manifests or lockfile changes were added.
 - `state.md` is the long-term backlog, not a merge gate. Native file picker,
   sound on completion and manual daemon toggle stay disabled with their
   `TODO(state.md)` comments.
