@@ -1,9 +1,9 @@
 # Finalization status and merge gate
 
-This document records the decisions made for the finalization flowchart and the
-remaining actions for PR #1. It is deliberately conservative: a public-network
-pass is reported by the user, but a verbatim final log was not attached to this
-branch.
+This document records the decisions made for the finalization flowchart, the
+completed merge of PR #1, and the verification status of the post-merge GUI-only
+slice. It is deliberately conservative: a public-network pass is reported by the
+user, but a verbatim final log was not attached to this branch.
 
 ## Recorded decisions
 
@@ -11,17 +11,17 @@ branch.
 | --- | --- |
 | Public multi-file acceptance | User-reported pass; verbatim final log not attached. Do not quote `test result: ok` as an observed line. |
 | Earlier single-file smoke run | Not multi-file acceptance. Close it out and clean its isolated files on the user's PC. |
-| Final matrix status | Cargo suites and public torrent run passed on the user's PC at an earlier SHA. Formatting/Clippy fixes, the post-download action feature and the GUI port are now applied; the complete matrix, including the release build, must be rerun at the final SHA. |
-| Scope | Merge PR #1 only. No `v0.1.0` tag or GitHub Release in this flow. |
-| Merge strategy | `--squash`, after all gates are green. |
-| Current action | Push the integration-test `unnecessary_unwrap` fix commit, update PR metadata with its SHA, then wait for final matrix confirmation. **Do not merge yet.** |
+| Final matrix status | Green on the user's PC at `6cc0baf…` (nine steps, including the release build). PR #1 was then merged as `99c845f…` on `master`. |
+| Scope | Merge PR #1 only; done. No `v0.1.0` tag, GitHub Release or checksums were created. |
+| Merge strategy | Executed with `--squash`; PR #1 is `MERGED`. |
+| Current action | Verify the dependency-free GUI-only slice on `arena/1c81e486-r-get-download-manager` at its new SHA; the six-step user-side list is in `state.md`. |
 
-The docs/hygiene commit, the subsequent formatting/Clippy fix commit, the
-post-download action feature commit and the GUI port commit each change the
-release SHA. The entire deterministic matrix must be rerun at the final SHA.
-Earlier results at `251cb71`, `70c56e5`, `07fd541`, `65f5f1e` and the
-post-download feature commit are useful history but are not sufficient to
-unblock the merge.
+The nine-step deterministic matrix was rerun at `6cc0baf…` and confirmed green,
+then `gh pr merge 1 --squash` produced merge commit
+`99c845fd3f496008b2a585ae7592671f332eba68`. Earlier results at `251cb71`,
+`70c56e5`, `07fd541`, `65f5f1e`, the post-download feature commit, the GUI port
+commit and the follow-up fix commits are useful history but are not the current
+verification gate.
 
 ## 1. Save evidence if it becomes available
 
@@ -74,9 +74,12 @@ unset RGET_TEST_CHECKPOINT_HOOK RGET_TEST_CHECKPOINT_MARKER RGET_TEST_WRITE_BLOC
 The CachyOS single-file run does not satisfy multi-file acceptance. Leaving it
 out of scope is acceptable; do not describe its partial output as a pass.
 
-## 3. Final matrix at the exact final SHA
+## 3. Historical final matrix (green at `6cc0baf…`)
 
-On the user's PC, from the repository root:
+The commands below were run on the user's PC from the repository root and were
+green at `6cc0baf…` immediately before the squash merge. They are recorded as
+evidence, not as a pending gate. For the current branch use the six-step list in
+`state.md`.
 
 ```sh
 git pull --ff-only origin arena/4f707bcb-r-get-download-manager
@@ -100,9 +103,9 @@ If the release build is memory-heavy, rerun it with `-j 2` (or
 `CARGO_BUILD_JOBS=2`); this workspace links `wgpu`, `egui` and `librqbit`. If
 `df` is aliased to `duf` on your shell, use `/bin/df -h "$HOME"` to check disk.
 
-`git status --short` must be empty. If any command fails, fix it and rerun the
-matrix. If Clippy warnings are intentionally accepted, record that decision in
-the PR body before merging; do not silently drop `-D warnings`.
+At `6cc0baf…` `git status --short` was empty and every command above exited 0;
+no Clippy warnings were waived and `-D warnings` was not dropped. The release
+build used `-j 2` after an earlier memory-heavy attempt.
 
 An assistant-side native `rustfmt 1.10.0-stable --check --edition 2021` run
 (from the Rust 1.99.0 npm toolchain package) over all tracked `.rs` files,
@@ -110,16 +113,12 @@ using the repository `rustfmt.toml`, reported no diffs after the fix. The GUI
 port, its compile-fix follow-up, the window borrow-check fix, the Clippy
 `io_other_error` fix, the consolidated Clippy cleanup and the integration-test
 `unnecessary_unwrap` fix were checked with the same static formatter/parser
-pass. These are static checks only: the
-user-side
-`cargo fmt --all -- --check` command above remains the release gate.
+pass. These were static checks only; the user-side `cargo fmt --all -- --check`
+command above was the release gate and passed at `6cc0baf…`.
 
-The post-download action feature commit, the GUI port commit, the follow-up
-compile-fix/warning-cleanup commit, the window borrow-check fix commit, the
-Clippy `io_other_error` fix commit, the consolidated Clippy cleanup commit and
-the integration-test `unnecessary_unwrap` fix commit each changed the SHA again.
-Do not reuse the earlier `65f5f1e` matrix request as current; run the eight
-commands below at the final SHA.
+The integration-test `unnecessary_unwrap` fix was the last pre-merge change; the
+matrix above was rerun at that exact SHA (`6cc0baf…`) and the PR body was updated
+before `gh pr merge 1 --squash`. No further pre-merge rerun was needed.
 
 Test-only hooks must not be compiled into a production daemon. After any
 hook-enabled build, rebuild with default features before installing or running
@@ -190,39 +189,35 @@ Use the named filter; bare `--ignored` would also try the single-file test.
   others, confirming the complete lint inventory for all test targets.
 - `README.md` and `CHANGELOG.md` describe the ported GUI, wired controls and
   deferred work.
+- A post-merge GUI-only commit adds local preference persistence and the `Ctrl+K`
+  command palette, extends the Help shortcut list, and removes stale open-PR and
+  pre-merge gate wording from `state.md`, `docs/finalization.md`,
+  `CHANGELOG.md` and `README.md`.
 
 No `.github/workflows` CI was added; validation remains manual on the user's PC.
 There are no assistant-side Cargo runs, GUI checks or peer connections.
 
-## 5. Merge gate
+## 5. Merge completed
 
-Only after the full matrix is green at the final SHA:
+`gh pr merge 1 --squash` was executed after the green matrix at `6cc0baf…`.
+Verified state:
 
-```sh
-gh pr merge 1 --squash
-```
+- `state: MERGED`, `closed: true`, `baseRefName: master`.
+- `headRefOid: 6cc0baf7766142d4b3ab7daff0672736650c3129`.
+- `mergeCommit: 99c845fd3f496008b2a585ae7592671f332eba68`.
+- `mergedAt: 2026-11-11T00:34:09Z`, `mergedBy: Lilith-Codes-Slops`.
+- `git ls-remote origin refs/heads/master` = `99c845f…`.
 
-Do not use `--auto`. The merge command must be the last command in its shell
-chain. Then verify:
-
-```sh
-git fetch origin master
-git log --oneline -1 origin/master
-gh pr view 1 --json state,mergedAt --jq '{state,mergedAt}'
-```
-
-This flow does **not** create a `v0.1.0` tag or GitHub Release. If a public
-release is wanted later, complete the manual GUI/live-HTTP checks in
+No `--auto`, tag, GitHub Release or checksums were created. If a public release
+is wanted later, complete the manual GUI/live-HTTP checks in
 `docs/manual-live-verification.md` and `docs/collision-live-verification.md`,
 then add release notes, binary checksums and a tag.
 
 ## 6. Current conclusion
 
-The docs/hygiene commit, the formatting/Clippy fix commit, the post-download
-action feature commit, the GUI port commit, the compile-fix/warning-cleanup
-commit, the window borrow-check fix commit, the Clippy `io_other_error` fix
-commit, the consolidated Clippy cleanup commit, the integration-test
-`unnecessary_unwrap` fix commit and PR metadata are prepared. The merge is
-blocked on one user-side gate: paste the green results for the full final matrix
-at the new SHA. Until then, PR #1 remains open and unmerged. See
-`state.md` for the long-term backlog; it is not a merge blocker.
+PR #1 is merged; the pre-merge matrix is closed out. The active branch
+`arena/1c81e486-r-get-download-manager` carries a dependency-free GUI-only
+slice (preference persistence, `Ctrl+K` command palette, extended Help shortcuts
+and docs cleanup). Its six-step user-side verification at the new SHA is the
+only outstanding gate; see `state.md`. The long-term backlog is not a merge
+blocker.

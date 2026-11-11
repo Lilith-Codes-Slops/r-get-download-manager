@@ -6,8 +6,10 @@ has been published.
 
 ## [0.1.0] — unreleased
 
-Status: PR #1 is open. Final verification at the exact current SHA is
-pending, and no merge, tag, or GitHub Release has been created.
+Status: PR #1 was squash-merged as
+`99c845fd3f496008b2a585ae7592671f332eba68` after a green nine-step matrix at
+`6cc0baf…`. This entry now also tracks the post-merge GUI-only slice on
+`arena/1c81e486-r-get-download-manager`; no tag or GitHub Release exists.
 
 ### Added
 
@@ -31,6 +33,17 @@ pending, and no merge, tag, or GitHub Release has been created.
   two-pane Tasks view, Downloads library, tabbed Settings and status bar.
 - `state.md`, a living backlog recording wired controls, disabled controls and
   the long-term roadmap.
+- Local GUI preference persistence in `gui-preferences.json` under
+  `$XDG_CONFIG_HOME/rget/` or `~/.config/rget/`: theme, compact mode,
+  confirm-before-delete, in-app alerts, rail pinning, sort field/direction and
+  the active Settings tab are restored on startup, with a versioned and
+  tolerant JSON round-trip plus unit tests.
+- A `Ctrl+K` command palette over existing wired actions only, with
+  case-insensitive label/shortcut/keyword search, arrow/Enter navigation, unit
+  tests and a Commands ribbon button; no new daemon calls or dependencies.
+- Extended Help shortcut list and wired aliases (`Ctrl+O`, `Ctrl+,`, `Ctrl+1`,
+  `Ctrl+2`, `Ctrl+F`, `Ctrl+Shift+Enter`, `Esc`). Design-only shortcuts for
+  still-disabled controls are named in Help and tracked in `state.md`.
 
 ### Changed
 
@@ -83,14 +96,13 @@ pending, and no merge, tag, or GitHub Release has been created.
 - At `70c56e5`, the public-test guard suite reported 2 passed and 2 ignored.
 - A formatting/Clippy fix commit addressed the previously reported `rustfmt`
   diffs and `large_enum_variant` error at `07fd541`.
-- The post-download action feature commit, the subsequent GUI port commit, the
-  compile-fix/warning-cleanup commit, the window borrow-check fix commit, the
-  Clippy `io_other_error` fix commit, the consolidated Clippy cleanup commit and
-  the integration-test `unnecessary_unwrap` fix commit each changed the SHA
-  again. The full matrix, including `cargo fmt --check`,
-  `cargo clippy -- -D warnings`, the Cargo test suites and the release build,
-  must still be rerun at the new final SHA. See `docs/finalization.md` and
-  `state.md`.
+- The nine-step matrix (workspace tests, no-default-features tests, fault
+  suite, public harness, split live suite, `cargo fmt --all -- --check`,
+  `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo build --release --locked -j 2`, clean tree) was green at `6cc0baf…`;
+  `gh pr merge 1 --squash` then produced `99c845f…` on `master`. No `-D warnings`
+  waiver or skipped release build. The current GUI-only slice has its own
+  six-step verification list in `state.md` and `docs/finalization.md`.
 
 ### Known limitations
 
@@ -110,9 +122,9 @@ pending, and no merge, tag, or GitHub Release has been created.
   graceful-shutdown barrier remain unimplemented. GUI rate limiting is now wired
   as a global `SetLimit` control; the global "open containing folder" action is
   implemented, other automation is not.
-- GUI-only preferences (theme, compact mode, alerts, categories) are
-  session-scoped. Upload/seeding, RSS, labels, favorites, editable categories,
-  magnets, sounds, native file picker and file mutations are disabled in the
-  ported GUI and tracked in `state.md`.
+- GUI appearance/behavior preferences are now persisted locally; editable
+  categories and other in-memory GUI view state are not. Upload/seeding, RSS,
+  labels, favorites, editable categories, magnets, sounds, native file picker
+  and file mutations are disabled in the ported GUI and tracked in `state.md`.
 - The earlier CachyOS single-file public run was a smoke test only and does not
   satisfy the multi-file acceptance criterion.

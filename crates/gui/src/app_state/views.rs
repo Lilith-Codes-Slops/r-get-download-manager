@@ -1,3 +1,4 @@
+use super::palette;
 use super::*;
 use std::collections::HashMap;
 
@@ -103,7 +104,13 @@ impl AppState {
             if ui.button("Settings").clicked() {
                 self.settings_open = true;
             }
-            // Work on it later; TODO(state.md): full Help dropdown / command palette is deferred.
+            if ui
+                .button("Commands")
+                .on_hover_text("Open the command palette (Ctrl+K)")
+                .clicked()
+            {
+                self.open_palette();
+            }
         });
     }
 
@@ -223,14 +230,20 @@ impl AppState {
             .cloned()
             .collect();
         let mut new_selection = None;
+        let mut focus_filter = self.focus_filter;
         ui.columns(2, |columns| {
             columns[0].vertical(|ui| {
                 ui.label(RichText::new(format!("Active ({})", active.len())).strong());
-                ui.add(
+                let response = ui.add(
                     egui::TextEdit::singleline(&mut active_filter)
                         .hint_text("Filter…")
-                        .desired_width(160.0),
+                        .desired_width(160.0)
+                        .id(egui::Id::new("rget_active_filter")),
                 );
+                if focus_filter {
+                    response.request_focus();
+                    focus_filter = false;
+                }
                 egui::ScrollArea::vertical()
                     .id_salt("active_list")
                     .show(ui, |ui| {
@@ -275,6 +288,7 @@ impl AppState {
                     });
             });
         });
+        self.focus_filter = focus_filter;
         self.active_filter = active_filter;
         self.transfer_filter = transfer_filter;
         if let Some(id) = new_selection {
@@ -659,13 +673,19 @@ impl AppState {
         let mut library_filter = self.library_filter.clone();
         let mut sort = self.sort;
         let mut descending = self.descending;
+        let mut focus_filter = self.focus_filter;
         ui.horizontal(|ui| {
             ui.label("Search:");
-            ui.add(
+            let response = ui.add(
                 egui::TextEdit::singleline(&mut library_filter)
                     .hint_text("Search downloads…")
-                    .desired_width(180.0),
+                    .desired_width(180.0)
+                    .id(egui::Id::new("rget_library_filter")),
             );
+            if focus_filter {
+                response.request_focus();
+                focus_filter = false;
+            }
             ui.label("Sort by:");
             for (option, label) in [
                 (Sort::Name, "Name"),
@@ -688,6 +708,7 @@ impl AppState {
                 "Ascending"
             });
         });
+        self.focus_filter = focus_filter;
         self.category = category;
         self.library_filter = library_filter;
         self.sort = sort;
@@ -910,15 +931,12 @@ impl AppState {
                                 ui.selectable_value(&mut self.theme, Theme::Dark, "Dark");
                             });
                             if self.theme != previous {
-                                ctx.set_theme(match self.theme {
-                                    Theme::System => egui::ThemePreference::System,
-                                    Theme::Light => egui::ThemePreference::Light,
-                                    Theme::Dark => egui::ThemePreference::Dark,
-                                });
+                                apply_theme(ctx, self.theme);
                             }
                             ui.checkbox(&mut self.compact, "Compact mode (tighter rows)");
-                            ui.label("Theme and compact mode last for this session only.");
-                            // Work on it later; TODO(state.md): persist GUI preferences across restarts.
+                            ui.label(
+                                "Appearance and behavior preferences are saved locally and restored on startup.",
+                            );
                         }
                         SettingsTab::Behavior => {
                             ui.heading("Behavior");
@@ -1183,6 +1201,58 @@ impl AppState {
             }
         }
 
+        if self.palette_open {
+            let mut open = self.palette_open;
+            let mut chosen: Option<palette::PaletteAction> = None;
+            let query = self.palette_query.clone();
+            let matches = palette::matching(&query);
+            let selected = self.palette_selected.min(matches.len().saturating_sub(1));
+            let mut focus = self.palette_focus;
+            egui::Window::new("Command palette")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(420.0)
+                .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 90.0))
+                .show(ctx, |ui| {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.palette_query)
+                            .hint_text("Search commands…")
+                            .desired_width(400.0)
+                            .id(egui::Id::new("rget_palette_query")),
+                    );
+                    if focus {
+                        response.request_focus();
+                        focus = false;
+                    }
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            if matches.is_empty() {
+                                ui.label("No matching commands.");
+                            }
+                            for (index, command) in matches.iter().enumerate() {
+                                let label = if command.shortcut.is_empty() {
+                                    command.label.to_string()
+                                } else {
+                                    format!("{}   {}", command.label, command.shortcut)
+                                };
+                                if ui.selectable_label(index == selected, label).clicked() {
+                                    chosen = Some(command.action);
+                                }
+                            }
+                        });
+                    ui.separator();
+                    ui.label("↑ ↓ move · Enter run · Esc close");
+                });
+            self.palette_focus = focus;
+            self.palette_open = open;
+            if let Some(action) = chosen {
+                self.run_palette_action(action, ctx);
+            }
+        }
+
         if self.help_open {
             let mut open = self.help_open;
             egui::Window::new("Help")
@@ -1190,15 +1260,30 @@ impl AppState {
                 .collapsible(false)
                 .show(ctx, |ui| {
                     ui.heading("Keyboard shortcuts");
-                    ui.label("Ctrl+N  Add download");
-                    ui.label("Ctrl+S  Settings");
+                    ui.label("Ctrl+N / Ctrl+O  Add download");
+                    ui.label("Ctrl+S / Ctrl+,  Settings");
                     ui.label("Ctrl+P  Pause all");
                     ui.label("Ctrl+R  Resume all");
                     ui.label("Ctrl+B  Pin / unpin the left rail");
+                    ui.label("Ctrl+K  Command palette");
+                    ui.label("Ctrl+1  Tasks view");
+                    ui.label("Ctrl+2  Downloads library");
+                    ui.label("Ctrl+F  Focus the active search filter");
+                    ui.label("Ctrl+Shift+Enter  Open Downloads folder");
+                    ui.label("Esc  Close the open dialog");
                     ui.separator();
-                    // Work on it later; TODO(state.md): full command palette and remaining shortcuts are deferred.
                     ui.label(
-                        "Full command palette, category editing, RSS, labels and favorites are tracked in state.md.",
+                        "Command palette: type to filter, ↑ ↓ to move, Enter to run, Esc to close.",
+                    );
+                    ui.label(
+                        "It lists the wired actions only; no disabled control is exposed there.",
+                    );
+                    ui.separator();
+                    ui.label(
+                        "Design-only shortcuts: Ctrl+Shift+M (Add Magnet), Space (pause/resume selected) and Delete (remove selected) are not wired because those controls are disabled; see state.md.",
+                    );
+                    ui.label(
+                        "Category editing, RSS, labels and favorites are tracked in state.md.",
                     );
                 });
             self.help_open = open;

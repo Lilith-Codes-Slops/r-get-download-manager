@@ -1,4 +1,6 @@
+mod palette;
 mod policies;
+mod preferences;
 mod progress;
 mod segments;
 mod views;
@@ -20,13 +22,13 @@ enum Detail {
     Network,
     Actions,
 }
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Theme {
     System,
     Light,
     Dark,
 }
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Sort {
     Name,
     Size,
@@ -41,7 +43,7 @@ enum Panel {
     Recent,
     Favorites,
 }
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum SettingsTab {
     Appearance,
     Behavior,
@@ -100,6 +102,12 @@ pub struct AppState {
     settings_open: bool,
     help_open: bool,
     actions_open: bool,
+    palette_open: bool,
+    palette_query: String,
+    palette_selected: usize,
+    palette_focus: bool,
+    focus_filter: bool,
+    saved_prefs: preferences::GuiPreferences,
     properties_task: Option<DownloadInfo>,
     pending_delete: Option<PendingDelete>,
     url: String,
@@ -202,6 +210,8 @@ fn is_active(task: &DownloadInfo) -> bool {
 
 impl AppState {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let prefs = preferences::load();
+        apply_theme(&cc.egui_ctx, prefs.theme);
         Self {
             bridge: IpcBridgeWorker::start(cc.egui_ctx.clone()),
             tasks: Vec::new(),
@@ -214,14 +224,14 @@ impl AppState {
             view: View::Tasks,
             detail: Detail::Status,
             panel: Panel::Categories,
-            settings_tab: SettingsTab::Appearance,
-            theme: Theme::System,
-            sort: Sort::Name,
-            descending: false,
-            compact: false,
-            confirm_delete: true,
-            alerts: true,
-            rail_pinned: false,
+            settings_tab: prefs.settings_tab,
+            theme: prefs.theme,
+            sort: prefs.sort,
+            descending: prefs.descending,
+            compact: prefs.compact,
+            confirm_delete: prefs.confirm_delete,
+            alerts: prefs.alerts,
+            rail_pinned: prefs.rail_pinned,
             active_filter: String::new(),
             transfer_filter: String::new(),
             library_filter: String::new(),
@@ -231,6 +241,12 @@ impl AppState {
             settings_open: false,
             help_open: false,
             actions_open: false,
+            palette_open: false,
+            palette_query: String::new(),
+            palette_selected: 0,
+            palette_focus: false,
+            focus_filter: false,
+            saved_prefs: prefs,
             properties_task: None,
             pending_delete: None,
             url: String::new(),
@@ -452,33 +468,190 @@ impl AppState {
         }
     }
 
+    /// Persist only when a preference actually changed. Called once per frame
+    /// after all panels and dialogs have had a chance to mutate the settings.
+    fn save_prefs_if_changed(&mut self) {
+        let current = preferences::GuiPreferences {
+            theme: self.theme,
+            compact: self.compact,
+            confirm_delete: self.confirm_delete,
+            alerts: self.alerts,
+            rail_pinned: self.rail_pinned,
+            sort: self.sort,
+            descending: self.descending,
+            settings_tab: self.settings_tab,
+        };
+        if current == self.saved_prefs {
+            return;
+        }
+        if let Err(error) = preferences::save(&current) {
+            self.notice = Some(format!("Could not save GUI preferences: {error}"));
+        }
+        self.saved_prefs = current;
+    }
+
+    fn open_palette(&mut self) {
+        self.palette_open = true;
+        self.palette_query.clear();
+        self.palette_selected = 0;
+        self.palette_focus = true;
+    }
+
+    /// Palette entries delegate to actions that already exist elsewhere in the
+    /// UI; no new `ClientRequest` variant is introduced for the palette.
+    fn run_palette_action(&mut self, action: palette::PaletteAction, ctx: &egui::Context) {
+        use palette::PaletteAction;
+        match action {
+            PaletteAction::AddDownload => self.add_open = true,
+            PaletteAction::OpenSettings => self.settings_open = true,
+            PaletteAction::OpenHelp => self.help_open = true,
+            PaletteAction::PauseAll => self.pause_all(),
+            PaletteAction::ResumeAll => self.resume_all(),
+            PaletteAction::RemoveCompleted => self.remove_completed(),
+            PaletteAction::ToggleRail => self.rail_pinned = !self.rail_pinned,
+            PaletteAction::ShowTasks => self.view = View::Tasks,
+            PaletteAction::ShowDownloads => {
+                self.view = View::Downloads;
+                self.refresh_files();
+            }
+            PaletteAction::ShowCategories => {
+                self.panel = Panel::Categories;
+                self.view = View::Side;
+            }
+            PaletteAction::Theme(theme) => {
+                self.theme = theme;
+                apply_theme(ctx, theme);
+            }
+            PaletteAction::ToggleCompact => self.compact = !self.compact,
+            PaletteAction::ToggleConfirmDelete => {
+                self.confirm_delete = !self.confirm_delete;
+            }
+            PaletteAction::ToggleAlerts => self.alerts = !self.alerts,
+            PaletteAction::FocusFilter => self.focus_filter = true,
+            PaletteAction::OpenDownloadsFolder => self.open_folder_for(None),
+        }
+        self.palette_open = false;
+        self.palette_query.clear();
+        self.palette_selected = 0;
+    }
+
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let (add, settings, pause, resume, pin) = ctx.input(|input| {
+        if self.palette_open {
+            let (escape, enter, up, down, toggle) = ctx.input(|input| {
+                let ctrl = input.modifiers.ctrl;
+                (
+                    input.key_pressed(egui::Key::Escape),
+                    input.key_pressed(egui::Key::Enter),
+                    input.key_pressed(egui::Key::ArrowUp),
+                    input.key_pressed(egui::Key::ArrowDown),
+                    ctrl && input.key_pressed(egui::Key::K),
+                )
+            });
+            if escape || toggle {
+                self.palette_open = false;
+                return;
+            }
+            let matches = palette::matching(&self.palette_query);
+            if matches.is_empty() {
+                self.palette_selected = 0;
+                return;
+            }
+            let last = matches.len() - 1;
+            if up {
+                self.palette_selected = self.palette_selected.saturating_sub(1);
+            }
+            if down {
+                self.palette_selected = (self.palette_selected + 1).min(last);
+            }
+            self.palette_selected = self.palette_selected.min(last);
+            if enter {
+                let action = matches[self.palette_selected].action;
+                self.run_palette_action(action, ctx);
+            }
+            return;
+        }
+        #[derive(Default)]
+        struct Pressed {
+            add: bool,
+            settings: bool,
+            pause: bool,
+            resume: bool,
+            pin: bool,
+            palette: bool,
+            tasks: bool,
+            downloads: bool,
+            focus_filter: bool,
+            open_folder: bool,
+            escape: bool,
+        }
+        let pressed = ctx.input(|input| {
             let ctrl = input.modifiers.ctrl;
-            (
-                ctrl && input.key_pressed(egui::Key::N),
-                ctrl && input.key_pressed(egui::Key::S),
-                ctrl && input.key_pressed(egui::Key::P),
-                ctrl && input.key_pressed(egui::Key::R),
-                ctrl && input.key_pressed(egui::Key::B),
-            )
+            let shift = input.modifiers.shift;
+            Pressed {
+                add: ctrl && (input.key_pressed(egui::Key::N) || input.key_pressed(egui::Key::O)),
+                settings: ctrl
+                    && (input.key_pressed(egui::Key::S) || input.key_pressed(egui::Key::Comma)),
+                pause: ctrl && input.key_pressed(egui::Key::P),
+                resume: ctrl && input.key_pressed(egui::Key::R),
+                pin: ctrl && input.key_pressed(egui::Key::B),
+                palette: ctrl && input.key_pressed(egui::Key::K),
+                tasks: ctrl && input.key_pressed(egui::Key::Num1),
+                downloads: ctrl && input.key_pressed(egui::Key::Num2),
+                focus_filter: ctrl && input.key_pressed(egui::Key::F),
+                open_folder: ctrl && shift && input.key_pressed(egui::Key::Enter),
+                escape: input.key_pressed(egui::Key::Escape),
+            }
         });
-        if add {
+        if pressed.palette {
+            self.open_palette();
+            return;
+        }
+        if pressed.escape {
+            self.add_open = false;
+            self.settings_open = false;
+            self.help_open = false;
+            self.actions_open = false;
+            self.properties_task = None;
+            self.pending_delete = None;
+            return;
+        }
+        if pressed.add {
             self.add_open = true;
         }
-        if settings {
+        if pressed.settings {
             self.settings_open = true;
         }
-        if pause {
+        if pressed.pause {
             self.pause_all();
         }
-        if resume {
+        if pressed.resume {
             self.resume_all();
         }
-        if pin {
+        if pressed.pin {
             self.rail_pinned = !self.rail_pinned;
         }
+        if pressed.tasks {
+            self.view = View::Tasks;
+        }
+        if pressed.downloads {
+            self.view = View::Downloads;
+            self.refresh_files();
+        }
+        if pressed.focus_filter {
+            self.focus_filter = true;
+        }
+        if pressed.open_folder {
+            self.open_folder_for(None);
+        }
     }
+}
+
+fn apply_theme(ctx: &egui::Context, theme: Theme) {
+    ctx.set_theme(match theme {
+        Theme::System => egui::ThemePreference::System,
+        Theme::Light => egui::ThemePreference::Light,
+        Theme::Dark => egui::ThemePreference::Dark,
+    });
 }
 
 impl eframe::App for AppState {
@@ -517,6 +690,7 @@ impl eframe::App for AppState {
             }
         });
         self.dialogs(&ctx);
+        self.save_prefs_if_changed();
     }
 }
 
