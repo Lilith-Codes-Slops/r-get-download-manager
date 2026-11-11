@@ -41,7 +41,7 @@ pub fn filtered_library(state: &State) -> Vec<&LibraryItem> {
         .filter(|item| {
             (state.selected_category == "all"
                 || category_of(state, &item.name) == state.selected_category)
-                && (query.is_empty() || item.name.to_lowercase().contains(&query))
+                && crate::search_model::matches_query(&item.name, &query)
         })
         .collect()
 }

@@ -24,6 +24,7 @@ pub enum ChromeAction {
     PauseAll,
     ResumeAll,
     RetryAll,
+    SelectSearchResult(crate::fake_backend::Selection),
     OpenSettings,
     OpenAdd,
     Menu(crate::menus::Action),
@@ -174,24 +175,22 @@ impl Chrome {
                         .scroll_bar_visibility(ScrollBarVisibility::VisibleWhenNeeded)
                         .show(&mut left, |ui| {
                             ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.spacing_mut().button_padding = egui::vec2(8.0, 5.0);
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                ui.spacing_mut().button_padding = egui::vec2(6.0, 5.0);
                                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                                 for (label, icon, enabled, width) in [
-                                    ("+ URL", Icon::Link, true, 76.0),
-                                    ("+ Magnet", Icon::Magnet, true, 96.0),
-                                    ("Add torrent", Icon::FilePlus, !self.picking_torrent, 112.0),
-                                    ("Pause All", Icon::Pause, !state.tasks.is_empty(), 99.0),
-                                    ("Resume All", Icon::Play, !state.tasks.is_empty(), 108.0),
-                                    ("Retry All", Icon::Retry, state.tasks.iter().any(|t| matches!(t.status, crate::fake_backend::TaskStatus::Failed)), 90.0),
-                                    ("Remove Download History", Icon::Trash, !state.library.is_empty(), 184.0),
-                                    ("Remove", Icon::Trash, !state.selections.is_empty(), 88.0),
-                                    ("Remove Completed", Icon::Trash, !state.library.is_empty(), 155.0),
+                                    ("+ URL", Icon::Link, true, 68.0),
+                                    ("+ Magnet", Icon::Magnet, true, 83.0),
+                                    ("Torrent", Icon::FilePlus, !self.picking_torrent, 83.0),
+                                    ("Pause All", Icon::Pause, !state.tasks.is_empty(), 82.0),
+                                    ("Resume All", Icon::Play, !state.tasks.is_empty(), 90.0),
+                                    ("Retry All", Icon::Retry, state.tasks.iter().any(|t| matches!(t.status, crate::fake_backend::TaskStatus::Failed)), 78.0),
+                                    ("Remove Download History", Icon::Trash, !state.library.is_empty(), 160.0),
                                 ] {
                                     let primary = label == "+ URL";
                                     let button = Button::new((
-                                        icons::atom(icon, 16.0, if primary { Color32::WHITE } else { palette.text_dim }),
-                                        RichText::new(label).size(12.0).color(if primary { Color32::WHITE } else { palette.text }),
+                                        icons::atom(icon, 14.0, if primary { Color32::WHITE } else { palette.text_dim }),
+                                        RichText::new(label).size(11.0).color(if primary { Color32::WHITE } else { palette.text }),
                                     )).fill(if primary { palette.accent } else { palette.surface_2 })
                                       .stroke(Stroke::new(1.0, if primary { palette.accent } else { palette.border }))
                                       .corner_radius(8);
@@ -203,12 +202,11 @@ impl Chrome {
                                     if response.clicked() {
                                         action = match label {
                                             "+ URL" | "+ Magnet" => Some(ChromeAction::OpenAdd),
-                                            "Add torrent" => Some(ChromeAction::PickTorrent),
+                                            "Torrent" => Some(ChromeAction::PickTorrent),
                                             "Pause All" => Some(ChromeAction::PauseAll),
                                             "Resume All" => Some(ChromeAction::ResumeAll),
                                             "Retry All" => Some(ChromeAction::RetryAll),
-                                            "Remove" => Some(ChromeAction::Menu(crate::menus::Action::RemoveSelected)),
-                                            "Remove Download History" | "Remove Completed" => Some(ChromeAction::Menu(crate::menus::Action::ClearCompleted)),
+                                            "Remove Download History" => Some(ChromeAction::Menu(crate::menus::Action::ClearCompleted)),
                                             _ => None,
                                         };
                                     }
@@ -223,10 +221,11 @@ impl Chrome {
                     let mut query = state.library_filter.clone();
                     let response = search_ui.add_sized(search_rect.size(), egui::TextEdit::singleline(&mut query)
                         .id(Id::unique("global_search"))
-                        .hint_text("Search…"));
+                        .align(egui::Align2::CENTER_CENTER)
+                        .hint_text("Search"));
                     response.widget_info(|| {
-                        let mut info = egui::WidgetInfo::text_edit(search_ui.is_enabled(), &query, &query, "Search…");
-                        info.label = Some("Search downloads and tasks".into());
+                        let mut info = egui::WidgetInfo::text_edit(search_ui.is_enabled(), &query, &query, "Search");
+                        info.label = Some("Search completed downloads and transfers".into());
                         info
                     });
                     if response.changed() {
@@ -258,15 +257,16 @@ impl Chrome {
                                 let max_height = (ui.ctx().content_rect().height() * 0.5).clamp(30.0, 180.0);
                                 ScrollArea::vertical().id_salt("search_suggestions").max_height(max_height).auto_shrink([false, true]).show(ui, |ui| {
                                     ui.spacing_mut().item_spacing.y = 2.0;
-                                    for name in suggestions {
-                                        let item = ui.add_sized([ui.available_width(), 28.0], Button::new(RichText::new(name).size(12.0).color(palette.text)).truncate().frame(false));
-                                        if item.clicked() { chosen = Some(name.to_owned()); }
+                                    for hit in suggestions {
+                                        let label = format!("{}  ·  {}", hit.name, hit.scope_label());
+                                        let item = ui.add_sized([ui.available_width(), 28.0], Button::new(RichText::new(label).size(12.0).color(palette.text)).truncate().frame(false)).on_hover_text(hit.name);
+                                        if item.clicked() { chosen = Some(hit.selection); }
                                     }
                                 });
                             }
                         });
-                    if let Some(name) = chosen {
-                        search_update = Some(name);
+                    if let Some(selection) = chosen {
+                        action = Some(ChromeAction::SelectSearchResult(selection));
                         self.search_open = false;
                         response.request_focus();
                     }

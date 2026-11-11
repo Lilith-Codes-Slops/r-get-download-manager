@@ -7,7 +7,13 @@ pub fn active_items(state: &State) -> Vec<&Task> {
     state
         .tasks
         .iter()
-        .filter(|task| matches_name(&task.name, &query) && matches_name(&task.name, &shared))
+        .filter(|task| {
+            matches_name(&task.name, &query)
+                && (shared.is_empty()
+                    || (task.progress.is_finite()
+                        && task.progress >= 100.0
+                        && crate::search_model::matches_query(&task.name, &shared)))
+        })
         .collect()
 }
 
@@ -17,7 +23,10 @@ pub fn transfer_items(state: &State) -> Vec<&Seed> {
     state
         .seeds
         .iter()
-        .filter(|seed| matches_name(&seed.name, &query) && matches_name(&seed.name, &shared))
+        .filter(|seed| {
+            matches_name(&seed.name, &query)
+                && crate::search_model::matches_query(&seed.name, &shared)
+        })
         .collect()
 }
 
@@ -39,6 +48,7 @@ mod tests {
         let backend = FakeBackend::open(path.clone()).unwrap();
         let mut state = backend.snapshot().clone();
         state.tasks[0].name = "Report.pdf".into();
+        state.tasks[0].progress = 100.0;
         state.seeds[0].name = "Report.iso".into();
         state.active_filter = "pdf".into();
         state.seed_filter = "iso".into();
@@ -48,7 +58,10 @@ mod tests {
         state.library_filter = "pdf".into();
         assert_eq!(active_items(&state).len(), 1);
         assert!(transfer_items(&state).is_empty());
+        state.tasks[0].progress = 99.0;
+        assert!(active_items(&state).is_empty());
         state.library_filter.clear();
+        assert_eq!(active_items(&state).len(), 1);
         assert_eq!(transfer_items(&state).len(), 1);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }

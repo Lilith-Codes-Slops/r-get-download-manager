@@ -451,6 +451,12 @@ impl eframe::App for DownloadsApp {
             Some(chrome::ChromeAction::RetryAll) => {
                 self.dispatch(Command::RetryAll);
             }
+            Some(chrome::ChromeAction::SelectSearchResult(item)) => {
+                if self.dispatch(Command::SelectSearchResult(item)) {
+                    self.chrome.view = self.backend.snapshot().view;
+                    self.rail.close_panel();
+                }
+            }
             None => {}
         }
         let snapshot = self.backend.shared_snapshot();

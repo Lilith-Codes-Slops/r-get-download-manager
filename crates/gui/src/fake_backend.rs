@@ -149,6 +149,7 @@ pub enum Command {
     SetActiveFilter(String),
     SetSeedFilter(String),
     SetLibraryFilter(String),
+    SelectSearchResult(Selection),
     CreateCategory {
         name: String,
         extensions: Vec<String>,
@@ -333,6 +334,7 @@ fn apply_command(state: &mut State, command: Command) -> io::Result<()> {
         Command::SetActiveFilter(filter) => state.active_filter = filter,
         Command::SetSeedFilter(filter) => state.seed_filter = filter,
         Command::SetLibraryFilter(filter) => state.library_filter = filter,
+        Command::SelectSearchResult(item) => crate::search_model::select_result(state, item)?,
         Command::CreateCategory { name, extensions } => {
             let (name, extensions) = validate_category(state, &name, extensions, None)?;
             let id = loop {
@@ -1158,6 +1160,57 @@ mod tests {
             assert!(backend.dispatch(Command::SetSettings(invalid)).is_err());
             assert_eq!(backend.snapshot().settings, settings);
         }
+        remove_test_dir(&path);
+    }
+
+    #[test]
+    fn selecting_global_search_results_navigates_and_rejects_incomplete_tasks() {
+        let path = test_path();
+        let mut backend = FakeBackend::open(path.clone()).unwrap();
+        let mut state = backend.snapshot().clone();
+        state.view = View::Tasks;
+        state.selected_category = "images".into();
+        state.seed_filter = "hidden".into();
+        let library = Selection {
+            scope: Scope::Library,
+            id: state.library[0].id.clone(),
+        };
+        let seed = Selection {
+            scope: Scope::Seed,
+            id: state.seeds[0].id.clone(),
+        };
+        let incomplete = Selection {
+            scope: Scope::Task,
+            id: state.tasks[0].id.clone(),
+        };
+        state.tasks[0].progress = 50.0;
+        backend.dispatch(Command::ReplaceState(state)).unwrap();
+        let before = backend.shared_snapshot();
+        assert!(backend
+            .dispatch(Command::SelectSearchResult(incomplete))
+            .is_err());
+        assert!(Arc::ptr_eq(&before, &backend.shared_snapshot()));
+        backend
+            .dispatch(Command::SelectSearchResult(library.clone()))
+            .unwrap();
+        assert_eq!(backend.snapshot().view, View::Downloads);
+        assert_eq!(backend.snapshot().selected_category, "all");
+        assert_eq!(backend.snapshot().selections, vec![library]);
+        assert_eq!(
+            backend.snapshot().library_filter,
+            backend.snapshot().library[0].name
+        );
+        backend
+            .dispatch(Command::SelectSearchResult(seed.clone()))
+            .unwrap();
+        let restored = FakeBackend::open(path.clone()).unwrap();
+        assert_eq!(restored.snapshot().view, View::Tasks);
+        assert_eq!(restored.snapshot().seed_filter, "");
+        assert_eq!(restored.snapshot().selections, vec![seed]);
+        assert_eq!(
+            restored.snapshot().library_filter,
+            restored.snapshot().seeds[0].name
+        );
         remove_test_dir(&path);
     }
 

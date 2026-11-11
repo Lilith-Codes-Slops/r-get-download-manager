@@ -28,22 +28,19 @@ impl ToolbarLayout {
             REGULAR_RIGHT
         });
         let right_x = width - right_width;
-        let search_first = right_x >= 110.0;
+        // Search has the same window-centered position in both views.
+        // If the pinned right group leaves too little centered space, move the
+        // search to the next row in both views instead of overlapping it.
+        let centered_room = ((right_x - GAP - width / 2.0) * 2.0).max(0.0);
+        let search_first = centered_room >= 100.0;
         let search_row = usize::from(!search_first);
-        let search_available = if search_first {
-            (right_x - GAP).max(0.0)
+        let search_width = if search_first {
+            centered_room.min(220.0)
         } else {
-            width
+            width.min(220.0)
         };
-        let search_width = search_available.min(220.0);
-        // Below this width the long action group gets its own scrollable row,
-        // leaving the search and pinned controls accessible without overlap.
-        let single_row_tasks = tasks && search_first && width >= 1350.0;
-        let search_x = if single_row_tasks {
-            (right_x - GAP - search_width).max(0.0)
-        } else {
-            ((search_available - search_width) / 2.0).max(0.0)
-        };
+        let search_x = (width - search_width) / 2.0;
+        let single_row_tasks = tasks && search_first && search_x >= 320.0;
         let actions_row = if single_row_tasks { 0 } else { search_row + 1 };
         let actions_width = if single_row_tasks {
             (search_x - GAP).max(0.0)
@@ -82,9 +79,14 @@ mod tests {
     #[test]
     fn right_controls_remain_at_the_right_at_all_widths() {
         for width in [180.0, 320.0, 600.0, 720.0, 1100.0, 1500.0] {
+            let baseline = ToolbarLayout::new(width, false);
             for tasks in [false, true] {
                 let layout = ToolbarLayout::new(width, tasks);
                 assert_eq!(layout.right_x + layout.right_width, width);
+                assert_eq!(layout.search_x, baseline.search_x);
+                assert_eq!(layout.search_width, baseline.search_width);
+                assert_eq!(layout.search_row, baseline.search_row);
+                assert_eq!(layout.search_x + layout.search_width / 2.0, width / 2.0);
                 assert!(layout.search_x + layout.search_width <= width);
                 if layout.search_row == 0 {
                     assert!(layout.search_x + layout.search_width <= layout.right_x);
