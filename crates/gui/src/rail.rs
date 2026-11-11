@@ -34,6 +34,7 @@ pub struct Rail {
     pinned: bool,
     open: Option<&'static str>,
     flyout_timer: FlyoutTimer,
+    last_flyout_rect: Option<Rect>,
     last_width: f32,
     reduced_motion: Arc<AtomicBool>,
     applied_reduced_motion: Option<bool>,
@@ -48,6 +49,7 @@ impl Rail {
             pinned: false,
             open: None,
             flyout_timer: FlyoutTimer::default(),
+            last_flyout_rect: None,
             last_width: COLLAPSED,
             reduced_motion,
             applied_reduced_motion: None,
@@ -67,6 +69,7 @@ impl Rail {
 
     pub fn close_panel(&mut self) {
         self.open = None;
+        self.last_flyout_rect = None;
         self.flyout_timer.reset();
     }
 
@@ -93,13 +96,13 @@ impl Rail {
         // Use last frame's painted bounds so the flyout stays reachable while the
         // rail animates. Keep the rail expanded while the flyout is open, rather
         // than moving the panel out from under the pointer as it crosses over.
-        let flyout_rect = side_rect(ctx, rail_rect, self.last_width);
         let (pointer, now) = ctx.input(|i| (i.pointer.hover_pos(), i.time));
         let hovered = pointer.is_some_and(|pos| hover_rect.contains(pos));
-        let over_flyout = pointer.is_some_and(|pos| flyout_rect.contains(pos));
+        let over_flyout =
+            pointer.is_some_and(|pos| self.last_flyout_rect.is_some_and(|rect| rect.contains(pos)));
         match self
             .flyout_timer
-            .update(self.open.is_some(), hovered || over_flyout, now)
+            .update(self.open.is_some(), hovered, over_flyout, now)
         {
             Dismissal::KeepOpen => {}
             Dismissal::Wait(remaining) => ctx.request_repaint_after(remaining),
@@ -250,6 +253,7 @@ impl Rail {
                                     } else {
                                         Some(key)
                                     };
+                                    self.last_flyout_rect = None;
                                     self.flyout_timer.reset();
                                     ctx.request_repaint();
                                     if self.open.is_some() {
@@ -334,27 +338,50 @@ impl Rail {
             .find(|(key, _)| *key == panel)
             .map(|(_, title)| *title)
             .unwrap_or(panel);
-        let bounds = side_rect(ctx, rail_rect, rail_width);
+        let count = match panel {
+            "categories" => state.categories.len(),
+            "labels" => state.labels.len(),
+            "rss" => state.feeds.len(),
+            "recent" => state.library.len().min(3),
+            "favorites" => state
+                .favorites
+                .iter()
+                .filter(|item| match item.scope {
+                    Scope::Task => state.tasks.iter().any(|entry| entry.id == item.id),
+                    Scope::Seed => state.seeds.iter().any(|entry| entry.id == item.id),
+                    Scope::Library => state.library.iter().any(|entry| entry.id == item.id),
+                })
+                .count(),
+            _ => 0,
+        };
+        let bounds = side_rect(ctx, rail_rect, rail_width, count);
         let width = bounds.width();
-        if width <= 0.0 || rail_rect.height() <= 0.0 {
+        if !bounds.is_positive() {
+            self.last_flyout_rect = None;
             return None;
         }
+        // Track the actual visible background, rather than an imagined full-height
+        // panel: moving below a short list is leaving the flyout too.
+        self.last_flyout_rect = Some(bounds);
         let mut action = None;
         egui::Area::new(Id::unique("side_overlay"))
             .order(Order::Middle)
             .fixed_pos(bounds.min)
+            .default_size(bounds.size())
             .movable(false)
             .fade_in(false)
             .constrain(false)
             .show(ctx, |ui| {
-                let size = Vec2::new(width, rail_rect.height());
+                let size = bounds.size();
                 ui.set_min_size(size);
                 ui.set_max_size(size);
                 let rect = Rect::from_min_size(ui.min_rect().min, size);
-                ui.painter().rect_filled(rect, 0, palette.surface);
-                ui.painter().line_segment(
-                    [rect.right_top(), rect.right_bottom()],
+                ui.painter().rect_filled(rect, 8, palette.surface);
+                ui.painter().rect_stroke(
+                    rect,
+                    8,
                     Stroke::new(1.0, palette.border),
+                    egui::StrokeKind::Inside,
                 );
                 let content = rect.shrink2(Vec2::new(
                     12.0_f32.min(width / 4.0),
@@ -397,6 +424,7 @@ impl Rail {
                     ui.add_space(8.0);
                     ScrollArea::vertical()
                         .id_salt("side_contents")
+                        .max_height((content.height() - 32.0).max(0.0))
                         .auto_shrink([false, false])
                         .show(ui, |ui| match panel {
                             "categories" => {
@@ -493,13 +521,11 @@ impl Rail {
     }
 }
 
-fn side_rect(ctx: &egui::Context, rail_rect: Rect, rail_width: f32) -> Rect {
+fn side_rect(ctx: &egui::Context, rail_rect: Rect, rail_width: f32, item_count: usize) -> Rect {
     let left = rail_rect.left() + rail_width;
     let width = 320.0_f32.min((ctx.content_rect().right() - left).max(0.0));
-    Rect::from_min_size(
-        Pos2::new(left, rail_rect.top()),
-        Vec2::new(width, rail_rect.height().max(0.0)),
-    )
+    let height = crate::flyout_logic::flyout_height(item_count, rail_rect.height());
+    Rect::from_min_size(Pos2::new(left, rail_rect.top()), Vec2::new(width, height))
 }
 
 fn category_row(ui: &mut egui::Ui, name: &str, icon: &str, count: usize, palette: Theme) -> bool {
