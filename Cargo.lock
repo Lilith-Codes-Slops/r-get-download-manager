@@ -1445,11 +1445,14 @@ dependencies = [
 name = "downloader-gui"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "downloader-ipc",
  "eframe",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

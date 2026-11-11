@@ -21,3 +21,7 @@
 # Local lab artifacts
 /rget-lab/
 /rget-public-*/
+
+# Prototype GUI state is local user data
+/data/state.json
+/data/state.json.tmp-*
