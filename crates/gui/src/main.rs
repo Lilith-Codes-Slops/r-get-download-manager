@@ -19,6 +19,7 @@ mod rail;
 mod row_layout;
 mod row_ui;
 mod settings;
+mod settings_layout;
 mod settings_logic;
 mod shortcut_logic;
 mod simulation;
