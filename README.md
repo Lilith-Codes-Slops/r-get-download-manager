@@ -173,12 +173,15 @@ there, and an existing empty state is not reseeded. Invalid state files are not
 overwritten. The file is ignored by Git. The Add download dialog accepts up to five
 nonempty link entries and creates simulated tasks; it does not validate or fetch them.
 Properties for one selected
-task, seed, or library item are available from the row context menu or More menu. The prototype's native
+task, seed, or library item are available from its row context menu. The prototype's native
 torrent chooser records a simulated task, not a real download; on Linux it requires `zenity` or
 `kdialog`. The rail and its side panels use the same simulated state; its pin is
-session-only. The Tasks view has independently searchable Active and Transfers
-panes, with both running and stopped seeds shown in Transfers. The panes stack on
-narrow windows. Task rows include status-colored
+session-only. A shared toolbar search filters the current view and offers matching
+names; the Tasks view also retains independent Active and Transfers filters. Both
+running and stopped seeds appear in Transfers. The panes stack on narrow windows.
+Retry All restarts failed simulated tasks. Remove Download History removes the
+completed library entries from the list, leaving files untouched, like Remove
+Completed. Task rows include status-colored
 progress, eight segments, and pause/resume/retry controls; seeds can be stopped
 and restarted. Rows support multi-selection and compact spacing. The Downloads library supports
 search and editable, persisted categories. Settings (action bar or Ctrl/Cmd+,)

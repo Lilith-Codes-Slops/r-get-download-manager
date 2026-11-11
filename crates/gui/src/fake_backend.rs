@@ -180,6 +180,7 @@ pub enum Command {
     },
     PauseAll,
     ResumeAll,
+    RetryAll,
     Tick {
         seed: u64,
     },
@@ -506,13 +507,7 @@ fn apply_command(state: &mut State, command: Command) -> io::Result<()> {
                     task.queued = false;
                 }
                 TaskStatus::Paused => task.status = TaskStatus::Active,
-                TaskStatus::Failed => {
-                    task.status = TaskStatus::Active;
-                    task.progress = 0.0;
-                    task.connections = 8;
-                    task.speed_kbps = 0.0;
-                    task.queued = false;
-                }
+                TaskStatus::Failed => retry_task(task),
             }
         }
         Command::ToggleSeed(id) => {
@@ -553,6 +548,13 @@ fn apply_command(state: &mut State, command: Command) -> io::Result<()> {
             for task in &mut state.tasks {
                 if matches!(task.status, TaskStatus::Paused) {
                     task.status = TaskStatus::Active;
+                }
+            }
+        }
+        Command::RetryAll => {
+            for task in &mut state.tasks {
+                if matches!(task.status, TaskStatus::Failed) {
+                    retry_task(task);
                 }
             }
         }
@@ -629,6 +631,14 @@ fn add_download(state: &mut State, source: String, name: String) -> io::Result<(
     state.selections = vec![selection.clone()];
     state.selection_anchor = Some(selection);
     Ok(())
+}
+
+fn retry_task(task: &mut Task) {
+    task.status = TaskStatus::Active;
+    task.progress = 0.0;
+    task.connections = 8;
+    task.speed_kbps = 0.0;
+    task.queued = false;
 }
 
 fn remove_items(state: &mut State, items: &[Selection]) {
@@ -1147,6 +1157,45 @@ mod tests {
         ] {
             assert!(backend.dispatch(Command::SetSettings(invalid)).is_err());
             assert_eq!(backend.snapshot().settings, settings);
+        }
+        remove_test_dir(&path);
+    }
+
+    #[test]
+    fn retry_all_only_restarts_failed_tasks_and_persists() {
+        let path = test_path();
+        let mut backend = FakeBackend::open(path.clone()).unwrap();
+        let mut state = backend.snapshot().clone();
+        let mut failed = state.tasks[0].clone();
+        failed.id = "failed-retry-test".into();
+        failed.status = TaskStatus::Failed;
+        failed.progress = 57.0;
+        failed.connections = 0;
+        failed.speed_kbps = 42.0;
+        failed.queued = true;
+        let mut failed_again = failed.clone();
+        failed_again.id = "failed-retry-test-two".into();
+        let mut paused = failed.clone();
+        paused.id = "paused-retry-test".into();
+        paused.status = TaskStatus::Paused;
+        state.tasks.extend([paused.clone(), failed, failed_again]);
+        let before = state.tasks[0].clone();
+        backend.dispatch(Command::ReplaceState(state)).unwrap();
+        backend.dispatch(Command::RetryAll).unwrap();
+        let restored = FakeBackend::open(path.clone()).unwrap();
+        assert_eq!(restored.snapshot().tasks[0], before);
+        assert!(restored.snapshot().tasks.contains(&paused));
+        for retried in restored
+            .snapshot()
+            .tasks
+            .iter()
+            .filter(|task| task.id.starts_with("failed-retry-test"))
+        {
+            assert_eq!(retried.status, TaskStatus::Active);
+            assert_eq!(retried.progress, 0.0);
+            assert_eq!(retried.connections, 8);
+            assert_eq!(retried.speed_kbps, 0.0);
+            assert!(!retried.queued);
         }
         remove_test_dir(&path);
     }

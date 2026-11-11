@@ -18,6 +18,7 @@ mod properties;
 mod rail;
 mod row_layout;
 mod row_ui;
+mod search_model;
 mod settings;
 mod settings_layout;
 mod settings_logic;
@@ -28,6 +29,7 @@ mod task_filter;
 mod tasks;
 mod theme;
 mod toast_logic;
+mod toolbar_layout;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -60,6 +62,7 @@ impl DownloadsApp {
             view: backend.snapshot().view,
             theme: backend.snapshot().settings.theme,
             picking_torrent: false,
+            search_open: false,
         };
         theme::apply_theme(&cc.egui_ctx, chrome.theme.preference());
         Ok(Self {
@@ -174,11 +177,8 @@ impl DownloadsApp {
             Action::Torrent => self.open_torrent_picker(ctx),
             Action::Settings => self.settings.open(ctx, &self.backend.snapshot().settings),
             Action::Search => {
-                let id = match self.backend.snapshot().view {
-                    View::Tasks => "active_filter",
-                    View::Downloads => "library_filter",
-                };
-                ctx.memory_mut(|memory| memory.request_focus(egui::Id::unique(id)));
+                self.chrome.search_open = !self.backend.snapshot().library_filter.trim().is_empty();
+                ctx.memory_mut(|memory| memory.request_focus(egui::Id::unique("global_search")));
             }
             Action::PauseAll => {
                 self.dispatch(Command::PauseAll);
@@ -330,7 +330,14 @@ impl eframe::App for DownloadsApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_picker(ui.ctx());
         // A popup takes Escape first; an open modal otherwise handles it itself.
-        if egui::Popup::is_any_open(ui.ctx())
+        if self.chrome.search_open
+            && !self.modal_open()
+            && ui
+                .ctx()
+                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.chrome.search_open = false;
+        } else if egui::Popup::is_any_open(ui.ctx())
             && ui
                 .ctx()
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
@@ -403,9 +410,13 @@ impl eframe::App for DownloadsApp {
             self.chrome.theme = previous_theme;
             theme::apply_theme(ui.ctx(), self.chrome.theme.preference());
         }
-        let bar_action = self
-            .chrome
-            .show_actions(ui, palette, self.backend.snapshot());
+        let modal_open = self.modal_open();
+        let (bar_action, search_update) =
+            self.chrome
+                .show_actions(ui, palette, self.backend.snapshot(), modal_open);
+        if let Some(query) = search_update {
+            self.dispatch(Command::SetLibraryFilter(query));
+        }
         match ribbon_action.or(bar_action) {
             Some(chrome::ChromeAction::Menu(action)) => {
                 if !self.modal_open() {
@@ -436,6 +447,9 @@ impl eframe::App for DownloadsApp {
             }
             Some(chrome::ChromeAction::ResumeAll) => {
                 self.dispatch(Command::ResumeAll);
+            }
+            Some(chrome::ChromeAction::RetryAll) => {
+                self.dispatch(Command::RetryAll);
             }
             None => {}
         }

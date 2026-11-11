@@ -3,19 +3,21 @@ use crate::fake_backend::{Seed, State, Task};
 
 pub fn active_items(state: &State) -> Vec<&Task> {
     let query = state.active_filter.trim().to_lowercase();
+    let shared = state.library_filter.trim().to_lowercase();
     state
         .tasks
         .iter()
-        .filter(|task| matches_name(&task.name, &query))
+        .filter(|task| matches_name(&task.name, &query) && matches_name(&task.name, &shared))
         .collect()
 }
 
 pub fn transfer_items(state: &State) -> Vec<&Seed> {
     let query = state.seed_filter.trim().to_lowercase();
+    let shared = state.library_filter.trim().to_lowercase();
     state
         .seeds
         .iter()
-        .filter(|seed| matches_name(&seed.name, &query))
+        .filter(|seed| matches_name(&seed.name, &query) && matches_name(&seed.name, &shared))
         .collect()
 }
 
@@ -27,6 +29,29 @@ fn matches_name(name: &str, query: &str) -> bool {
 mod tests {
     use super::*;
     use crate::fake_backend::{Command, FakeBackend, TaskStatus};
+
+    #[test]
+    fn shared_search_combines_with_independent_pane_filters() {
+        let path = std::env::temp_dir()
+            .join(format!("rget-shared-search-{}", std::process::id()))
+            .join("state.json");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let backend = FakeBackend::open(path.clone()).unwrap();
+        let mut state = backend.snapshot().clone();
+        state.tasks[0].name = "Report.pdf".into();
+        state.seeds[0].name = "Report.iso".into();
+        state.active_filter = "pdf".into();
+        state.seed_filter = "iso".into();
+        state.library_filter = " report ".into();
+        assert_eq!(active_items(&state).len(), 1);
+        assert_eq!(transfer_items(&state).len(), 1);
+        state.library_filter = "pdf".into();
+        assert_eq!(active_items(&state).len(), 1);
+        assert!(transfer_items(&state).is_empty());
+        state.library_filter.clear();
+        assert_eq!(transfer_items(&state).len(), 1);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
 
     #[test]
     fn filters_are_independent_and_stopped_seeds_remain_visible() {

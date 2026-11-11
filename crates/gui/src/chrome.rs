@@ -1,7 +1,7 @@
 //! Native ribbon and status chrome for the new GUI prototype.
 use eframe::egui::{
-    self, scroll_area::ScrollBarVisibility, Align, Button, Color32, Frame, Layout, Margin,
-    RichText, ScrollArea, Stroke, Vec2,
+    self, scroll_area::ScrollBarVisibility, Align, Button, Color32, Frame, Id, Layout, Margin,
+    Pos2, Rect, RichText, ScrollArea, Stroke, UiBuilder, Vec2,
 };
 
 use crate::icons::{self, Icon};
@@ -23,6 +23,7 @@ pub enum ChromeAction {
     PickTorrent,
     PauseAll,
     ResumeAll,
+    RetryAll,
     OpenSettings,
     OpenAdd,
     Menu(crate::menus::Action),
@@ -46,6 +47,7 @@ pub struct Chrome {
     pub view: View,
     pub theme: ThemeChoice,
     pub picking_torrent: bool,
+    pub search_open: bool,
 }
 
 impl Chrome {
@@ -135,164 +137,172 @@ impl Chrome {
         (view_clicked, None)
     }
 
+    /// The right group has its own pinned region; only the left actions scroll.
     pub fn show_actions(
         &mut self,
         ui: &mut egui::Ui,
         palette: Theme,
         state: &State,
-    ) -> Option<ChromeAction> {
+        modal_open: bool,
+    ) -> (Option<ChromeAction>, Option<String>) {
         let mut action = None;
+        let mut search_update = None;
+        let layout = crate::toolbar_layout::ToolbarLayout::new(
+            (ui.available_width() - 32.0).max(0.0),
+            state.view == View::Tasks,
+        );
+        if modal_open {
+            self.search_open = false;
+        }
         egui::Panel::top("actions")
-            .exact_size(48.0)
-            .frame(
-                Frame::NONE
-                    .fill(palette.surface)
-                    .inner_margin(Margin::symmetric(16, 6)),
-            )
+            .exact_size(layout.height())
+            .frame(Frame::NONE.fill(palette.surface).inner_margin(Margin::symmetric(16, 6)))
             .show_separator_line(false)
             .show(ui, |ui| {
-                ui.set_min_height(36.0);
-                ScrollArea::horizontal()
-                    .id_salt("action_scroll")
-                    .auto_shrink([false, true])
-                    .scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden)
-                    .show(ui, |ui| {
-                        ui.horizontal_centered(|ui| {
-                            ui.set_min_height(36.0);
-                            ui.spacing_mut().item_spacing.x = 8.0;
-                            ui.spacing_mut().button_padding = egui::vec2(14.0, 7.0);
-                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                            for (label, icon, enabled) in [
-                                ("+ URL", Icon::Link, true),
-                                ("+ Magnet", Icon::Magnet, true),
-                                ("Add torrent", Icon::FilePlus, !self.picking_torrent),
-                                ("Pause All", Icon::Pause, !state.tasks.is_empty()),
-                                ("Resume All", Icon::Play, !state.tasks.is_empty()),
-                                ("Remove", Icon::Trash, !state.selections.is_empty()),
-                                ("Remove Completed", Icon::Trash, !state.library.is_empty()),
-                                ("Settings", Icon::Settings, true),
-                            ] {
-                                if state.view != View::Tasks && label != "Settings" {
-                                    continue;
+                let origin = ui.max_rect().min;
+                let region = |x: f32, row: usize, width: f32| Rect::from_min_size(
+                    Pos2::new(origin.x + x, origin.y + crate::toolbar_layout::ToolbarLayout::row_y(row)),
+                    Vec2::new(width, 36.0),
+                );
+                if state.view == View::Tasks && layout.actions_width > 0.0 {
+                    let rect = region(0.0, layout.actions_row, layout.actions_width);
+                    let mut left = ui.new_child(UiBuilder::new().id_salt("toolbar_left").max_rect(rect));
+                    left.set_clip_rect(rect.intersect(ui.clip_rect()));
+                    ScrollArea::horizontal()
+                        .id_salt("action_scroll")
+                        .auto_shrink([false, false])
+                        .scroll_bar_visibility(ScrollBarVisibility::VisibleWhenNeeded)
+                        .show(&mut left, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.spacing_mut().button_padding = egui::vec2(8.0, 5.0);
+                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                                for (label, icon, enabled, width) in [
+                                    ("+ URL", Icon::Link, true, 76.0),
+                                    ("+ Magnet", Icon::Magnet, true, 96.0),
+                                    ("Add torrent", Icon::FilePlus, !self.picking_torrent, 112.0),
+                                    ("Pause All", Icon::Pause, !state.tasks.is_empty(), 99.0),
+                                    ("Resume All", Icon::Play, !state.tasks.is_empty(), 108.0),
+                                    ("Retry All", Icon::Retry, state.tasks.iter().any(|t| matches!(t.status, crate::fake_backend::TaskStatus::Failed)), 90.0),
+                                    ("Remove Download History", Icon::Trash, !state.library.is_empty(), 184.0),
+                                    ("Remove", Icon::Trash, !state.selections.is_empty(), 88.0),
+                                    ("Remove Completed", Icon::Trash, !state.library.is_empty(), 155.0),
+                                ] {
+                                    let primary = label == "+ URL";
+                                    let button = Button::new((
+                                        icons::atom(icon, 16.0, if primary { Color32::WHITE } else { palette.text_dim }),
+                                        RichText::new(label).size(12.0).color(if primary { Color32::WHITE } else { palette.text }),
+                                    )).fill(if primary { palette.accent } else { palette.surface_2 })
+                                      .stroke(Stroke::new(1.0, if primary { palette.accent } else { palette.border }))
+                                      .corner_radius(8);
+                                    let response = ui.add_enabled_ui(enabled, |ui| ui.add_sized([width, 30.0], button)).inner;
+                                    let response = if label == "Remove Download History" {
+                                        response.on_hover_text("Remove completed entries from the list; files are kept")
+                                    } else { response };
+                                    crate::theme::focus_outline(ui, &response, palette);
+                                    if response.clicked() {
+                                        action = match label {
+                                            "+ URL" | "+ Magnet" => Some(ChromeAction::OpenAdd),
+                                            "Add torrent" => Some(ChromeAction::PickTorrent),
+                                            "Pause All" => Some(ChromeAction::PauseAll),
+                                            "Resume All" => Some(ChromeAction::ResumeAll),
+                                            "Retry All" => Some(ChromeAction::RetryAll),
+                                            "Remove" => Some(ChromeAction::Menu(crate::menus::Action::RemoveSelected)),
+                                            "Remove Download History" | "Remove Completed" => Some(ChromeAction::Menu(crate::menus::Action::ClearCompleted)),
+                                            _ => None,
+                                        };
+                                    }
                                 }
-                                let primary = label == "+ URL";
-                                let mut button = Button::new((
-                                    icons::atom(
-                                        icon,
-                                        16.0,
-                                        if primary {
-                                            Color32::WHITE
-                                        } else {
-                                            palette.text_dim
-                                        },
-                                    ),
-                                    RichText::new(label).color(if primary {
-                                        Color32::WHITE
-                                    } else {
-                                        palette.text
-                                    }),
-                                ))
-                                .stroke(Stroke::new(
-                                    1.0,
-                                    if primary {
-                                        palette.accent
-                                    } else {
-                                        palette.border
-                                    },
-                                ))
-                                .corner_radius(8)
-                                .min_size(Vec2::new(0.0, 32.0));
-                                if primary {
-                                    button = button.fill(palette.accent);
-                                }
-                                let response = ui.add_enabled(enabled, button);
-                                crate::theme::focus_outline(ui, &response, palette);
-                                if response.clicked() {
-                                    action = match label {
-                                        "+ URL" | "+ Magnet" => Some(ChromeAction::OpenAdd),
-                                        "Add torrent" => Some(ChromeAction::PickTorrent),
-                                        "Pause All" => Some(ChromeAction::PauseAll),
-                                        "Resume All" => Some(ChromeAction::ResumeAll),
-                                        "Remove" => Some(ChromeAction::Menu(
-                                            crate::menus::Action::RemoveSelected,
-                                        )),
-                                        "Settings" => Some(ChromeAction::OpenSettings),
-                                        "Remove Completed" => Some(ChromeAction::Menu(
-                                            crate::menus::Action::ClearCompleted,
-                                        )),
-                                        _ => None,
-                                    };
-                                }
-                            }
-                            if state.view == View::Tasks {
-                                let more = ui
-                                    .add_enabled(
-                                        !state.selections.is_empty(),
-                                        Button::new("···")
-                                            .fill(palette.surface_2)
-                                            .stroke(Stroke::new(1.0, palette.border))
-                                            .corner_radius(8),
-                                    )
-                                    .on_hover_text("More actions for selected download");
-                                crate::theme::focus_outline(ui, &more, palette);
-                                more.widget_info(|| {
-                                    egui::WidgetInfo::labeled(
-                                        egui::Role::Button,
-                                        ui.is_enabled() && !state.selections.is_empty(),
-                                        "More actions for selected download",
-                                    )
+                            });
+                        });
+                }
+                let search_rect = region(layout.search_x, layout.search_row, layout.search_width).shrink2(egui::vec2(0.0, 3.0));
+                if search_rect.is_positive() {
+                    let mut search_ui = ui.new_child(UiBuilder::new().id_salt("toolbar_search").max_rect(search_rect));
+                    search_ui.set_clip_rect(search_rect.intersect(ui.clip_rect()));
+                    let mut query = state.library_filter.clone();
+                    let response = search_ui.add_sized(search_rect.size(), egui::TextEdit::singleline(&mut query)
+                        .id(Id::unique("global_search"))
+                        .hint_text("Search…"));
+                    response.widget_info(|| {
+                        let mut info = egui::WidgetInfo::text_edit(search_ui.is_enabled(), &query, &query, "Search…");
+                        info.label = Some("Search downloads and tasks".into());
+                        info
+                    });
+                    if response.changed() {
+                        search_update = Some(query.clone());
+                    }
+                    if !modal_open && (response.changed() || response.clicked()) {
+                        self.search_open = !query.trim().is_empty();
+                    }
+                    if query.trim().is_empty() { self.search_open = false; }
+                    let suggestions = if self.search_open {
+                        crate::search_model::suggestions(state, &query)
+                    } else {
+                        Vec::new()
+                    };
+                    let mut chosen = None;
+                    let popup_width = search_rect.width().max(220.0).min((ui.ctx().content_rect().width() - 24.0).max(0.0));
+                    egui::Popup::from_response(&response)
+                        .open_bool(&mut self.search_open)
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .gap(5.0)
+                        .width(popup_width)
+                        .frame(Frame::NONE.fill(palette.surface).stroke(Stroke::new(1.0, palette.border)).corner_radius(8).inner_margin(Margin::same(6)))
+                        .accessible_name("Search suggestions")
+                        .show(|ui| {
+                            ui.set_width((popup_width - 12.0).max(0.0));
+                            if suggestions.is_empty() {
+                                ui.label(RichText::new("No matching items").size(12.0).color(palette.text_muted));
+                            } else {
+                                let max_height = (ui.ctx().content_rect().height() * 0.5).clamp(30.0, 180.0);
+                                ScrollArea::vertical().id_salt("search_suggestions").max_height(max_height).auto_shrink([false, true]).show(ui, |ui| {
+                                    ui.spacing_mut().item_spacing.y = 2.0;
+                                    for name in suggestions {
+                                        let item = ui.add_sized([ui.available_width(), 28.0], Button::new(RichText::new(name).size(12.0).color(palette.text)).truncate().frame(false));
+                                        if item.clicked() { chosen = Some(name.to_owned()); }
+                                    }
                                 });
-                                let mut selected_action = None;
-                                if let Some(item) = state.selections.first() {
-                                    egui::Popup::menu(&more).show(|ui| {
-                                        crate::menus::row(
-                                            ui,
-                                            state,
-                                            item,
-                                            palette,
-                                            &mut selected_action,
-                                        )
-                                    });
-                                }
-                                if let Some(selected) = selected_action {
-                                    more.request_focus();
-                                    action = Some(ChromeAction::Menu(selected));
-                                }
                             }
-                            for (label, icon, commands) in [
-                                ("Help", Icon::Help, false),
-                                ("Commands", Icon::Command, true),
-                            ] {
-                                let response = ui.add(
-                                    Button::new((icons::atom(icon, 16.0, palette.text_dim), label))
-                                        .stroke(Stroke::new(1.0, palette.border))
-                                        .corner_radius(8),
-                                );
-                                crate::theme::focus_outline(ui, &response, palette);
+                        });
+                    if let Some(name) = chosen {
+                        search_update = Some(name);
+                        self.search_open = false;
+                        response.request_focus();
+                    }
+                }
+                let right_rect = region(layout.right_x, 0, layout.right_width);
+                if right_rect.is_positive() {
+                    let mut right = ui.new_child(UiBuilder::new().id_salt("toolbar_right").max_rect(right_rect));
+                    right.set_clip_rect(right_rect.intersect(ui.clip_rect()));
+                    right.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        ui.spacing_mut().button_padding = egui::vec2(7.0, 5.0);
+                        for (label, icon, width) in [("Settings", Icon::Settings, 94.0), ("Help", Icon::Help, 70.0), ("Commands", Icon::Command, 104.0)] {
+                            let button = if layout.compact_right {
+                                Button::new(icons::atom(icon, 16.0, palette.text_dim))
+                            } else {
+                                Button::new((icons::atom(icon, 16.0, palette.text_dim), RichText::new(label).size(12.0).color(palette.text)))
+                            }.fill(palette.surface_2).stroke(Stroke::new(1.0, palette.border)).corner_radius(8);
+                            let response = ui.add_sized([if layout.compact_right { 36.0 } else { width }, 30.0], button).on_hover_text(label);
+                            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+                            crate::theme::focus_outline(ui, &response, palette);
+                            if label == "Settings" {
+                                if response.clicked() { action = Some(ChromeAction::OpenSettings); }
+                            } else {
                                 let mut selected = None;
-                                egui::Popup::menu(&response).show(|ui| {
-                                    crate::menus::dropdown(
-                                        ui,
-                                        state,
-                                        commands,
-                                        palette,
-                                        &mut selected,
-                                    )
-                                });
+                                egui::Popup::menu(&response).show(|ui| crate::menus::dropdown(ui, state, label == "Commands", palette, &mut selected));
                                 if let Some(selected) = selected {
                                     response.request_focus();
                                     action = Some(ChromeAction::Menu(selected));
                                 }
                             }
-                        });
+                        }
                     });
-                ui.painter().hline(
-                    (ui.max_rect().left() - 16.0)..=(ui.max_rect().right() + 16.0),
-                    ui.max_rect().bottom() + 5.5,
-                    Stroke::new(1.0, palette.border),
-                );
+                }
+                ui.painter().hline((ui.max_rect().left() - 16.0)..=(ui.max_rect().right() + 16.0), ui.max_rect().bottom() + 5.5, Stroke::new(1.0, palette.border));
             });
-        action
+        (action, search_update)
     }
 
     pub fn show_status(&self, ui: &mut egui::Ui, palette: Theme, state: &State) {

@@ -81,22 +81,10 @@ impl DownloadsView {
             Stroke::new(1.0, palette.border),
         );
 
-        let search_width = 180.0_f32.min((toolbar.width() * 0.34).max(0.0));
-        let search_right = (toolbar.right() - 14.0).max(toolbar.left());
-        let search_rect = Rect::from_min_max(
-            Pos2::new(
-                (search_right - search_width).max(toolbar.left()),
-                toolbar.center().y - 14.0,
-            ),
-            Pos2::new(search_right, toolbar.center().y + 14.0),
-        )
-        .intersect(toolbar);
+        let chips_left = (toolbar.left() + 18.0).min(toolbar.right());
         let chips_rect = Rect::from_min_max(
-            Pos2::new((toolbar.left() + 18.0).min(toolbar.right()), toolbar.top()),
-            Pos2::new(
-                (search_rect.left() - 14.0).max((toolbar.left() + 18.0).min(toolbar.right())),
-                toolbar.bottom(),
-            ),
+            Pos2::new(chips_left, toolbar.top()),
+            Pos2::new((toolbar.right() - 14.0).max(chips_left), toolbar.bottom()),
         );
         if chips_rect.is_positive() {
             let mut chips_ui = ui.new_child(
@@ -182,34 +170,6 @@ impl DownloadsView {
                         }
                     });
                 });
-        }
-        if search_rect.is_positive() {
-            let mut search_ui = ui.new_child(
-                UiBuilder::new()
-                    .id_salt("library_search_ui")
-                    .max_rect(search_rect),
-            );
-            search_ui.set_clip_rect(search_rect.intersect(ui.clip_rect()));
-            let mut search = state.library_filter.clone();
-            let response = search_ui.add_sized(
-                search_rect.size(),
-                TextEdit::singleline(&mut search)
-                    .id(Id::unique("library_filter"))
-                    .hint_text("Search downloads…"),
-            );
-            response.widget_info(|| {
-                let mut info = egui::WidgetInfo::text_edit(
-                    search_ui.is_enabled(),
-                    &search,
-                    &search,
-                    "Search downloads…",
-                );
-                info.label = Some("Search downloads".into());
-                info
-            });
-            if response.changed() {
-                actions.push(Command::SetLibraryFilter(search));
-            }
         }
         let body = Rect::from_min_max(Pos2::new(rect.left(), toolbar.bottom()), rect.max);
         if body.is_positive() {

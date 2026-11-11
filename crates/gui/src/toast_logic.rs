@@ -5,6 +5,7 @@ pub fn action_message(command: &Command, state: &State) -> Option<String> {
     match command {
         Command::PauseAll => Some("Paused all downloads".into()),
         Command::ResumeAll => Some("Resumed all downloads".into()),
+        Command::RetryAll => Some("Retried failed downloads".into()),
         Command::CreateCategory { name, .. } | Command::CreateCategoryWithIcon { name, .. } => {
             Some(format!("Category created: {}", name.trim()))
         }
