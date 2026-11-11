@@ -235,7 +235,7 @@ fn pane(
         let response = ui.put(
             search_rect,
             egui::TextEdit::singleline(&mut filter_text)
-                .id(Id::new(if active {
+                .id(Id::unique(if active {
                     "active_filter"
                 } else {
                     "transfer_filter"

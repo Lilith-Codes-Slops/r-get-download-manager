@@ -109,7 +109,7 @@ impl SettingsModal {
             .stroke(Stroke::new(1.0, palette.border))
             .corner_radius(14)
             .inner_margin(Margin::same(20));
-        let response = egui::Modal::new(Id::new("settings_modal")).frame(frame)
+        let response = egui::Modal::new(Id::unique("settings_modal")).frame(frame)
             .backdrop_color(Color32::from_black_alpha(153))
             .show(ctx, |ui| {
                 let width = (ctx.content_rect().width() - 72.0).clamp(0.0, 600.0);

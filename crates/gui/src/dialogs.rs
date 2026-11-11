@@ -93,7 +93,7 @@ impl Dialogs {
             .stroke(Stroke::new(1.0, palette.border))
             .corner_radius(14)
             .inner_margin(Margin::same(20));
-        let modal = egui::Modal::new(Id::new("download_dialog"))
+        let modal = egui::Modal::new(Id::unique("download_dialog"))
             .frame(frame)
             .backdrop_color(Color32::from_black_alpha(153))
             .show(ctx, |ui| {
@@ -145,7 +145,7 @@ impl Dialogs {
                                 ui.label(RichText::new("Link").strong().color(palette.text));
                                 let response = ui.add(
                                     TextEdit::singleline(link)
-                                        .id(Id::new("add_download_link"))
+                                        .id(Id::unique("add_download_link"))
                                         .desired_width(f32::INFINITY)
                                         .hint_text("https://example.com/file.iso"),
                                 );

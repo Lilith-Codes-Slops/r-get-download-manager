@@ -99,7 +99,7 @@ impl Rail {
                 0.0
             }
         } else {
-            ctx.animate_bool_with_time(Id::new("rail_width"), expanded, 0.18)
+            ctx.animate_bool_with_time(Id::unique("rail_width"), expanded, 0.18)
         };
         let alpha = if reduced {
             if expanded {
@@ -108,14 +108,14 @@ impl Rail {
                 0.0
             }
         } else {
-            ctx.animate_bool_with_time(Id::new("rail_labels"), expanded, 0.15)
+            ctx.animate_bool_with_time(Id::unique("rail_labels"), expanded, 0.15)
         };
         let width = COLLAPSED + (EXPANDED - COLLAPSED) * expansion;
         self.last_width = width;
         // Keep the side overlay adjacent to the visible rail so pinned content
         // does not cover its controls. Neither overlay changes the main layout.
         let mut action = self.show_side(ctx, rail_rect, width, palette, state);
-        egui::Area::new(Id::new("rail_overlay"))
+        egui::Area::new(Id::unique("rail_overlay"))
             .order(Order::Foreground)
             .fixed_pos(rail_rect.min)
             .movable(false)
@@ -252,7 +252,7 @@ impl Rail {
                     Stroke::new(1.0, palette.border),
                 );
                 let response = ui
-                    .interact(status_rect, Id::new("rail_daemon"), Sense::click())
+                    .interact(status_rect, Id::unique("rail_daemon"), Sense::click())
                     .on_hover_text("Toggle simulated daemon connection");
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(
@@ -324,7 +324,7 @@ impl Rail {
             return None;
         }
         let mut action = None;
-        egui::Area::new(Id::new("side_overlay"))
+        egui::Area::new(Id::unique("side_overlay"))
             .order(Order::Middle)
             .fixed_pos(Pos2::new(rail_rect.left() + rail_width, rail_rect.top()))
             .movable(false)

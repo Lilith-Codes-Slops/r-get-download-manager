@@ -190,7 +190,7 @@ impl DownloadsView {
             let response = search_ui.add_sized(
                 search_rect.size(),
                 TextEdit::singleline(&mut search)
-                    .id(Id::new("library_filter"))
+                    .id(Id::unique("library_filter"))
                     .hint_text("Search downloads…"),
             );
             response.widget_info(|| {
@@ -273,7 +273,7 @@ impl DownloadsView {
             .stroke(Stroke::new(1.0, palette.border))
             .corner_radius(14)
             .inner_margin(Margin::same(20));
-        let response = egui::Modal::new(Id::new("category_dialog"))
+        let response = egui::Modal::new(Id::unique("category_dialog"))
             .frame(frame)
             .backdrop_color(Color32::from_black_alpha(153))
             .show(ctx, |ui| {
@@ -290,7 +290,7 @@ impl DownloadsView {
                                 ui.heading(if id.is_some() { "Edit Category" } else { "New Category" });
                                 ui.label("Name");
                                 let name_response = ui.add(TextEdit::singleline(name)
-                                    .id(Id::new("category_name"))
+                                    .id(Id::unique("category_name"))
                                     .desired_width(f32::INFINITY)
                                     .hint_text("e.g. Ebooks"));
                                 name_response.widget_info(|| {

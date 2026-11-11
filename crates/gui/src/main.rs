@@ -3,6 +3,7 @@
 mod categories;
 mod chrome;
 mod clipboard;
+#[path = "dialogs.rs"]
 mod dialogs;
 mod download_link;
 mod downloads;
@@ -166,7 +167,7 @@ impl DownloadsApp {
                     View::Tasks => "active_filter",
                     View::Downloads => "library_filter",
                 };
-                ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(id)));
+                ctx.memory_mut(|memory| memory.request_focus(egui::Id::unique(id)));
             }
             Action::PauseAll => {
                 self.dispatch(Command::PauseAll);
@@ -563,7 +564,7 @@ impl eframe::App for DownloadsApp {
                 self.toast = None;
             } else {
                 ui.ctx().request_repaint_after(remaining);
-                egui::Area::new("prototype_toast".into())
+                egui::Area::new(egui::Id::unique("prototype_toast"))
                     .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-20.0, -60.0))
                     .show(ui.ctx(), |ui| {
                         egui::Frame::popup(ui.style()).show(ui, |ui| {
