@@ -146,8 +146,10 @@ fn cancel_keeps_history_and_delete_active_cleans_partial() {
     let deadline = Instant::now() + Duration::from_secs(10);
     let partial = loop {
         if let Some(t) = f.task(&url) {
-            if t.downloaded > 0 && t.partial_name.is_some() {
-                break t.partial_name.unwrap();
+            if t.downloaded > 0 {
+                if let Some(partial) = t.partial_name {
+                    break partial;
+                }
             }
         }
         assert!(Instant::now() < deadline);
@@ -186,8 +188,10 @@ fn cancel_keeps_history_and_delete_active_cleans_partial() {
     let deadline = Instant::now() + Duration::from_secs(10);
     let partial = loop {
         if let Some(t) = f.task(&url) {
-            if t.downloaded > 0 && t.partial_name.is_some() {
-                break t.partial_name.unwrap();
+            if t.downloaded > 0 {
+                if let Some(partial) = t.partial_name {
+                    break partial;
+                }
             }
         }
         assert!(Instant::now() < deadline);

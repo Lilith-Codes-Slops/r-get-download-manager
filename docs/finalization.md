@@ -14,7 +14,7 @@ branch.
 | Final matrix status | Cargo suites and public torrent run passed on the user's PC at an earlier SHA. Formatting/Clippy fixes, the post-download action feature and the GUI port are now applied; the complete matrix, including the release build, must be rerun at the final SHA. |
 | Scope | Merge PR #1 only. No `v0.1.0` tag or GitHub Release in this flow. |
 | Merge strategy | `--squash`, after all gates are green. |
-| Current action | Push the consolidated Clippy cleanup commit, update PR metadata with its SHA, then wait for final matrix confirmation. **Do not merge yet.** |
+| Current action | Push the integration-test `unnecessary_unwrap` fix commit, update PR metadata with its SHA, then wait for final matrix confirmation. **Do not merge yet.** |
 
 The docs/hygiene commit, the subsequent formatting/Clippy fix commit, the
 post-download action feature commit and the GUI port commit each change the
@@ -108,16 +108,18 @@ An assistant-side native `rustfmt 1.10.0-stable --check --edition 2021` run
 (from the Rust 1.99.0 npm toolchain package) over all tracked `.rs` files,
 using the repository `rustfmt.toml`, reported no diffs after the fix. The GUI
 port, its compile-fix follow-up, the window borrow-check fix, the Clippy
-`io_other_error` fix and the consolidated Clippy cleanup were checked with the
-same static formatter/parser pass. These are static checks only: the
+`io_other_error` fix, the consolidated Clippy cleanup and the integration-test
+`unnecessary_unwrap` fix were checked with the same static formatter/parser
+pass. These are static checks only: the
 user-side
 `cargo fmt --all -- --check` command above remains the release gate.
 
 The post-download action feature commit, the GUI port commit, the follow-up
 compile-fix/warning-cleanup commit, the window borrow-check fix commit, the
-Clippy `io_other_error` fix commit and the consolidated Clippy cleanup commit
-each changed the SHA again. Do not reuse the earlier `65f5f1e` matrix request
-as current; run the eight commands below at the final SHA.
+Clippy `io_other_error` fix commit, the consolidated Clippy cleanup commit and
+the integration-test `unnecessary_unwrap` fix commit each changed the SHA again.
+Do not reuse the earlier `65f5f1e` matrix request as current; run the eight
+commands below at the final SHA.
 
 Test-only hooks must not be compiled into a production daemon. After any
 hook-enabled build, rebuild with default features before installing or running
@@ -181,6 +183,11 @@ Use the named filter; bare `--ignored` would also try the single-file test.
   signatures; this is project lint configuration, not a waiver of
   `-D warnings` or a per-site `#[allow]`. Refactoring those signatures into
   parameter structs is tracked in `state.md`.
+- A follow-up commit replaces two `partial_name.unwrap()` calls in
+  `crates/core/tests/task_actions_ipc.rs` with nested `if let` bindings. A
+  warning-only `cargo clippy --workspace --all-targets --locked` run at the
+  previous SHA reported those two `clippy::unnecessary_unwrap` warnings and no
+  others, confirming the complete lint inventory for all test targets.
 - `README.md` and `CHANGELOG.md` describe the ported GUI, wired controls and
   deferred work.
 
@@ -214,7 +221,8 @@ then add release notes, binary checksums and a tag.
 The docs/hygiene commit, the formatting/Clippy fix commit, the post-download
 action feature commit, the GUI port commit, the compile-fix/warning-cleanup
 commit, the window borrow-check fix commit, the Clippy `io_other_error` fix
-commit, the consolidated Clippy cleanup commit and PR metadata are prepared.
-The merge is blocked on one user-side gate: paste the green results for the full
-final matrix at the new SHA. Until then, PR #1 remains open and unmerged. See
+commit, the consolidated Clippy cleanup commit, the integration-test
+`unnecessary_unwrap` fix commit and PR metadata are prepared. The merge is
+blocked on one user-side gate: paste the green results for the full final matrix
+at the new SHA. Until then, PR #1 remains open and unmerged. See
 `state.md` for the long-term backlog; it is not a merge blocker.

@@ -62,6 +62,10 @@ pending, and no merge, tag, or GitHub Release has been created.
   internal transfer/repository signatures; this is a project lint
   configuration, not an `#[allow]` or a `-D warnings` waiver, and the
   parameter-struct refactor is tracked in `state.md`.
+- Replace two `partial_name.unwrap()` calls in `crates/core/tests/task_actions_ipc.rs`
+  with nested `if let` bindings after a warning-only `cargo clippy
+  --workspace --all-targets --locked` run confirmed they were the only
+  remaining warnings at the previous SHA.
 - Clarify Linux-only daemon support and the Linux GNU torrent target in
   `README.md`.
 - Mark `docs/torrent-phase-five.md` as an append-only engineering log and add a
@@ -81,8 +85,9 @@ pending, and no merge, tag, or GitHub Release has been created.
   diffs and `large_enum_variant` error at `07fd541`.
 - The post-download action feature commit, the subsequent GUI port commit, the
   compile-fix/warning-cleanup commit, the window borrow-check fix commit, the
-  Clippy `io_other_error` fix commit and the consolidated Clippy cleanup commit
-  each changed the SHA again. The full matrix, including `cargo fmt --check`,
+  Clippy `io_other_error` fix commit, the consolidated Clippy cleanup commit and
+  the integration-test `unnecessary_unwrap` fix commit each changed the SHA
+  again. The full matrix, including `cargo fmt --check`,
   `cargo clippy -- -D warnings`, the Cargo test suites and the release build,
   must still be rerun at the new final SHA. See `docs/finalization.md` and
   `state.md`.

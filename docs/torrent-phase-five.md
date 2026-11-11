@@ -660,3 +660,21 @@ stopped as memory-heavy and STEP 9 was not run. Because this commit changes the
 SHA again, the full matrix in `docs/finalization.md` must be rerun before
 merging. No `-D warnings` waiver, release-build skip, tag or Release was
 accepted.
+
+
+## Integration-test unnecessary_unwrap fix (append-only note)
+
+STEP 7 with `-D warnings` at `2ba968f...` exited 101 with two
+`clippy::unnecessary_unwrap` findings in
+`crates/core/tests/task_actions_ipc.rs` (lines 150 and 190). That integration
+test target had not been compiled in earlier runs because the library failed
+first. A warning-only `cargo clippy --workspace --all-targets --locked` run
+(no `-D warnings`, so Cargo checks every target in one pass) reported exactly
+those two warnings and no others. A follow-up commit replaces
+`t.partial_name.unwrap()` after an `is_some()` check with a nested
+`if let Some(partial) = t.partial_name` binding in both loops. The fix is
+source-level; `rustfmt`, tree-sitter and `git diff --check` are clean, but no
+user-side Clippy or Cargo run exists at this SHA yet. Because the commit changes
+the SHA again, the full matrix in `docs/finalization.md` must be rerun before
+merging. No `-D warnings` waiver, release-build skip, tag or Release was
+accepted.

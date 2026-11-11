@@ -104,8 +104,9 @@ to a disabled button, checkbox or placeholder in `views.rs`.
    PR state.
 4. No `v0.1.0` tag or GitHub Release in this flow.
 
-A new consolidated Clippy cleanup commit changes the SHA again, so the matrix
-request must be reissued at the new head; earlier results at `07fd541`,
-`65f5f1e`, the post-download feature commit, the GUI port commit, the
-compile-fix/warning-cleanup commit, the window borrow-check fix commit and the
-Clippy `io_other_error` fix commit are history, not a green gate.
+A new integration-test `unnecessary_unwrap` fix commit changes the SHA again,
+so the matrix request must be reissued at the new head; earlier results at
+`07fd541`, `65f5f1e`, the post-download feature commit, the GUI port commit,
+the compile-fix/warning-cleanup commit, the window borrow-check fix commit, the
+Clippy `io_other_error` fix commit and the consolidated Clippy cleanup commit
+are history, not a green gate.
