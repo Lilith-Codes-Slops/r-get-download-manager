@@ -8,6 +8,7 @@ mod dialogs;
 mod download_link;
 mod downloads;
 mod fake_backend;
+mod flyout_logic;
 mod graphics;
 mod icons;
 mod menu_model;
