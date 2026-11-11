@@ -423,7 +423,7 @@ impl SettingsModal {
                             .add(
                                 egui::TextEdit::singleline(&mut self.speed_text)
                                     .desired_width((width - 18.0).clamp(0.0, 88.0))
-                                    .frame(false)
+                                    .frame(Frame::NONE)
                                     .hint_text("Unlimited"),
                             )
                             .on_hover_text("e.g. 500 KB/s, 2 MB/s, or Unlimited");
