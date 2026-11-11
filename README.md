@@ -176,7 +176,9 @@ Properties for one selected
 task, seed, or library item are available from its row context menu. The prototype's native
 torrent chooser records a simulated task, not a real download; on Linux it requires `zenity` or
 `kdialog`. The rail and its side panels use the same simulated state; its pin is
-session-only. The centered toolbar search offers completed downloads and transfers
+session-only. The top bar keeps the centered search and Settings, Help, and Commands
+available in both views. The row beneath it holds Tasks actions or Downloads category
+chips, respectively. The search offers completed downloads and transfers
 from both views, and filters the current view; a leading dot searches filename
 extensions. Incomplete tasks are excluded while the shared search is active. Selecting
 a result opens its view and clears any conflicting category or pane filter. The Tasks
@@ -187,7 +189,7 @@ completed library entries from the list, leaving files untouched, like Remove
 Completed. Task rows include status-colored
 progress, eight segments, and pause/resume/retry controls; seeds can be stopped
 and restarted. Rows support multi-selection and compact spacing. The Downloads library supports
-search and editable, persisted categories. Settings (action bar or Ctrl/Cmd+,)
+search and editable, persisted categories. Settings (top bar or Ctrl/Cmd+,)
 are saved immediately, including theme, compact mode, alerts, delete confirmation,
 concurrency, speed limit and seed ratio. The speed limit is shared across the
 Downloads and Network sections. Sound switches are disabled: this prototype never

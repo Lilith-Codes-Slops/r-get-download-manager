@@ -411,130 +411,108 @@ impl Rail {
                 ));
                 ui.scope_builder(UiBuilder::new().max_rect(content), |ui| {
                     ui.set_clip_rect(content);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(title)
-                                .size(14.0)
-                                .strong()
-                                .color(palette.text),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let close_response = ui
-                                .add(
-                                    egui::Button::new(icons::atom(
-                                        Icon::Close,
-                                        16.0,
-                                        palette.text_dim,
-                                    ))
-                                    .frame(false),
-                                )
-                                .on_hover_text("Close panel");
-                            close_response.widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::Role::Button,
-                                    ui.is_enabled(),
-                                    "Close panel",
-                                )
-                            });
-                            crate::theme::focus_outline(ui, &close_response, palette);
-                            if close_response.clicked() {
-                                self.close_panel();
-                                ctx.request_repaint();
-                            }
-                        });
-                    });
-                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(title)
+                            .size(13.0)
+                            .strong()
+                            .color(palette.text),
+                    );
+                    ui.add_space(4.0);
                     ScrollArea::vertical()
                         .id_salt("side_contents")
-                        .max_height((content.height() - 32.0).max(0.0))
+                        .max_height((content.height() - 26.0).max(0.0))
                         .auto_shrink([false, false])
-                        .show(ui, |ui| match panel {
-                            "categories" => {
-                                if state.categories.is_empty() {
-                                    ui.label("Nothing here");
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            match panel {
+                                "categories" => {
+                                    if state.categories.is_empty() {
+                                        ui.label("Nothing here");
+                                    }
+                                    for category in &state.categories {
+                                        let count = state
+                                            .library
+                                            .iter()
+                                            .filter(|item| {
+                                                category_of(state, &item.name) == category.id
+                                            })
+                                            .count();
+                                        if category_row(
+                                            ui,
+                                            &category.name,
+                                            &category.icon,
+                                            count,
+                                            palette,
+                                        ) {
+                                            action = Some(RailAction::SelectCategory(
+                                                category.id.clone(),
+                                            ));
+                                            self.close_panel();
+                                            ctx.request_repaint();
+                                        }
+                                    }
                                 }
-                                for category in &state.categories {
-                                    let count = state
-                                        .library
-                                        .iter()
-                                        .filter(|item| {
-                                            category_of(state, &item.name) == category.id
-                                        })
-                                        .count();
-                                    if category_row(
+                                "labels" => {
+                                    if show_entries(
                                         ui,
-                                        &category.name,
-                                        &category.icon,
-                                        count,
+                                        state.labels.iter().map(|name| (name.as_str(), "")),
                                         palette,
                                     ) {
-                                        action =
-                                            Some(RailAction::SelectCategory(category.id.clone()));
                                         self.close_panel();
                                         ctx.request_repaint();
                                     }
                                 }
-                            }
-                            "labels" => {
-                                if show_entries(
-                                    ui,
-                                    state.labels.iter().map(|name| (name.as_str(), "")),
-                                    palette,
-                                ) {
-                                    self.close_panel();
-                                    ctx.request_repaint();
+                                "rss" => {
+                                    if show_entries(
+                                        ui,
+                                        state.feeds.iter().map(|name| (name.as_str(), "")),
+                                        palette,
+                                    ) {
+                                        self.close_panel();
+                                        ctx.request_repaint();
+                                    }
                                 }
-                            }
-                            "rss" => {
-                                if show_entries(
-                                    ui,
-                                    state.feeds.iter().map(|name| (name.as_str(), "")),
-                                    palette,
-                                ) {
-                                    self.close_panel();
-                                    ctx.request_repaint();
+                                "recent" => {
+                                    if show_entries(
+                                        ui,
+                                        state.library.iter().take(3).map(|item| {
+                                            (item.name.as_str(), item.finished.as_str())
+                                        }),
+                                        palette,
+                                    ) {
+                                        self.close_panel();
+                                        ctx.request_repaint();
+                                    }
                                 }
-                            }
-                            "recent" => {
-                                if show_entries(
-                                    ui,
-                                    state
-                                        .library
-                                        .iter()
-                                        .take(3)
-                                        .map(|item| (item.name.as_str(), item.finished.as_str())),
-                                    palette,
-                                ) {
-                                    self.close_panel();
-                                    ctx.request_repaint();
+                                "favorites" => {
+                                    let names =
+                                        state.favorites.iter().filter_map(|item| {
+                                            match item.scope {
+                                                Scope::Task => state
+                                                    .tasks
+                                                    .iter()
+                                                    .find(|x| x.id == item.id)
+                                                    .map(|x| x.name.as_str()),
+                                                Scope::Seed => state
+                                                    .seeds
+                                                    .iter()
+                                                    .find(|x| x.id == item.id)
+                                                    .map(|x| x.name.as_str()),
+                                                Scope::Library => state
+                                                    .library
+                                                    .iter()
+                                                    .find(|x| x.id == item.id)
+                                                    .map(|x| x.name.as_str()),
+                                            }
+                                        });
+                                    if show_entries(ui, names.map(|name| (name, "")), palette) {
+                                        self.close_panel();
+                                        ctx.request_repaint();
+                                    }
                                 }
-                            }
-                            "favorites" => {
-                                let names =
-                                    state.favorites.iter().filter_map(|item| match item.scope {
-                                        Scope::Task => state
-                                            .tasks
-                                            .iter()
-                                            .find(|x| x.id == item.id)
-                                            .map(|x| x.name.as_str()),
-                                        Scope::Seed => state
-                                            .seeds
-                                            .iter()
-                                            .find(|x| x.id == item.id)
-                                            .map(|x| x.name.as_str()),
-                                        Scope::Library => state
-                                            .library
-                                            .iter()
-                                            .find(|x| x.id == item.id)
-                                            .map(|x| x.name.as_str()),
-                                    });
-                                if show_entries(ui, names.map(|name| (name, "")), palette) {
-                                    self.close_panel();
-                                    ctx.request_repaint();
+                                _ => {
+                                    ui.label("Nothing here");
                                 }
-                            }
-                            _ => {
-                                ui.label("Nothing here");
                             }
                         });
                 });
@@ -545,14 +523,14 @@ impl Rail {
 
 fn side_rect(ctx: &egui::Context, rail_rect: Rect, rail_width: f32, item_count: usize) -> Rect {
     let left = rail_rect.left() + rail_width;
-    let width = 320.0_f32.min((ctx.content_rect().right() - left).max(0.0));
+    let width = 260.0_f32.min((ctx.content_rect().right() - left).max(0.0));
     let height = crate::flyout_logic::flyout_height(item_count, rail_rect.height());
     Rect::from_min_size(Pos2::new(left, rail_rect.top()), Vec2::new(width, height))
 }
 
 fn category_row(ui: &mut egui::Ui, name: &str, icon: &str, count: usize, palette: Theme) -> bool {
     let (row, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 38.0), Sense::click());
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), name));
     if response.hovered() {
         ui.painter().rect_filled(row, 6, palette.hover);
@@ -595,7 +573,7 @@ fn show_entries<'a>(
     for (title, detail) in items {
         empty = false;
         let (row, response) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 38.0), Sense::click());
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
         response
             .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), title));
         if response.hovered() {

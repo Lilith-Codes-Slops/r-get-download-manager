@@ -396,9 +396,10 @@ impl eframe::App for DownloadsApp {
         };
         let previous_view = self.backend.snapshot().view;
         let previous_theme = self.backend.snapshot().settings.theme;
-        let (view_clicked, ribbon_action) =
+        let modal_open = self.modal_open();
+        let (view_clicked, ribbon_action, search_update) =
             self.chrome
-                .show_ribbon(ui, palette, self.backend.snapshot());
+                .show_ribbon(ui, palette, self.backend.snapshot(), modal_open);
         if view_clicked {
             self.rail.close_panel();
         }
@@ -411,13 +412,19 @@ impl eframe::App for DownloadsApp {
             self.chrome.theme = previous_theme;
             theme::apply_theme(ui.ctx(), self.chrome.theme.preference());
         }
-        let modal_open = self.modal_open();
-        let (bar_action, search_update) =
-            self.chrome
-                .show_actions(ui, palette, self.backend.snapshot(), modal_open);
         if let Some(query) = search_update {
             self.dispatch(Command::SetLibraryFilter(query));
         }
+        let bar_action = if self.backend.snapshot().view == View::Tasks {
+            self.chrome
+                .show_actions(ui, palette, self.backend.snapshot())
+        } else {
+            let snapshot = self.backend.shared_snapshot();
+            for command in self.downloads.show_categories(ui, &snapshot, palette) {
+                self.dispatch(command);
+            }
+            None
+        };
         match ribbon_action.or(bar_action) {
             Some(chrome::ChromeAction::Menu(action)) => {
                 if !self.modal_open() {
@@ -456,6 +463,8 @@ impl eframe::App for DownloadsApp {
                 if self.dispatch(Command::SelectSearchResult(item)) {
                     self.chrome.view = self.backend.snapshot().view;
                     self.rail.close_panel();
+                    // The view-specific row was laid out earlier in this frame.
+                    ui.ctx().request_repaint();
                 }
             }
             None => {}

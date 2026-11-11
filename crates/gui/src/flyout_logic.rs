@@ -2,13 +2,13 @@
 use std::time::Duration;
 
 const CLOSE_DELAY: f64 = 0.25;
-const MIN_HEIGHT: f32 = 96.0;
-const MAX_HEIGHT: f32 = 430.0;
+const MIN_HEIGHT: f32 = 80.0;
+const MAX_HEIGHT: f32 = 380.0;
 
 /// The flyout occupies only its content, not the full-height rail beneath it.
 /// Long lists scroll within the maximum height.
 pub fn flyout_height(item_count: usize, available_height: f32) -> f32 {
-    let desired = 60.0 + item_count as f32 * 42.0;
+    let desired = 54.0 + item_count as f32 * 34.0;
     desired
         .clamp(MIN_HEIGHT, MAX_HEIGHT)
         .min(available_height.max(0.0))
@@ -79,9 +79,9 @@ mod tests {
 
     #[test]
     fn panel_height_tracks_content_and_is_bounded() {
-        assert_eq!(flyout_height(0, 800.0), 96.0);
-        assert_eq!(flyout_height(3, 800.0), 186.0);
-        assert_eq!(flyout_height(100, 800.0), 430.0);
+        assert_eq!(flyout_height(0, 800.0), 80.0);
+        assert_eq!(flyout_height(3, 800.0), 156.0);
+        assert_eq!(flyout_height(100, 800.0), 380.0);
         assert_eq!(flyout_height(100, 200.0), 200.0);
         assert_eq!(flyout_height(0, 0.0), 0.0);
     }

@@ -11,7 +11,7 @@ use crate::modal_style;
 use crate::row_layout::{self, LIBRARY_COLUMNS};
 use crate::theme::Theme;
 
-const TOOLBAR_HEIGHT: f32 = 62.0;
+const TOOLBAR_HEIGHT: f32 = 48.0;
 
 #[derive(Default)]
 pub struct DownloadsView {
@@ -60,6 +60,125 @@ impl DownloadsView {
         }
     }
 
+    /// The Downloads category controls replace the Tasks action row.
+    pub fn show_categories(
+        &mut self,
+        ui: &mut egui::Ui,
+        state: &State,
+        palette: Theme,
+    ) -> Vec<Command> {
+        let mut actions = Vec::new();
+        egui::Panel::top("downloads_categories")
+            .exact_size(TOOLBAR_HEIGHT)
+            .frame(egui::Frame::NONE.fill(palette.surface))
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                let toolbar = ui.max_rect();
+                let painter = ui
+                    .painter()
+                    .with_clip_rect(toolbar.intersect(ui.clip_rect()));
+                painter.rect_filled(toolbar, 0, palette.surface);
+                painter.line_segment(
+                    [toolbar.left_bottom(), toolbar.right_bottom()],
+                    Stroke::new(1.0, palette.border),
+                );
+
+                let chips_left = (toolbar.left() + 16.0).min(toolbar.right());
+                let chips_rect = Rect::from_min_max(
+                    Pos2::new(chips_left, toolbar.top()),
+                    Pos2::new((toolbar.right() - 16.0).max(chips_left), toolbar.bottom()),
+                );
+                if chips_rect.is_positive() {
+                    let mut chips_ui = ui.new_child(
+                        UiBuilder::new()
+                            .id_salt("category_toolbar")
+                            .max_rect(chips_rect),
+                    );
+                    chips_ui.set_clip_rect(chips_rect.intersect(ui.clip_rect()));
+                    ScrollArea::horizontal()
+                        .id_salt("category_chips")
+                        .auto_shrink([false, false])
+                        .scroll_bar_visibility(
+                            egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                        )
+                        .show(&mut chips_ui, |ui| {
+                            ui.horizontal_centered(|ui| {
+                                ui.set_min_height(toolbar.height());
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.spacing_mut().button_padding = egui::vec2(11.0, 5.0);
+                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                                for (id, name) in [("all", "All"), ("other", "Uncategorized")] {
+                                    if chip(
+                                        ui,
+                                        name,
+                                        if id == "all" {
+                                            Icon::Grid
+                                        } else {
+                                            Icon::Question
+                                        },
+                                        state.selected_category == id,
+                                        palette,
+                                    )
+                                    .clicked()
+                                    {
+                                        actions.push(Command::SelectCategory(id.into()));
+                                    }
+                                }
+                                for category in &state.categories {
+                                    let response = chip(
+                                        ui,
+                                        &category.name,
+                                        icons::category(&category.icon),
+                                        state.selected_category == category.id,
+                                        palette,
+                                    );
+                                    if response.clicked() {
+                                        actions.push(Command::SelectCategory(category.id.clone()));
+                                    }
+                                    response.context_menu(|ui| {
+                                        if ui.button("Edit").clicked() {
+                                            self.previous_focus = Some(response.id);
+                                            self.focus_first = true;
+                                            self.dialog = Some(Dialog::Edit {
+                                                id: Some(category.id.clone()),
+                                                name: category.name.clone(),
+                                                extensions: category.extensions.join(", "),
+                                                icon: category.icon.clone(),
+                                                error: None,
+                                            });
+                                            ui.close();
+                                        }
+                                        if ui.button("Delete").clicked() {
+                                            self.previous_focus = Some(response.id);
+                                            self.focus_first = true;
+                                            self.dialog = Some(Dialog::Delete {
+                                                id: category.id.clone(),
+                                                name: category.name.clone(),
+                                                error: None,
+                                            });
+                                            ui.close();
+                                        }
+                                    });
+                                }
+                                let new_category = chip(ui, "New", Icon::Plus, false, palette);
+                                if new_category.clicked() {
+                                    self.previous_focus = Some(new_category.id);
+                                    self.focus_first = true;
+                                    self.dialog = Some(Dialog::Edit {
+                                        id: None,
+                                        name: String::new(),
+                                        extensions: String::new(),
+                                        icon: "folder".into(),
+                                        error: None,
+                                    });
+                                }
+                            });
+                        });
+                }
+            });
+        actions
+    }
+
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -70,108 +189,7 @@ impl DownloadsView {
         let mut actions = Vec::new();
         let size = ui.available_size_before_wrap().max(Vec2::ZERO);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-        let toolbar = Rect::from_min_size(
-            rect.min,
-            Vec2::new(rect.width(), TOOLBAR_HEIGHT.min(rect.height())),
-        );
-        let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-        painter.rect_filled(toolbar, 0, palette.surface);
-        painter.line_segment(
-            [toolbar.left_bottom(), toolbar.right_bottom()],
-            Stroke::new(1.0, palette.border),
-        );
-
-        let chips_left = (toolbar.left() + 18.0).min(toolbar.right());
-        let chips_rect = Rect::from_min_max(
-            Pos2::new(chips_left, toolbar.top()),
-            Pos2::new((toolbar.right() - 14.0).max(chips_left), toolbar.bottom()),
-        );
-        if chips_rect.is_positive() {
-            let mut chips_ui = ui.new_child(
-                UiBuilder::new()
-                    .id_salt("category_toolbar")
-                    .max_rect(chips_rect),
-            );
-            chips_ui.set_clip_rect(chips_rect.intersect(ui.clip_rect()));
-            ScrollArea::horizontal()
-                .id_salt("category_chips")
-                .auto_shrink([false, false])
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                .show(&mut chips_ui, |ui| {
-                    ui.horizontal_centered(|ui| {
-                        ui.set_min_height(toolbar.height());
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        ui.spacing_mut().button_padding = egui::vec2(16.0, 7.0);
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                        for (id, name) in [("all", "All"), ("other", "Uncategorized")] {
-                            if chip(
-                                ui,
-                                name,
-                                if id == "all" {
-                                    Icon::Grid
-                                } else {
-                                    Icon::Question
-                                },
-                                state.selected_category == id,
-                                palette,
-                            )
-                            .clicked()
-                            {
-                                actions.push(Command::SelectCategory(id.into()));
-                            }
-                        }
-                        for category in &state.categories {
-                            let response = chip(
-                                ui,
-                                &category.name,
-                                icons::category(&category.icon),
-                                state.selected_category == category.id,
-                                palette,
-                            );
-                            if response.clicked() {
-                                actions.push(Command::SelectCategory(category.id.clone()));
-                            }
-                            response.context_menu(|ui| {
-                                if ui.button("Edit").clicked() {
-                                    self.previous_focus = Some(response.id);
-                                    self.focus_first = true;
-                                    self.dialog = Some(Dialog::Edit {
-                                        id: Some(category.id.clone()),
-                                        name: category.name.clone(),
-                                        extensions: category.extensions.join(", "),
-                                        icon: category.icon.clone(),
-                                        error: None,
-                                    });
-                                    ui.close();
-                                }
-                                if ui.button("Delete").clicked() {
-                                    self.previous_focus = Some(response.id);
-                                    self.focus_first = true;
-                                    self.dialog = Some(Dialog::Delete {
-                                        id: category.id.clone(),
-                                        name: category.name.clone(),
-                                        error: None,
-                                    });
-                                    ui.close();
-                                }
-                            });
-                        }
-                        let new_category = chip(ui, "New", Icon::Plus, false, palette);
-                        if new_category.clicked() {
-                            self.previous_focus = Some(new_category.id);
-                            self.focus_first = true;
-                            self.dialog = Some(Dialog::Edit {
-                                id: None,
-                                name: String::new(),
-                                extensions: String::new(),
-                                icon: "folder".into(),
-                                error: None,
-                            });
-                        }
-                    });
-                });
-        }
-        let body = Rect::from_min_max(Pos2::new(rect.left(), toolbar.bottom()), rect.max);
+        let body = rect;
         if body.is_positive() {
             let mut list_ui = ui.new_child(
                 UiBuilder::new()

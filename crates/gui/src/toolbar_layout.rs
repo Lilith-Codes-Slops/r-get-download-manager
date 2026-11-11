@@ -1,75 +1,61 @@
-//! Responsive toolbar regions; coordinates are relative to the content area.
+//! Responsive top-bar regions, relative to its horizontal content area.
 const GAP: f32 = 10.0;
-const ROW_HEIGHT: f32 = 36.0;
-const ROW_STEP: f32 = 40.0;
 const REGULAR_RIGHT: f32 = 280.0;
 const COMPACT_RIGHT: f32 = 120.0;
+const LEFT_IDEAL: f32 = 320.0;
 
 #[derive(Debug)]
 pub struct ToolbarLayout {
     pub compact_right: bool,
     pub right_x: f32,
     pub right_width: f32,
+    pub left_width: f32,
     pub search_x: f32,
     pub search_width: f32,
     pub search_row: usize,
-    pub actions_width: f32,
-    pub actions_row: usize,
-    pub rows: usize,
 }
 
 impl ToolbarLayout {
-    pub fn new(width: f32, tasks: bool) -> Self {
+    pub fn new(width: f32) -> Self {
         let width = width.max(0.0);
-        let compact_right = width < 390.0;
+        let compact_right = width < 760.0;
         let right_width = width.min(if compact_right {
             COMPACT_RIGHT
         } else {
             REGULAR_RIGHT
         });
         let right_x = width - right_width;
-        // Search has the same window-centered position in both views.
-        // If the pinned right group leaves too little centered space, move the
-        // search to the next row in both views instead of overlapping it.
-        let centered_room = ((right_x - GAP - width / 2.0) * 2.0).max(0.0);
-        let search_first = centered_room >= 100.0;
-        let search_row = usize::from(!search_first);
-        let search_width = if search_first {
-            centered_room.min(220.0)
-        } else {
-            width.min(220.0)
-        };
+        let search_width = width.min(220.0);
         let search_x = (width - search_width) / 2.0;
-        let single_row_tasks = tasks && search_first && search_x >= 320.0;
-        let actions_row = if single_row_tasks { 0 } else { search_row + 1 };
-        let actions_width = if single_row_tasks {
+        // At smaller sizes search gets a second top-bar row; the navigation and
+        // pinned utilities remain reachable independently rather than overlapping.
+        let first_row = search_x >= LEFT_IDEAL + GAP && search_x + search_width + GAP <= right_x;
+        let search_row = usize::from(!first_row);
+        let left_width = if first_row {
             (search_x - GAP).max(0.0)
         } else {
-            width
-        };
-        let rows = if tasks {
-            actions_row + 1
-        } else {
-            search_row + 1
+            (right_x - GAP).max(0.0)
         };
         Self {
             compact_right,
             right_x,
             right_width,
+            left_width,
             search_x,
             search_width,
             search_row,
-            actions_width,
-            actions_row,
-            rows,
         }
     }
 
     pub fn height(&self) -> f32 {
-        ROW_HEIGHT + (self.rows - 1) as f32 * ROW_STEP + 12.0
+        52.0 + self.search_row as f32 * 40.0
     }
-    pub fn row_y(row: usize) -> f32 {
-        row as f32 * ROW_STEP
+    pub fn search_y(&self) -> f32 {
+        if self.search_row == 0 {
+            11.0
+        } else {
+            56.0
+        }
     }
 }
 
@@ -77,27 +63,19 @@ impl ToolbarLayout {
 mod tests {
     use super::*;
     #[test]
-    fn right_controls_remain_at_the_right_at_all_widths() {
-        for width in [180.0, 320.0, 600.0, 720.0, 1100.0, 1500.0] {
-            let baseline = ToolbarLayout::new(width, false);
-            for tasks in [false, true] {
-                let layout = ToolbarLayout::new(width, tasks);
-                assert_eq!(layout.right_x + layout.right_width, width);
-                assert_eq!(layout.search_x, baseline.search_x);
-                assert_eq!(layout.search_width, baseline.search_width);
-                assert_eq!(layout.search_row, baseline.search_row);
-                assert_eq!(layout.search_x + layout.search_width / 2.0, width / 2.0);
-                assert!(layout.search_x + layout.search_width <= width);
-                if layout.search_row == 0 {
-                    assert!(layout.search_x + layout.search_width <= layout.right_x);
-                }
-                if tasks && layout.actions_row == layout.search_row {
-                    assert!(layout.actions_width <= layout.search_x);
-                }
-                assert!(
-                    layout.rows > layout.search_row && (!tasks || layout.rows > layout.actions_row)
-                );
+    fn centered_search_and_pinned_utilities_never_overlap() {
+        for width in [
+            0.0, 100.0, 180.0, 320.0, 600.0, 720.0, 860.0, 1100.0, 1500.0,
+        ] {
+            let l = ToolbarLayout::new(width);
+            assert_eq!(l.right_x + l.right_width, width);
+            assert_eq!(l.search_x + l.search_width / 2.0, width / 2.0);
+            assert!(l.left_width <= l.right_x);
+            if l.search_row == 0 {
+                assert!(l.left_width <= l.search_x);
+                assert!(l.search_x + l.search_width <= l.right_x);
             }
+            assert!(l.search_y() + 30.0 <= l.height());
         }
     }
 }
