@@ -159,8 +159,10 @@ The wgpu renderer prefers a compatible integrated GPU, then discrete or other
 hardware, with software rendering only as a last resort. On Linux it prefers
 Vulkan among adapters of the same type. The chosen adapter, device type and
 backend are printed to stderr at startup; actual availability depends on the
-driver and display surface. `WGPU_BACKEND` can restrict the backends wgpu
-considers. Driver enumeration can still load other GPU libraries. The on-demand
+driver and display surface. Set `RGET_GPU_DIAGNOSTICS=1` to list enumerated
+adapters and eligibility checks when troubleshooting selection. `WGPU_BACKEND`
+can restrict the backends wgpu considers. Driver enumeration can still load
+other GPU libraries. The on-demand
 egui font atlas is limited to a 4096-pixel side (or the device limit if smaller),
 while system-font fallback remains enabled. GPU drivers and display settings
 influence memory use; no specific RSS or responsiveness is guaranteed.

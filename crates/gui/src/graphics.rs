@@ -30,6 +30,36 @@ pub fn native_options() -> eframe::NativeOptions {
     if let WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
         let device_descriptor = Arc::clone(&setup.device_descriptor);
         setup.native_adapter_selector = Some(Arc::new(move |adapters, surface| {
+            if std::env::var_os("RGET_GPU_DIAGNOSTICS").is_some() {
+                eprintln!("Graphics candidates: {}", adapters.len());
+                for adapter in adapters {
+                    let info = adapter.get_info();
+                    let descriptor = device_descriptor(adapter);
+                    let surface_ok =
+                        surface.is_none_or(|surface| adapter.is_surface_supported(surface));
+                    let limits = adapter.limits();
+                    let limits_ok = descriptor.required_limits.check_limits(&limits);
+                    let features_ok = adapter.features().contains(descriptor.required_features);
+                    eprintln!(
+                        "  {} ({:?}, {:?}): surface={}, limits={}, features={}",
+                        info.name,
+                        info.device_type,
+                        info.backend,
+                        surface_ok,
+                        limits_ok,
+                        features_ok
+                    );
+                    if !limits_ok {
+                        descriptor.required_limits.check_limits_with_fail_fn(
+                            &limits,
+                            false,
+                            |name, required, supported| {
+                                eprintln!("    {name}: required {required}, supported {supported}");
+                            },
+                        );
+                    }
+                }
+            }
             let selected = adapters
                 .iter()
                 .filter(|adapter| {
