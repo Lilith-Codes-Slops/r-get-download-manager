@@ -36,6 +36,7 @@ pub struct Rail {
     flyout_timer: FlyoutTimer,
     last_flyout_rect: Option<Rect>,
     last_width: f32,
+    last_expanded_target: Option<bool>,
     reduced_motion: Arc<AtomicBool>,
     applied_reduced_motion: Option<bool>,
 }
@@ -51,6 +52,7 @@ impl Rail {
             flyout_timer: FlyoutTimer::default(),
             last_flyout_rect: None,
             last_width: COLLAPSED,
+            last_expanded_target: None,
             reduced_motion,
             applied_reduced_motion: None,
         }
@@ -109,6 +111,16 @@ impl Rail {
             Dismissal::Close => self.close_panel(),
         }
         let expanded = hovered || self.pinned || self.open.is_some();
+        // An egui layout pass can change the target without advancing input time.
+        // In that case animate_bool can still return exactly its old endpoint and
+        // does not schedule its own next frame. Ensure the transition continues.
+        if self
+            .last_expanded_target
+            .is_some_and(|last| last != expanded)
+        {
+            ctx.request_repaint();
+        }
+        self.last_expanded_target = Some(expanded);
         let expansion = if reduced {
             if expanded {
                 1.0
@@ -201,7 +213,17 @@ impl Rail {
                                 Icon::Pin,
                                 palette.text_dim,
                             );
-                            paint_label(ui.painter(), row, "Pin rail", palette.text_dim, alpha);
+                            paint_label(
+                                ui.painter(),
+                                row,
+                                if self.pinned {
+                                    "Unpin rail"
+                                } else {
+                                    "Pin rail"
+                                },
+                                palette.text_dim,
+                                alpha,
+                            );
                             if response.clicked() {
                                 self.pinned = !self.pinned;
                             }
@@ -715,6 +737,74 @@ fn query_reduced_motion() -> Option<bool> {
 mod tests {
     use super::*;
     use crate::fake_backend::{Command, FakeBackend, View};
+
+    #[test]
+    fn switching_views_closes_flyout_and_restores_hover_collapse() {
+        let path = std::env::temp_dir()
+            .join(format!("rget-rail-hover-test-{}", std::process::id()))
+            .join("state.json");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let backend = FakeBackend::open(path.clone()).unwrap();
+        let ctx = egui::Context::default();
+        let mut rail = Rail {
+            pinned: false,
+            open: None,
+            flyout_timer: FlyoutTimer::default(),
+            last_flyout_rect: None,
+            last_width: COLLAPSED,
+            last_expanded_target: None,
+            reduced_motion: Arc::new(AtomicBool::new(true)),
+            applied_reduced_motion: None,
+        };
+        let bounds = Rect::from_min_size(Pos2::new(0.0, 100.0), Vec2::new(60.0, 600.0));
+        let frame = |rail: &mut Rail, time: f64, pointer: Pos2| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0))),
+                time: Some(time),
+                events: vec![egui::Event::PointerMoved(pointer)],
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| {
+                rail.show(ui.ctx(), bounds, Theme::DARK, backend.snapshot());
+            });
+        };
+        frame(&mut rail, 1.0, Pos2::new(20.0, 160.0));
+        assert_eq!(rail.last_width, EXPANDED);
+        rail.open = Some("categories");
+        frame(&mut rail, 1.1, Pos2::new(300.0, 160.0));
+        assert!(rail.last_flyout_rect.is_some());
+        // View tabs call close_panel, then the pointer is above the rail.
+        rail.close_panel();
+        frame(&mut rail, 1.2, Pos2::new(160.0, 30.0));
+        assert_eq!(rail.last_width, COLLAPSED);
+        assert!(rail.open.is_none());
+        frame(&mut rail, 1.3, Pos2::new(20.0, 160.0));
+        assert_eq!(rail.last_width, EXPANDED);
+        frame(&mut rail, 1.4, Pos2::new(700.0, 500.0));
+        assert_eq!(rail.last_width, COLLAPSED);
+        // An explicitly pinned rail still stays open until unpinned.
+        rail.toggle_pin();
+        frame(&mut rail, 1.5, Pos2::new(700.0, 500.0));
+        assert_eq!(rail.last_width, EXPANDED);
+        rail.toggle_pin();
+        frame(&mut rail, 1.6, Pos2::new(700.0, 500.0));
+        assert_eq!(rail.last_width, COLLAPSED);
+
+        // Also cover animated collapse when a target changes in a second pass
+        // with the same input timestamp as the preceding frame.
+        rail.reduced_motion.store(false, Ordering::Relaxed);
+        frame(&mut rail, 2.0, Pos2::new(20.0, 160.0));
+        assert_eq!(rail.last_width, EXPANDED);
+        rail.open = Some("categories");
+        frame(&mut rail, 2.0, Pos2::new(20.0, 160.0));
+        rail.close_panel();
+        frame(&mut rail, 2.0, Pos2::new(160.0, 30.0));
+        for step in 1..=30 {
+            frame(&mut rail, 2.0 + step as f64 * 0.02, Pos2::new(160.0, 30.0));
+        }
+        assert!((rail.last_width - COLLAPSED).abs() < 0.1);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
 
     #[test]
     fn categories_use_only_the_last_extension_and_ignore_case() {
