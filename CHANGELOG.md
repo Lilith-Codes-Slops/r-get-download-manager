@@ -8,8 +8,10 @@ has been published.
 
 Status: PR #1 was squash-merged as
 `99c845fd3f496008b2a585ae7592671f332eba68` after a green nine-step matrix at
-`6cc0baf…`. This entry now also tracks the post-merge GUI-only slice on
-`arena/1c81e486-r-get-download-manager`; no tag or GitHub Release exists.
+`6cc0baf…`, and PR #2 was squash-merged as
+`524a35b8fd5660970c98af0b9de302e36c12c390` after a green six-step matrix at
+`8bd754e…`. The active branch `arena/af64881e-r-get-download-manager` carries a
+docs-only follow-up; no tag, GitHub Release, checksums or CI workflow exist.
 
 ### Added
 
@@ -83,6 +85,9 @@ Status: PR #1 was squash-merged as
   `README.md`.
 - Mark `docs/torrent-phase-five.md` as an append-only engineering log and add a
   finalization status section.
+- Record PR #2 merged as `524a35b…` and the green six-step GUI-only matrix at
+  `8bd754e…` in `state.md`, `docs/finalization.md` and `README.md`; this is a
+  documentation-only change with no code, dependency or lockfile edits.
 
 ### Validation
 
@@ -100,9 +105,16 @@ Status: PR #1 was squash-merged as
   suite, public harness, split live suite, `cargo fmt --all -- --check`,
   `cargo clippy --workspace --all-targets --locked -- -D warnings`,
   `cargo build --release --locked -j 2`, clean tree) was green at `6cc0baf…`;
-  `gh pr merge 1 --squash` then produced `99c845f…` on `master`. No `-D warnings`
-  waiver or skipped release build. The current GUI-only slice has its own
-  six-step verification list in `state.md` and `docs/finalization.md`.
+  `gh pr merge 1 --squash` then produced `99c845f…` on `master`.
+- The GUI-only follow-up's six-step matrix (`cargo check -p downloader-gui
+  --locked`, workspace tests, fmt, Clippy `-D warnings`, release build, clean
+  tree) was green at `8bd754e…` with no warnings and no `-D warnings` waiver;
+  `gh pr merge 2 --squash` then produced `524a35b…` on `master`. PR #2's body is
+  the authoritative green record. No skipped release build, tag, Release,
+  checksums or CI workflow.
+- The current docs-only follow-up changes the SHA without code changes, so its
+  own six-step verification at the new SHA is listed in `state.md` and
+  `docs/finalization.md`.
 
 ### Known limitations
 
