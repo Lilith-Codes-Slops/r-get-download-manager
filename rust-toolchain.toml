@@ -1,0 +1,5 @@
+# rustfmt.toml declares MSRV 1.80; use a current stable toolchain for builds.
+[toolchain]
+channel = "stable"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

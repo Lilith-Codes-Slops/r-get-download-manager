@@ -1,6 +1,6 @@
-use sysinfo::System;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use sysinfo::System;
 
 /// Polls live free RAM on Linux and Windows via the sysinfo crate.
 pub struct SysRamMonitor {

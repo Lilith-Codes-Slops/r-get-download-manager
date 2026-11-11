@@ -1,4 +1,4 @@
-use bytes::{BytesMut, BufMut};
+use bytes::BytesMut;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 

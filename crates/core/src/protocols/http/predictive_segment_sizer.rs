@@ -4,7 +4,8 @@ const TARGET_SECS: f64 = 3.0;
 pub struct PredictiveSegmentSizer;
 
 impl PredictiveSegmentSizer {
-    pub fn size_for(goodput_bps: f64, rtt_ms: f64) -> u64 {
+    // Work on it later; see state.md: RTT is not used by the sizer yet.
+    pub fn size_for(goodput_bps: f64, _rtt_ms: f64) -> u64 {
         if goodput_bps <= 0.0 {
             return MIN_SEGMENT;
         }

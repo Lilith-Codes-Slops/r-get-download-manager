@@ -18,3 +18,9 @@ impl BackoffRetryPolicy {
         exp.min(self.max)
     }
 }
+
+impl Default for BackoffRetryPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}

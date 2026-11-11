@@ -18,9 +18,7 @@ impl EndpointPathResolver {
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            Err(IpcError::EndpointResolution(
-                "unsupported platform".into(),
-            ))
+            Err(IpcError::EndpointResolution("unsupported platform".into()))
         }
     }
 
@@ -32,7 +30,16 @@ impl EndpointPathResolver {
                 return Ok(path.to_string_lossy().into_owned());
             }
         }
-        Ok("/tmp/rget.sock".to_string())
+        // A shared /tmp socket lets other users interfere with or impersonate
+        // the daemon. Use a private per-user directory when XDG is unavailable.
+        use std::os::unix::fs::PermissionsExt;
+        let home = env::var_os("HOME").ok_or_else(|| {
+            crate::IpcError::EndpointResolution("HOME and XDG_RUNTIME_DIR are not set".into())
+        })?;
+        let dir = PathBuf::from(home).join(".cache").join("rget");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+        Ok(dir.join("rget.sock").to_string_lossy().into_owned())
     }
 
     /// Return the path as a PathBuf (Linux) or raw string (Windows).

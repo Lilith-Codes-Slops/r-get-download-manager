@@ -29,7 +29,15 @@ impl<'a> TaskRepository<'a> {
         self.conn.execute(
             "INSERT INTO tasks (task_id, url, state, priority, connections, created_at, not_before)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![task_id, url, state, priority, connections as i32, created_at, not_before],
+            params![
+                task_id,
+                url,
+                state,
+                priority,
+                connections as i32,
+                created_at,
+                not_before
+            ],
         )?;
         Ok(())
     }

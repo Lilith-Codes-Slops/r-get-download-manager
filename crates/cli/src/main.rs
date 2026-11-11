@@ -18,7 +18,10 @@ fn locate_daemon() -> PathBuf {
             }
         }
     }
-    for rel in ["target/release/downloader-core", "target/debug/downloader-core"] {
+    for rel in [
+        "target/release/downloader-core",
+        "target/debug/downloader-core",
+    ] {
         let p = PathBuf::from(rel);
         if p.exists() {
             return p;
@@ -35,12 +38,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         args_parser::Commands::Add(cmd) => commands::cmd_add_url::run(cmd).await?,
         args_parser::Commands::List => commands::cmd_list_queue::run().await?,
+        args_parser::Commands::TorrentEvents => commands::cmd_torrent_events::run().await?,
         args_parser::Commands::Pause(cmd) => commands::cmd_pause_resume::pause(cmd).await?,
         args_parser::Commands::Resume(cmd) => commands::cmd_pause_resume::resume(cmd).await?,
         args_parser::Commands::Refresh(cmd) => commands::cmd_refresh_url::run(cmd).await?,
         args_parser::Commands::Rm(cmd) => commands::cmd_remove_task::run(cmd).await?,
         args_parser::Commands::Limit(cmd) => commands::cmd_speed_limit::run(cmd).await?,
         args_parser::Commands::Mirror(cmd) => commands::cmd_mirror_manage::run(cmd).await?,
+        args_parser::Commands::Verify(cmd) => commands::cmd_verify::run(cmd).await?,
     }
     Ok(())
 }

@@ -1,4 +1,3 @@
-use reqwest::header::{HeaderMap, IF_RANGE};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -22,7 +21,10 @@ impl EtagRangeGuard {
         last_modified.map(|s| s.to_string())
     }
 
-    pub fn validate_response(status: reqwest::StatusCode, expected_partial: bool) -> Result<(), EtagError> {
+    pub fn validate_response(
+        status: reqwest::StatusCode,
+        expected_partial: bool,
+    ) -> Result<(), EtagError> {
         if expected_partial && status == reqwest::StatusCode::OK {
             return Err(EtagError::FileChanged);
         }

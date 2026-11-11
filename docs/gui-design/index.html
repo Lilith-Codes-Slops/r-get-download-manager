@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download Manager</title>
+<style>
+  :root {
+    --bg:#0c0e12; --surface:#16191f; --surface-2:#1e222a; --surface-3:#252a34;
+    --border:#2d3340; --text:#f0f2f5; --text-dim:#a3acbf; --text-muted:#8b93a3;
+    --accent:#3b82f6; --green:#10b981; --orange:#f59e0b; --red:#ef4444;
+    --hover:#222733; --track:#3a4050; --shadow:0 12px 32px rgba(0,0,0,.45);
+    color-scheme: dark;
+  }
+  [data-theme="light"] {
+    --bg:#f4f5f7; --surface:#ffffff; --surface-2:#f0f2f5; --surface-3:#e5e7eb;
+    --border:#e2e5ea; --text:#111827; --text-dim:#4b5563; --text-muted:#6b7280;
+    --hover:#f3f4f6; --track:#d1d5db; --shadow:0 12px 32px rgba(15,23,42,.18);
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text);
+         height: 100vh; overflow: hidden; display: flex; flex-direction: column; font-size: 13px; }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hidden { display: none !important; }
+
+  /* Outline icons (inline SVG sprite, see <svg id="icons"> below) */
+  .ico { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; display: inline-block; vertical-align: middle; }
+
+  /* Header */
+  .ribbon { min-height: 52px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 4px; padding: 0 16px; flex-wrap: wrap; }
+  .logo { font-weight: 650; margin-right: 24px; display: flex; align-items: center; gap: 8px; }
+  .logo-icon { width: 22px; height: 22px; background: var(--accent); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; }
+  .ribbon-tab, .ribbon-btn { background: none; border: 0; padding: 8px 14px; border-radius: 8px; cursor: pointer; color: var(--text-dim); font-weight: 500; }
+  .ribbon-tab:hover, .ribbon-btn:hover { background: var(--hover); color: var(--text); }
+  .ribbon-tab.active { background: var(--surface-2); color: var(--text); }
+  .ribbon-right { margin-left: auto; display: flex; gap: 2px; position: relative; }
+  .dropdown { position: absolute; top: calc(100% + 6px); right: 0; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; min-width: 300px; display: none; z-index: 100; padding: 6px; box-shadow: var(--shadow); max-height: 70vh; overflow-y: auto; }
+  .dropdown.show { display: block; }
+  .dropdown-section { padding: 8px 12px 2px; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; }
+  .dropdown-item { display: flex; justify-content: space-between; width: 100%; background: none; border: 0; text-align: left; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
+  .dropdown-item:hover { background: var(--hover); }
+  kbd { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-muted); }
+
+  /* Action bar */
+  .action-bar { min-height: 48px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; flex-wrap: wrap; padding: 6px 16px; gap: 8px; }
+  .btn { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); padding: 7px 14px; border-radius: 8px; cursor: pointer; font-weight: 500; }
+  .btn:hover { background: var(--surface-3); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.danger { background: var(--red); color: #fff; border-color: var(--red); }
+  .btn:disabled { opacity: .5; cursor: default; }
+
+  /* Layout */
+  .main { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+  .content { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+  .view { display: none; flex: 1; min-height: 0; overflow: hidden; }
+  .view.active { display: flex; }
+  .tasks-view { flex-direction: row; }
+  #view-downloads { flex-direction: column; }
+  .pane { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); min-width: 0; min-height: 0; }
+  .pane-header { padding: 14px 18px; font-weight: 600; color: var(--text-dim); border-bottom: 1px solid var(--border); background: var(--surface); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .count { font-weight: 500; color: var(--text-muted); margin-left: 4px; }
+  .search-mini { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; color: var(--text); width: 150px; font-size: 12px; }
+  .pane-list { flex: 1; overflow-y: auto; min-height: 0; }
+
+  /* Collapsible left rail: overlays content on hover so the layout never reflows */
+  .rail { width: 60px; flex: none; position: relative; z-index: 20; transition: width .18s ease; }
+  .rail.pinned { width: 240px; }
+  .rail-inner { position: absolute; top: 0; bottom: 0; left: 0; width: 60px; background: var(--surface); border-right: 1px solid var(--border);
+                display: flex; flex-direction: column; overflow: hidden; transition: width .18s ease, box-shadow .18s ease; }
+  .rail:hover .rail-inner, .rail.pinned .rail-inner { width: 240px; box-shadow: var(--shadow); }
+  .left-items { flex: 1; padding: 12px 0; overflow: hidden; }
+  .left-item { display: flex; align-items: center; gap: 14px; width: calc(100% - 16px); margin: 2px 8px; padding: 11px 18px; background: none; border: 0; border-radius: 8px; cursor: pointer; color: var(--text-dim); white-space: nowrap; text-align: left; }
+  .left-item:hover, .left-item[aria-pressed="true"] { background: var(--hover); color: var(--text); }
+  .label, .daemon-text { opacity: 0; transition: opacity .15s ease; white-space: nowrap; }
+  .rail:hover .label, .rail.pinned .label, .rail:hover .daemon-text, .rail.pinned .daemon-text { opacity: 1; }
+  .daemon-status { border: 0; border-top: 1px solid var(--border); background: none; padding: 14px 18px; display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 500; cursor: pointer; width: 100%; text-align: left; }
+  .daemon-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .daemon-dot.connected { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .daemon-dot.disconnected { background: var(--red); box-shadow: 0 0 8px var(--red); }
+  .daemon-dot.connected { animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity: .6; } }
+  .daemon-text.connected { color: var(--green); }
+  .daemon-text.disconnected { color: var(--red); }
+
+  /* Rows */
+  .row { display: grid; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); gap: 10px; cursor: default; }
+  .row:hover { background: var(--hover); }
+  .row.selected { background: var(--surface-3); box-shadow: inset 3px 0 0 var(--accent); }
+  .task-row { grid-template-columns: 36px 1fr 90px; }
+  .seed-row { grid-template-columns: 36px 1fr 90px; }
+  .lib-row { grid-template-columns: 28px 1fr 80px 100px 90px; }
+  .grow { min-width: 0; }
+  .spd, .when, .cap { color: var(--text-dim); }
+  .when { text-align: right; color: var(--text-muted); }
+  .quick-btn { width: 32px; height: 32px; border: 0; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: var(--surface-2); cursor: pointer; font-size: 15px; }
+  .quick-btn:hover { background: var(--surface-3); }
+  .file-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .progress-bar { height: 5px; background: var(--surface-3); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 3px; transition: width .5s linear; }
+  .progress-fill.green { background: var(--green); }
+  .progress-fill.orange { background: var(--orange); }
+  .progress-fill.red { background: var(--red); }
+  .progress-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  .segment-bar { display: flex; height: 8px; margin-top: 6px; border-radius: 3px; overflow: hidden; background: var(--surface-3); gap: 1px; }
+  .segment { flex: 1; height: 100%; background: var(--track); position: relative; }
+  .segment .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--green); transition: width .5s linear; }
+  .segment.done .fill { background: #059669; }
+  .segment.active .fill { background: #34d399; }
+  .empty { padding: 40px; text-align: center; color: var(--text-muted); }
+
+  /* Downloads toolbar */
+  .dl-toolbar { display: flex; align-items: center; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .category-bar { display: flex; gap: 8px; padding: 12px 18px; overflow-x: auto; flex: 1; min-width: 0; }
+  .dl-toolbar .search-mini { margin-right: 14px; width: 180px; flex: none; }
+  .chip { padding: 7px 16px; border-radius: 20px; background: var(--surface-2); border: 1px solid var(--border); cursor: pointer; white-space: nowrap; }
+  .chip[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* Status bar */
+  .bottom-bar { min-height: 40px; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; padding: 6px 20px; gap: 28px; font-size: 12px; color: var(--text-dim); overflow-x: auto; }
+  .bottom-bar > div { white-space: nowrap; }
+  .bottom-bar strong { color: var(--text); }
+  .bottom-bar .end { margin-left: auto; }
+
+  /* Modals */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 200; padding: 16px; }
+  .modal-overlay.show { display: flex; }
+  .modal { background: var(--surface); border-radius: 14px; max-height: 82vh; display: flex; flex-direction: column; border: 1px solid var(--border); box-shadow: var(--shadow); width: min(640px, 100%); }
+  .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .modal-header h2 { font-size: 16px; }
+  .modal-body { padding: 18px 20px; overflow-y: auto; }
+  .modal-footer { padding: 0 20px 18px; display: flex; justify-content: flex-end; gap: 8px; }
+  .icon-btn { background: none; border: 0; color: var(--text-dim); font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: 6px; }
+  .icon-btn:hover { background: var(--hover); color: var(--text); }
+  .field { width: 100%; padding: 9px 10px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; margin-top: 6px; }
+  .field-label { display: block; font-weight: 500; margin-top: 12px; }
+  .field-label:first-child { margin-top: 0; }
+  .err { color: var(--red); font-size: 12px; min-height: 16px; margin-top: 6px; }
+  .props th { text-align: left; padding: 6px 14px 6px 0; color: var(--text-muted); font-weight: 500; vertical-align: top; }
+  .props td { padding: 6px 0; word-break: break-all; }
+  .settings-nav { display: flex; border-bottom: 1px solid var(--border); padding: 0 12px; overflow-x: auto; }
+  .settings-nav-item { background: none; border: 0; padding: 12px 16px; cursor: pointer; color: var(--text-dim); border-bottom: 2px solid transparent; white-space: nowrap; }
+  .settings-nav-item[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  .settings-body { flex: 1; overflow: auto; }
+  .settings-section { display: none; padding: 8px 0; }
+  .settings-section.active { display: block; }
+  .setting-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 13px 20px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .setting-label { font-weight: 500; }
+  .setting-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .toggle { width: 42px; height: 24px; background: #4b5263; border: 0; border-radius: 12px; position: relative; cursor: pointer; flex-shrink: 0; padding: 0; }
+  .toggle[aria-checked="true"] { background: var(--accent); }
+  .toggle::after { content: ''; position: absolute; width: 18px; height: 18px; background: #fff; border-radius: 50%; top: 3px; left: 3px; transition: left .2s ease; }
+  .toggle[aria-checked="true"]::after { left: 21px; }
+  .segmented { display: flex; background: var(--surface-2); border-radius: 8px; padding: 3px; }
+  .segmented button { background: transparent; border: 0; color: var(--text-dim); padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+  .segmented button[aria-checked="true"] { background: var(--accent); color: #fff; }
+  .input-sm { width: 90px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; }
+  .speed-wrap { display: flex; align-items: center; gap: 10px; min-width: 280px; flex: 1; justify-content: flex-end; }
+  .speed-wrap input[type=range] { flex: 1; accent-color: var(--accent); cursor: pointer; }
+  .speed-wrap .input-sm { width: 120px; text-align: center; font-variant-numeric: tabular-nums; }
+
+  /* Context menu, toast, side panel */
+  .context-menu { position: fixed; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; min-width: 210px; box-shadow: var(--shadow); display: none; z-index: 150; padding: 6px; }
+  .context-menu.show { display: block; }
+  .context-item { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; color: var(--text); }
+  .context-item:hover:not(:disabled) { background: var(--hover); }
+  .context-item:disabled { color: var(--text-muted); opacity: .5; cursor: default; }
+  .context-item.danger { color: var(--red); }
+  .context-sep { height: 1px; background: var(--border); margin: 4px 0; }
+  .side-content { padding: 20px; overflow-y: auto; flex: 1; }
+  .side-title { margin-bottom: 12px; font-size: 15px; }
+  .side-item { width: 100%; padding: 12px 14px; background: var(--surface-2); border: 0; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; gap: 12px; text-align: left; color: var(--text); }
+  button.side-item { cursor: pointer; }
+  button.side-item:hover { background: var(--surface-3); }
+  .toast { position: fixed; bottom: 56px; right: 20px; background: var(--surface-2); border: 1px solid var(--border); padding: 12px 18px; border-radius: 8px; display: none; z-index: 300; box-shadow: var(--shadow); max-width: min(360px, 90vw); }
+  .toast.show { display: block; }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #3a4050; border-radius: 4px; }
+
+  /* Compact mode */
+  body.compact .row { padding: 6px 12px; }
+  body.compact .pane-header { padding: 10px 14px; }
+
+  /* Small screens: stack the two task panes, let toolbars wrap */
+  @media (max-width: 820px) {
+    .tasks-view { flex-direction: column; }
+    .pane { border-right: 0; border-bottom: 1px solid var(--border); }
+    .ribbon-tab { padding: 8px 10px; }
+    .logo { margin-right: 8px; }
+    .dl-toolbar { flex-wrap: wrap; }
+    .dl-toolbar .search-mini { margin: 0 14px 10px; width: calc(100% - 28px); }
+    .speed-wrap { min-width: 0; width: 100%; justify-content: flex-start; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body data-theme="dark">
+
+<!-- Built-in outline icon set (no external files). Use: <svg class="ico"><use href="#i-name"/></svg> -->
+<svg id="icons" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.2"/></symbol>
+  <symbol id="i-rss" viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3l-5.5 2.9 1-6.2-4.5-4.4 6.2-.9z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></symbol>
+  <symbol id="i-retry" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></symbol>
+  <symbol id="i-disc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-question" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M10 13a2 2 0 1 1 2.5 1.9c-.3.1-.5.4-.5.7V16"/><path d="M12 19h.01"/></symbol>
+</svg>
+
+<header class="ribbon">
+  <div class="logo"><div class="logo-icon" aria-hidden="true">↓</div> Downloads</div>
+  <button class="ribbon-tab active" data-view="tasks" aria-current="page">Tasks</button>
+  <button class="ribbon-tab" data-view="downloads" aria-current="false">Downloads</button>
+  <div class="ribbon-right">
+    <button class="ribbon-btn" id="helpBtn" aria-haspopup="true" aria-expanded="false" aria-controls="helpDropdown">Help</button>
+    <button class="ribbon-btn" data-cmd="settings">Settings</button>
+    <div class="dropdown" id="helpDropdown" role="menu">
+      <div class="dropdown-section">General</div>
+      <button class="dropdown-item" role="menuitem" data-cmd="add">Add URL <kbd>Ctrl+N</kbd></button>
+      <button class="dropdown-item" role="menuitem" data-cmd="add-magnet">Add Magnet <kbd>Ctrl+Shift+M</kbd></button>
+      <button class="dropdown-item" role="menuitem" data-cmd="search">Search <kbd>Ctrl+F</kbd></button>
+      <button class="dropdown-item" role="menuitem" data-cmd="settings">Settings <kbd>Ctrl+,</kbd></button>
+      <div class="dropdown-section">Transfers</div>
+      <button class="dropdown-item" role="menuitem" data-cmd="toggle-pause">Pause / Resume <kbd>Space</kbd></button>
+      <button class="dropdown-item" role="menuitem" data-cmd="pause-all">Pause All <kbd>Ctrl+P</kbd></button>
+      <button class="dropdown-item" role="menuitem" data-cmd="resume-all">Resume All <kbd>Ctrl+R</kbd></button>
+      <button class="dropdown-item" role="menuitem" data-cmd="remove">Remove <kbd>Delete</kbd></button>
+      <button class="dropdown-item" role="menuitem" data-cmd="open-folder">Open Folder <kbd>Ctrl+Shift+Enter</kbd></button>
+      <div class="dropdown-section">Navigation</div>
+      <button class="dropdown-item" role="menuitem" data-cmd="tasks">Tasks <kbd>Ctrl+1</kbd></button>
+      <button class="dropdown-item" role="menuitem" data-cmd="downloads">Downloads <kbd>Ctrl+2</kbd></button>
+      <button class="dropdown-item" role="menuitem" data-cmd="toggle-panel">Toggle Panel <kbd>Ctrl+B</kbd></button>
+    </div>
+  </div>
+</header>
+
+<div class="action-bar" id="actionBar">
+  <button class="btn primary" data-cmd="add">+ URL</button>
+  <button class="btn" data-cmd="add-magnet">+ Magnet</button>
+  <button class="btn" data-cmd="pause-all">Pause All</button>
+  <button class="btn" data-cmd="resume-all">Resume All</button>
+  <button class="btn" data-cmd="clear-completed">Remove Completed</button>
+  <button class="btn" id="moreBtn" data-cmd="more" aria-label="More actions for selected download">···</button>
+</div>
+
+<div class="main">
+  <aside class="rail" id="rail">
+    <div class="rail-inner">
+      <nav class="left-items" aria-label="Sidebar">
+        <button class="left-item" data-panel="categories" aria-pressed="false"><svg class="ico" aria-hidden="true"><use href="#i-folder"/></svg><span class="label">Categories</span></button>
+        <button class="left-item" data-panel="labels" aria-pressed="false"><svg class="ico" aria-hidden="true"><use href="#i-tag"/></svg><span class="label">Labels</span></button>
+        <button class="left-item" data-panel="rss" aria-pressed="false"><svg class="ico" aria-hidden="true"><use href="#i-rss"/></svg><span class="label">RSS Feeds</span></button>
+        <button class="left-item" data-panel="recent" aria-pressed="false"><svg class="ico" aria-hidden="true"><use href="#i-clock"/></svg><span class="label">Recent</span></button>
+        <button class="left-item" data-panel="favorites" aria-pressed="false"><svg class="ico" aria-hidden="true"><use href="#i-star"/></svg><span class="label">Favorites</span></button>
+      </nav>
+      <button class="daemon-status" id="daemonBtn" title="Toggle daemon connection">
+        <span class="daemon-dot connected" id="dDot" aria-hidden="true"></span>
+        <span class="daemon-text connected" id="dText">Daemon connected</span>
+      </button>
+    </div>
+  </aside>
+
+  <section class="content">
+    <div class="view tasks-view active" id="view-tasks">
+      <div class="pane">
+        <div class="pane-header"><span>Active <span class="count" id="cntActive"></span></span>
+          <input class="search-mini" id="filterActive" placeholder="Filter…" aria-label="Filter active downloads"></div>
+        <div class="pane-list" id="activeList"></div>
+      </div>
+      <div class="pane">
+        <div class="pane-header"><span>Transfers <span class="count" id="cntSeeds"></span></span>
+          <input class="search-mini" id="filterSeed" placeholder="Filter…" aria-label="Filter transfers"></div>
+        <div class="pane-list" id="seedingList"></div>
+      </div>
+    </div>
+
+    <div class="view" id="view-downloads">
+      <div class="dl-toolbar">
+        <div class="category-bar" id="catBar" role="group" aria-label="Categories"></div>
+        <input class="search-mini" id="dlFilter" placeholder="Search downloads…" aria-label="Search downloads">
+      </div>
+      <div class="pane-list" id="dlList"></div>
+    </div>
+
+    <div class="view" id="view-side"><div class="side-content" id="sideContent"></div></div>
+  </section>
+</div>
+
+<footer class="bottom-bar">
+  <div>↓ <strong id="stDown">0 KB/s</strong></div>
+  <div>↑ <strong id="stUp">0 KB/s</strong></div>
+  <div>Completed: <strong id="stDone">0</strong></div>
+  <div>Seeding: <strong id="stSeeding">0</strong></div>
+  <div>Active: <strong id="stActive">0</strong></div>
+</footer>
+
+<!-- Settings -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+    <div class="modal-header"><h2 id="setTitle">Settings</h2><button class="icon-btn" data-close aria-label="Close settings"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+    <div class="settings-nav" role="tablist">
+      <button class="settings-nav-item" role="tab" aria-selected="true" data-s="app">Appearance</button>
+      <button class="settings-nav-item" role="tab" aria-selected="false" data-s="beh">Behavior</button>
+      <button class="settings-nav-item" role="tab" aria-selected="false" data-s="not">Notifications</button>
+      <button class="settings-nav-item" role="tab" aria-selected="false" data-s="dl">Downloads</button>
+      <button class="settings-nav-item" role="tab" aria-selected="false" data-s="tor">Torrent</button>
+    </div>
+    <div class="settings-body">
+      <section class="settings-section active" id="sec-app">
+        <div class="setting-row">
+          <div><div class="setting-label">Theme</div><div class="setting-desc">Light, Dark or System (follows your OS)</div></div>
+          <div class="segmented" id="themeSeg" role="radiogroup" aria-label="Theme">
+            <button data-t="light" role="radio" aria-checked="false">Light</button>
+            <button data-t="system" role="radio" aria-checked="false">System</button>
+            <button data-t="dark" role="radio" aria-checked="true">Dark</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div><div class="setting-label">Compact mode</div><div class="setting-desc">Tighter rows</div></div>
+          <button class="toggle" role="switch" aria-checked="false" aria-label="Compact mode" data-key="compact"></button>
+        </div>
+      </section>
+      <section class="settings-section" id="sec-beh">
+        <div class="setting-row">
+          <div><div class="setting-label">Confirm before delete</div><div class="setting-desc">Ask before deleting files from disk</div></div>
+          <button class="toggle" role="switch" aria-checked="true" aria-label="Confirm before delete" data-key="confirmDelete"></button>
+        </div>
+      </section>
+      <section class="settings-section" id="sec-not">
+        <div class="setting-row">
+          <div><div class="setting-label">Sound on completion</div></div>
+          <button class="toggle" role="switch" aria-checked="true" aria-label="Sound on completion" data-key="sound"></button>
+        </div>
+        <div class="setting-row">
+          <div><div class="setting-label">Sound on failure</div></div>
+          <button class="toggle" role="switch" aria-checked="true" aria-label="Sound on failure" data-key="failSound"></button>
+        </div>
+        <div class="setting-row">
+          <div><div class="setting-label">Show alerts in app</div><div class="setting-desc">Messages when downloads finish or fail</div></div>
+          <button class="toggle" role="switch" aria-checked="true" aria-label="Show alerts in app" data-key="alerts"></button>
+        </div>
+      </section>
+      <section class="settings-section" id="sec-dl">
+        <div class="setting-row">
+          <div><div class="setting-label">Max concurrent</div><div class="setting-desc">Downloads running at once (1–10)</div></div>
+          <input type="number" id="maxConc" class="input-sm" min="1" max="10" value="5" aria-label="Max concurrent downloads">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Download speed limit</div>
+            <div class="setting-desc">10 KB/s to 1 GB/s, or Unlimited. Shared across running downloads.</div>
+          </div>
+          <div class="speed-wrap">
+            <input type="range" id="speedSlider" min="0" max="100" value="100" aria-label="Speed limit slider">
+            <input type="text" id="speedText" class="input-sm" value="Unlimited" aria-label="Speed limit value" title="e.g. 500 KB/s, 2 MB/s, or Unlimited">
+          </div>
+        </div>
+      </section>
+      <section class="settings-section" id="sec-tor">
+        <div class="setting-row">
+          <div><div class="setting-label">Seed until ratio</div><div class="setting-desc">Seeding stops when upload ÷ size reaches this value</div></div>
+          <input type="number" id="ratioIn" class="input-sm" min="0.1" step="0.1" value="2.0" aria-label="Seeding ratio">
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- Add download -->
+<div class="modal-overlay" id="addModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="addTitle" style="width:min(520px,100%)">
+    <div class="modal-header"><h2 id="addTitle">Add download</h2><button class="icon-btn" data-close aria-label="Close"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+    <div class="modal-body">
+      <label class="field-label" for="addUrl">Link</label>
+      <input class="field" id="addUrl" placeholder="https://example.com/file.iso" autocomplete="off">
+      <div class="err" id="addErr" role="alert"></div>
+      <div class="setting-desc">Sizes for new downloads are simulated in this preview.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" data-close>Cancel</button>
+      <button class="btn primary" id="addSubmit">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- New category -->
+<div class="modal-overlay" id="catModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="catTitle" style="width:min(400px,100%)">
+    <div class="modal-header"><h2 id="catTitle">New Category</h2><button class="icon-btn" data-close aria-label="Close"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+    <div class="modal-body">
+      <label class="field-label" for="catName">Name</label>
+      <input class="field" id="catName" placeholder="e.g. Ebooks">
+      <label class="field-label" for="catExts">File extensions</label>
+      <input class="field" id="catExts" placeholder="epub, mobi, azw3">
+      <div class="err" id="catErr" role="alert"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" data-close>Cancel</button>
+      <button class="btn primary" id="catSubmit">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Generic dialog (properties / confirmations) -->
+<div class="modal-overlay" id="dialog">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dlgTitle" style="width:min(460px,100%)">
+    <div class="modal-header"><h2 id="dlgTitle"></h2><button class="icon-btn" data-close aria-label="Close"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button></div>
+    <div class="modal-body" id="dlgBody"></div>
+    <div class="modal-footer" id="dlgActions"></div>
+  </div>
+</div>
+
+<div class="context-menu" id="ctx" role="menu">
+  <button class="context-item" role="menuitem" data-act="pause">Pause</button>
+  <button class="context-item" role="menuitem" data-act="resume">Resume</button>
+  <button class="context-item" role="menuitem" data-act="retry">Retry</button>
+  <button class="context-item" role="menuitem" data-act="seed">Start / Stop seeding</button>
+  <div class="context-sep"></div>
+  <button class="context-item" role="menuitem" data-act="open">Open Folder</button>
+  <button class="context-item" role="menuitem" data-act="copy">Copy Link</button>
+  <button class="context-item" role="menuitem" data-act="props">Properties</button>
+  <div class="context-sep"></div>
+  <button class="context-item" role="menuitem" data-act="remove">Remove from list</button>
+  <button class="context-item danger" role="menuitem" data-act="delete">Delete from disk</button>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+'use strict';
+
+/* ---------- helpers ---------- */
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const safeDecode = s => { try { return decodeURIComponent(s); } catch (e) { return s; } };
+
+const TICK_MS = 500;  // UI/simulation tick
+const SIM = 4;        // simulated time multiplier so progress is visible
+
+// Editable categories (data). Starting set; users can rename, re-extend, delete, or add their own.
+const CATEGORIES_START = [
+  { id: 'images',     name: 'Images',     icon: 'image', exts: 'jpg jpeg png gif webp bmp dng heic' },
+  { id: 'videos',     name: 'Videos',     icon: 'video', exts: 'mkv mp4 avi mov webm' },
+  { id: 'pdfs',       name: 'PDFs',       icon: 'file',  exts: 'pdf' },
+  { id: 'compressed', name: 'Compressed', icon: 'archive', exts: 'zip tar gz 7z rar bz2 xz' },
+  { id: 'documents',  name: 'Documents',  icon: 'file',  exts: 'docx doc txt xlsx pptx' },
+  { id: 'audio',      name: 'Audio',      icon: 'music', exts: 'mp3 flac wav m4a ogg' },
+  { id: 'software',   name: 'Software',   icon: 'disc',  exts: 'iso exe msi dmg deb apk' }
+];
+const icon = name => `<svg class="ico" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+const extOf = n => (n.includes('.') ? n.split('.').pop() : '').toLowerCase();
+// Returns the id of the first editable category that owns this file's extension; 'other' if none.
+function catOf(name) {
+  const e = extOf(name);
+  const c = state.categories.find(c => c.exts.includes(e));
+  return c ? c.id : 'other';
+}
+function catName(id) {
+  if (id === 'other') return 'Uncategorized';
+  const c = state.categories.find(c => c.id === id);
+  return c ? c.name : id;
+}
+function catIconHTML(id) {
+  if (id === 'other') return icon('question');
+  // Every editable category uses the generic folder icon (Uncategorized keeps its question icon).
+  return icon('folder');
+}
+function fmtSize(mb) {
+  if (mb >= 1000) return (mb / 1000).toFixed(mb >= 10000 ? 0 : 1) + ' GB';
+  if (mb >= 1) return mb.toFixed(1) + ' MB';
+  return Math.round(mb * 1000) + ' KB';
+}
+function fmtSpeed(kbps) {
+  if (kbps == null) return 'Unlimited';
+  if (kbps < 1000) return Math.round(kbps) + ' KB/s';
+  if (kbps < 1e6) return (kbps / 1000).toFixed(kbps < 10000 ? 1 : 0) + ' MB/s';
+  return (kbps / 1e6).toFixed(1) + ' GB/s';
+}
+function fmtEta(t) {
+  if (t.speed < 1) return '—';
+  const secs = Math.max(0, (100 - t.progress) / 100 * t.sizeMB * 1000 / t.speed);
+  if (secs < 60) return Math.round(secs) + 's';
+  if (secs < 3600) return Math.floor(secs / 60) + 'm ' + Math.round(secs % 60) + 's';
+  return Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
+}
+// Speed slider: 0..99 maps log-scale to 10 KB/s .. 1 GB/s; 100 = Unlimited
+const sliderToKbps = v => 10 * Math.pow(100000, v / 99);
+const kbpsToSlider = k => Math.max(0, Math.min(99, Math.round(99 * Math.log(k / 10) / Math.log(100000))));
+function parseSpeed(text) {
+  const t = text.trim().toLowerCase();
+  if (!t || t === 'unlimited' || t === '∞') return { kbps: null };
+  const m = /^(\d+(?:\.\d+)?)\s*(kib|kb|mib|mb|gb)?(?:\/s|ps)?$/.exec(t);
+  if (!m) return null;
+  const mult = { kb: 1, kib: 1, mb: 1000, mib: 1000, gb: 1e6 }[m[2] || 'kb'];
+  const kbps = parseFloat(m[1]) * mult;
+  if (kbps < 10 || kbps > 1e6) return null;
+  return { kbps };
+}
+
+/* ---------- state & data ---------- */
+const state = {
+  daemon: true, view: 'tasks', panel: 'categories', cat: 'all', sel: null, ctx: null, limit: null,
+  categories: CATEGORIES_START.map(c => ({ ...c, exts: c.exts.split(' '), builtin: true })), nextId: 20,
+  settings: { theme: 'dark', compact: false, confirmDelete: true, sound: true, failSound: true, alerts: true, maxConcurrent: 5, ratio: 2.0 }
+};
+let tasks = [];
+// Sample downloads removed. Real downloads appear here when you add them.
+let seeds = [];
+// Sample seeds removed. Seeds appear here when you start sharing a download.
+let library = [];
+// Sample library files removed. Completed downloads appear here.
+const newId = p => p + (++state.nextId);
+const sourceOf = it => it.src || ('https://downloads.example.com/' + encodeURIComponent(it.name));
+const seedsRunning = () => seeds.filter(s => s.running && state.daemon);
+
+function taskState(t) {
+  if (t.status === 'failed') return 'failed';
+  if (t.status === 'paused') return 'paused';
+  if (!state.daemon) return 'waiting';
+  return t.queued ? 'queued' : 'running';
+}
+const STATE_LABEL = {running:'Downloading', queued:'Queued', waiting:'Waiting for daemon', paused:'Paused', failed:'Failed'};
+function findItem(scope, id) {
+  if (scope === 'task') return tasks.find(t => t.id === id);
+  if (scope === 'seed') return seeds.find(s => s.id === id);
+  if (scope === 'lib') return library.find(l => l.id === id);
+  return null;
+}
+function removeItem(scope, id) {
+  const list = scope === 'task' ? tasks : scope === 'seed' ? seeds : library;
+  const i = list.findIndex(x => x.id === id);
+  if (i >= 0) list.splice(i, 1);
+  if (state.sel && state.sel.id === id) state.sel = null;
+}
+
+/* ---------- rendering ---------- */
+const empty = msg => `<div class="empty">${msg}</div>`;
+function taskHTML(t) {
+  return `<div class="row task-row" data-scope="task" data-id="${t.id}">
+    <button class="quick-btn" data-act="toggle"></button>
+    <div class="grow">
+      <div class="file-name" title="${esc(t.name)}">${esc(t.name)}</div>
+      <div class="progress-bar"><div class="progress-fill green"></div></div>
+      <div class="segment-bar">${'<div class="segment"><div class="fill"></div></div>'.repeat(8)}</div>
+      <div class="progress-meta"></div>
+    </div>
+    <div class="spd"></div>
+  </div>`;
+}
+function seedHTML(s) {
+  return `<div class="row seed-row" data-scope="seed" data-id="${s.id}">
+    <button class="quick-btn" data-act="toggle"></button>
+    <div class="grow">
+      <div class="file-name">${esc(s.name)}</div>
+      <div class="progress-meta"></div>
+    </div>
+    <div class="spd"></div>
+  </div>`;
+}
+function libHTML(x) {
+  const c = catOf(x.name);
+  return `<div class="row lib-row" data-scope="lib" data-id="${x.id}">
+    <div aria-hidden="true">${catIconHTML(c)}</div>
+    <div class="file-name" title="${esc(x.name)}">${esc(x.name)}</div>
+    <div>${fmtSize(x.sizeMB)}</div>
+    <div class="cap">${esc(catName(c))}</div>
+    <div class="when">${esc(x.when)}</div>
+  </div>`;
+}
+
+function renderTasks() {
+  const q = $('#filterActive').value.trim().toLowerCase();
+  const list = tasks.filter(t => !q || t.name.toLowerCase().includes(q));
+  $('#activeList').innerHTML = list.length ? list.map(taskHTML).join('') : empty(q ? 'No matching downloads' : 'No active downloads. Use + URL to add one.');
+}
+function renderSeeds() {
+  const q = $('#filterSeed').value.trim().toLowerCase();
+  const list = seeds.filter(s => !q || s.name.toLowerCase().includes(q));
+  $('#seedingList').innerHTML = list.length ? list.map(seedHTML).join('') : empty('Nothing seeding');
+}
+function renderLib() {
+  const q = $('#dlFilter').value.trim().toLowerCase();
+  const list = library.filter(x => matchCat(x, state.cat) && (!q || x.name.toLowerCase().includes(q)));
+  $('#dlList').innerHTML = list.length ? list.map(libHTML).join('') : empty(library.length ? 'No matches' : 'Empty');
+}
+function matchCat(x, cat) {
+  if (cat === 'all') return true;
+  return catOf(x.name) === cat;
+}
+function renderChips() {
+  const builtins = state.categories.filter(c => c.builtin).map(c => [c.id, c.name]);
+  const customs = state.categories.filter(c => !c.builtin).map(c => [c.id, c.name]);
+  const all = [['all', 'All'], ['other', 'Uncategorized'], ...builtins, ...customs];
+  $('#catBar').innerHTML = all.map(([id, label]) =>
+    `<button class="chip" data-cat="${id}" aria-pressed="${state.cat === id}">${esc(label)}</button>`).join('') +
+    `<button class="chip" data-cmd="new-cat">+ New</button>`;
+}
+function renderSide() {
+  const p = state.panel;
+  const titles = {categories:'Categories', labels:'Labels', rss:'RSS Feeds', recent:'Recent', favorites:'Favorites'};
+  let body = '';
+  if (p === 'categories') body = state.categories.filter(c => c.builtin).map(c =>
+    `<button class="side-item" data-goto="${c.id}"><span>${esc(c.name)}</span><b>${library.filter(x => catOf(x.name) === c.id).length}</b></button>`).join('');
+  else if (p === 'labels') body = ['Important', 'Watch Later', 'Archive'].map(x => sideItem(x, '')).join('');
+  else if (p === 'rss') body = sideItem('Linux ISOs', '3 new') + sideItem('Podcasts', 'Updated');
+  else if (p === 'recent') body = library.slice(0, 3).map(x => sideItem(x.name, x.when)).join('');
+  else if (p === 'favorites') body = ''; // Sample favorites removed. Items appear here when you star them.
+  $('#sideContent').innerHTML = `<h3 class="side-title">${titles[p]}</h3>${body || empty('Nothing here')}`;
+}
+const sideItem = (a, b) => `<div class="side-item"><span>${esc(a)}</span><b>${esc(b)}</b></div>`;
+
+function updateTask(t) {
+  const el = rowEl('task', t.id);
+  if (!el) return;
+  const st = taskState(t);
+  const pct = Math.min(100, t.progress);
+  const btn = el.querySelector('[data-act="toggle"]');
+  const [glyph, label] = st === 'paused' ? [icon('play'), 'Resume'] : st === 'failed' ? [icon('retry'), 'Retry'] : [icon('pause'), 'Pause'];
+  btn.innerHTML = glyph;
+  btn.setAttribute('aria-label', label + ' ' + t.name);
+  const fill = el.querySelector('.progress-fill');
+  fill.style.width = pct + '%';
+  fill.className = 'progress-fill ' + (st === 'paused' ? 'orange' : st === 'failed' ? 'red' : 'green');
+  el.querySelectorAll('.segment').forEach((seg, i) => {
+    const lo = i * 12.5, hi = lo + 12.5;
+    const f = Math.max(0, Math.min(1, (pct - lo) / 12.5));
+    seg.className = 'segment' + (pct >= hi ? ' done' : (pct > lo ? ' active' : ''));
+    seg.firstElementChild.style.width = (f * 100) + '%';
+  });
+  const meta = {
+    running: `${Math.floor(pct)}% · ETA ${fmtEta(t)} · ${t.conns} connections`,
+    queued: `${Math.floor(pct)}% · Queued (max ${state.settings.maxConcurrent} at once)`,
+    waiting: `${Math.floor(pct)}% · Waiting for daemon`,
+    paused: `${Math.floor(pct)}% · Paused · ${t.conns} connections`,
+    failed: `${Math.floor(pct)}% · Failed · Retry restarts the download`
+  };
+  el.querySelector('.progress-meta').textContent = meta[st];
+  el.querySelector('.spd').textContent = st === 'running' ? fmtSpeed(t.speed) : '0 KB/s';
+}
+function updateSeed(s) {
+  const el = rowEl('seed', s.id);
+  if (!el) return;
+  const on = s.running && state.daemon;
+  const btn = el.querySelector('[data-act="toggle"]');
+  btn.innerHTML = on ? icon('stop') : icon('play');
+  btn.setAttribute('aria-label', (on ? 'Stop seeding ' : 'Start seeding ') + s.name);
+  el.querySelector('.progress-meta').textContent =
+    `Ratio ${s.ratio.toFixed(2)} of ${state.settings.ratio.toFixed(1)} · ${on ? 'Seeding' : (s.running ? 'Waiting for daemon' : 'Stopped')}`;
+  el.querySelector('.spd').textContent = on ? fmtSpeed(s.speed) : '0 KB/s';
+}
+function updateStatus() {
+  const down = tasks.filter(t => taskState(t) === 'running').reduce((a, t) => a + t.speed, 0);
+  const up = seedsRunning().reduce((a, s) => a + s.speed, 0);
+  $('#stDown').textContent = fmtSpeed(down);
+  $('#stUp').textContent = fmtSpeed(up);
+  $('#stDone').textContent = library.length;
+  $('#stSeeding').textContent = seedsRunning().length;
+  $('#stActive').textContent = tasks.length;
+  $('#cntActive').textContent = `(${tasks.length})`;
+  $('#cntSeeds').textContent = `(${seeds.length})`;
+}
+function updateAll() {
+  tasks.forEach(updateTask);
+  seeds.forEach(updateSeed);
+  updateStatus();
+}
+function applySel() {
+  $$('.row.selected').forEach(r => r.classList.remove('selected'));
+  if (state.sel) { const el = rowEl(state.sel.scope, state.sel.id); if (el) el.classList.add('selected'); }
+}
+function renderAll() {
+  renderTasks(); renderSeeds(); renderLib(); renderChips();
+  if (state.view === 'side') renderSide();
+  updateAll();
+  applySel();
+}
+function rowEl(scope, id) { return document.querySelector(`[data-scope="${scope}"][data-id="${id}"]`); }
+function renderDaemon() {
+  const on = state.daemon;
+  $('#dDot').className = 'daemon-dot ' + (on ? 'connected' : 'disconnected');
+  const t = $('#dText');
+  t.className = 'daemon-text ' + (on ? 'connected' : 'disconnected');
+  t.textContent = on ? 'Daemon connected' : 'Daemon not connected';
+}
+
+/* ---------- navigation ---------- */
+function showView(v) {
+  state.view = v;
+  $$('.view').forEach(x => x.classList.toggle('active', x.id === 'view-' + v));
+  $$('.ribbon-tab').forEach(t => {
+    const on = t.dataset.view === v;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-current', on ? 'page' : 'false');
+  });
+  $$('.left-item').forEach(i => i.setAttribute('aria-pressed', 'false'));
+  $('#actionBar').classList.toggle('hidden', v !== 'tasks');
+  if (v === 'side') renderSide();
+}
+function showSide(panel) {
+  state.panel = panel;
+  showView('side');
+  $$('.left-item').forEach(i => i.setAttribute('aria-pressed', String(i.dataset.panel === panel)));
+  renderSide();
+}
+function focusFilter() {
+  if (state.view === 'downloads') $('#dlFilter').focus();
+  else if (state.view === 'tasks') $('#filterActive').focus();
+}
+function setSel(scope, id) { state.sel = { scope, id }; applySel(); }
+
+/* ---------- actions ---------- */
+function taskPause(t) { if (t.status === 'active') { t.status = 'paused'; t.speed = 0; t.queued = false; } }
+function taskResume(t) { if (t.status === 'paused') t.status = 'active'; }
+function taskRetry(t) { if (t.status === 'failed') { t.status = 'active'; t.progress = 0; t.conns = 8; } }
+function toggleTask(t) {
+  if (t.status === 'active') taskPause(t);
+  else if (t.status === 'paused') taskResume(t);
+  else taskRetry(t);
+  renderAll();
+}
+function toggleSeed(s) {
+  if (s.running) { s.running = false; }
+  else if (s.ratio >= state.settings.ratio) { notify(`${s.name} already reached ratio ${state.settings.ratio.toFixed(1)}. Raise the limit in Settings → Torrent.`); return; }
+  else s.running = true;
+  renderAll();
+}
+function toggleItem(scope, id) {
+  const it = findItem(scope, id);
+  if (scope === 'task' && it) toggleTask(it);
+  else if (scope === 'seed' && it) toggleSeed(it);
+}
+function pauseAll() {
+  tasks.forEach(t => { if (t.status === 'active') taskPause(t); });
+  renderAll(); notify('All downloads paused');
+}
+function resumeAll() {
+  tasks.forEach(t => taskResume(t));
+  renderAll(); notify('All downloads resumed');
+}
+function clearCompleted() {
+  const n = library.length;
+  if (!n) { notify('Nothing to remove'); return; }
+  library = [];
+  if (state.sel && state.sel.scope === 'lib') state.sel = null;
+  renderAll(); notify(`Removed ${n} completed item${n === 1 ? '' : 's'} from the list (files kept)`);
+}
+function removeSelected() {
+  if (!state.sel) return notify('Select a download first');
+  const it = findItem(state.sel.scope, state.sel.id);
+  if (!it) return;
+  removeItem(state.sel.scope, state.sel.id);
+  renderAll(); notify('Removed ' + it.name + ' from the list');
+}
+function deleteItem(scope, id) {
+  const it = findItem(scope, id);
+  if (!it) return;
+  const doIt = () => { removeItem(scope, id); renderAll(); notify('Deleted ' + it.name); };
+  if (state.settings.confirmDelete) {
+    openDialog({
+      title: 'Delete from disk?',
+      body: `<p>Permanently delete <b>${esc(it.name)}</b>?</p><p class="setting-desc" style="margin-top:8px">Preview mode: this only removes the item from the list.</p>`,
+      buttons: [{ label: 'Cancel' }, { label: 'Delete', cls: 'danger', fn: doIt }]
+    });
+  } else doIt();
+}
+function openFolder() { notify('Opening folders is not available in this browser preview'); }
+async function copyLink(it) {
+  const url = it.src || sourceOf(it);
+  try { await navigator.clipboard.writeText(url); notify('Link copied'); }
+  catch (e) { notify('Copy is blocked in this preview'); }
+}
+function showProps(scope, it) {
+  const rows = [['Name', it.name]];
+  if (scope === 'task') rows.push(['Status', STATE_LABEL[taskState(it)]], ['Progress', Math.floor(it.progress) + '%'], ['Size', fmtSize(it.sizeMB)], ['Connections', String(it.conns)], ['Source', sourceOf(it)]);
+  else if (scope === 'seed') rows.push(['Ratio', it.ratio.toFixed(2)], ['Size', fmtSize(it.sizeMB)], ['Status', it.running ? 'Seeding' : 'Stopped']);
+  else rows.push(['Size', fmtSize(it.sizeMB)], ['Category', catName(catOf(it.name))], ['Finished', it.when]);
+  openDialog({
+    title: 'Properties',
+    body: `<table class="props">${rows.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>`,
+    buttons: [{ label: 'Close' }]
+  });
+}
+function finish(t) {
+  removeItem('task', t.id);
+  library.unshift({ id: newId('l'), name: t.name, sizeMB: t.sizeMB, when: 'Just now' });
+  if (state.settings.sound) beep();
+  notify('Completed: ' + t.name);
+}
+function fail(t) {
+  t.status = 'failed'; t.speed = 0; t.queued = false;
+  if (state.settings.failSound) beep();
+  notify('Failed: ' + t.name);
+}
+
+/* ---------- add / category dialogs ---------- */
+let lastFocus = null;
+function openModal(id, focusSel) {
+  lastFocus = document.activeElement;
+  const m = document.getElementById(id);
+  m.classList.add('show');
+  const f = (focusSel && m.querySelector(focusSel)) || m.querySelector('input, button');
+  if (f) f.focus();
+}
+function closeModal(overlay) {
+  overlay.classList.remove('show');
+  if (lastFocus && lastFocus.focus) lastFocus.focus();
+}
+function openDialog({ title, body, buttons }) {
+  $('#dlgTitle').textContent = title;
+  $('#dlgBody').innerHTML = body;
+  const bar = $('#dlgActions');
+  bar.innerHTML = '';
+  buttons.forEach(b => {
+    const el = document.createElement('button');
+    el.className = 'btn' + (b.cls ? ' ' + b.cls : '');
+    el.textContent = b.label;
+    el.addEventListener('click', () => { closeModal($('#dialog')); if (b.fn) b.fn(); });
+    bar.appendChild(el);
+  });
+  openModal('dialog');
+}
+function openAdd() {
+  $('#addUrl').value = '';
+  $('#addErr').textContent = '';
+  openModal('addModal', '#addUrl');
+}
+function submitAdd() {
+  const v = $('#addUrl').value.trim();
+  const err = $('#addErr');
+  let name;
+  if (v.toLowerCase().startsWith('magnet:')) {
+    const m = /[?&]dn=([^&]+)/.exec(v);
+    name = m ? safeDecode(m[1].replace(/\+/g, ' ')) : 'magnet-download';
+  } else {
+    let u = null;
+    try { u = new URL(v); } catch (e) { u = null; }
+    if (!u || !/^https?:$/.test(u.protocol)) { err.textContent = 'Enter a valid http:// or https:// link, or a magnet: link.'; return; }
+    name = safeDecode(u.pathname.split('/').filter(Boolean).pop() || 'download');
+  }
+  const t = { id: newId('t'), name, src: v, sizeMB: Math.round(300 + Math.random() * 2700), progress: 0,
+              status: 'active', base: Math.round(2500 + Math.random() * 6500), speed: 0, conns: 8, queued: false, failAt: null };
+  tasks.push(t);
+  closeModal($('#addModal'));
+  showView('tasks');
+  setSel('task', t.id);
+  renderAll();
+  notify('Added ' + name);
+}
+/* ---------- duplicate-extension check (used by "+ New" and Edit) ---------- */
+function extOwner(ext, exceptId) {
+  const owner = state.categories.find(c => c.id !== exceptId && c.exts.includes(ext));
+  return owner ? owner.name : null;
+}
+function dupExtMessage(exts, exceptId) {
+  for (const ext of exts) {
+    const owner = extOwner(ext, exceptId);
+    if (owner) return '".' + ext + '" is already used by "' + owner + '". Remove it there first, or pick another extension.';
+  }
+  return null;
+}
+function createCat() {
+  const name = $('#catName').value.trim();
+  const exts = $('#catExts').value.split(/[\s,]+/).map(s => s.replace(/^\./, '').toLowerCase()).filter(Boolean);
+  const err = $('#catErr');
+  if (!name) { err.textContent = 'Give the category a name.'; return; }
+  if (!exts.length) { err.textContent = 'Add at least one extension, e.g. epub, mobi.'; return; }
+  const dup = dupExtMessage(exts, null);
+  if (dup) { err.textContent = dup; return; }
+  const c = { id: newId('c'), name, exts, icon: 'folder', builtin: false };
+  state.categories.push(c);
+  state.cat = c.id;
+  closeModal($('#catModal'));
+  showView('downloads');
+  renderAll();
+  notify('Category created: ' + name);
+}
+
+/* ---------- context menu ---------- */
+function ctxAllowed(act) {
+  const it = state.ctx && findItem(state.ctx.scope, state.ctx.id);
+  if (!it) return false;
+  const scope = state.ctx.scope;
+  if (act === 'pause') return scope === 'task' && it.status === 'active';
+  if (act === 'resume') return scope === 'task' && it.status === 'paused';
+  if (act === 'retry') return scope === 'task' && it.status === 'failed';
+  if (act === 'seed') return scope === 'seed';
+  return true;
+}
+function openCtxAt(x, y, scope, id) {
+  const it = findItem(scope, id);
+  if (!it) return;
+  setSel(scope, id);
+  state.ctx = { scope, id };
+  $$('#ctx [data-act]').forEach(b => { b.disabled = !ctxAllowed(b.dataset.act); });
+  $('#ctx [data-act="seed"]').textContent = scope === 'seed' ? (it.running ? 'Stop seeding' : 'Start seeding') : 'Start / Stop seeding';
+  const m = $('#ctx');
+  m.classList.add('show');
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(4, Math.min(x, innerWidth - w - 4)) + 'px';
+  m.style.top = Math.max(4, Math.min(y, innerHeight - h - 4)) + 'px';
+}
+function hideCtx() { $('#ctx').classList.remove('show'); }
+function runCtx(act) {
+  if (!state.ctx) return;
+  const { scope, id } = state.ctx;
+  const it = findItem(scope, id);
+  if (!it) return;
+  switch (act) {
+    case 'pause': taskPause(it); renderAll(); break;
+    case 'resume': taskResume(it); renderAll(); break;
+    case 'retry': taskRetry(it); renderAll(); break;
+    case 'seed': toggleSeed(it); break;
+    case 'open': openFolder(); break;
+    case 'copy': copyLink(it); break;
+    case 'props': showProps(scope, it); break;
+    case 'remove': removeItem(scope, id); renderAll(); notify('Removed ' + it.name + ' from the list'); break;
+    case 'delete': deleteItem(scope, id); break;
+  }
+}
+
+/* ---------- commands (menus, buttons, shortcuts) ---------- */
+const CMDS = {
+  'add': openAdd,
+  'add-magnet': openAdd,
+  'search': focusFilter,
+  'settings': () => openModal('settingsModal', '.settings-nav-item'),
+  'toggle-pause': () => { if (state.sel) toggleItem(state.sel.scope, state.sel.id); else notify('Select a download first'); },
+  'pause-all': pauseAll,
+  'resume-all': resumeAll,
+  'clear-completed': clearCompleted,
+  'remove': removeSelected,
+  'open-folder': openFolder,
+  'tasks': () => showView('tasks'),
+  'downloads': () => showView('downloads'),
+  'toggle-panel': () => { const r = $('#rail'); r.classList.toggle('pinned'); },
+  'new-cat': () => openModal('catModal', '#catName'),
+  'more': () => {
+    if (!state.sel) return notify('Select a download first');
+    const r = $('#moreBtn').getBoundingClientRect();
+    openCtxAt(r.left, r.bottom + 4, state.sel.scope, state.sel.id);
+  }
+};
+function runCmd(c) { if (CMDS[c]) CMDS[c](); }
+
+/* ---------- speed, theme, settings ---------- */
+function setLimit(kbps) {
+  state.limit = kbps;
+  $('#speedSlider').value = kbps == null ? 100 : kbpsToSlider(kbps);
+  $('#speedText').value = fmtSpeed(kbps);
+}
+function applyTheme(t) {
+  const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.body.dataset.theme = dark ? 'dark' : 'light';
+  $$('#themeSeg button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.t === t)));
+}
+function notify(msg) {
+  if (!state.settings.alerts && !msg.startsWith('Add')) return;
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(notify.timer);
+  notify.timer = setTimeout(() => t.classList.remove('show'), 2000);
+}
+let audioCtx = null;
+function beep() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 880; g.gain.value = 0.05;
+    o.connect(g).connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.15);
+  } catch (e) { /* audio unavailable */ }
+}
+
+/* ---------- tick: the simulated download engine ---------- */
+function tick() {
+  const maxC = Math.max(1, state.settings.maxConcurrent | 0);
+  const actives = tasks.filter(t => t.status === 'active');
+  actives.forEach((t, i) => { t.queued = i >= maxC; });
+  const running = state.daemon ? actives.slice(0, maxC) : [];
+  const cap = state.limit ? state.limit / Math.max(1, running.length) : Infinity;
+  const finished = [], failed = [];
+
+  tasks.forEach(t => {
+    if (!running.includes(t)) { t.speed = 0; return; }
+    const want = Math.min(t.base * (0.85 + Math.random() * 0.3), cap);
+    t.speed = want;
+    t.progress = Math.min(100, t.progress + (want * TICK_MS / 1000 * SIM) / (t.sizeMB * 1000) * 100);
+    if (t.progress >= 100) finished.push(t);
+    else if (t.failAt != null && t.progress >= t.failAt) failed.push(t);
+  });
+
+  seeds.forEach(s => {
+    if (s.running && state.daemon) {
+      s.speed = s.up * (0.9 + Math.random() * 0.2);
+      s.ratio += s.speed * (TICK_MS / 1000) * SIM / (s.sizeMB * 1000);
+      if (s.ratio >= state.settings.ratio) {
+        s.running = false; s.speed = 0;
+        notify(`${s.name} reached ratio ${state.settings.ratio.toFixed(1)}; seeding stopped`);
+      }
+    } else s.speed = 0;
+  });
+
+  if (finished.length || failed.length) {
+    finished.forEach(finish);
+    failed.forEach(fail);
+    renderAll();
+  } else {
+    updateAll();
+  }
+}
+
+/* ---------- events ---------- */
+document.addEventListener('click', e => {
+  if (!e.target.closest('#ctx')) hideCtx();
+  if (!e.target.closest('#chipMenu')) hideChipMenu();
+  const chipAct = e.target.closest('#chipMenu [data-chipact]');
+  if (chipAct) { const act = chipAct.dataset.chipact, id = chipMenuFor; hideChipMenu(); runChipAct(act, id); return; }
+  if (!e.target.closest('#helpDropdown, #helpBtn')) {
+    $('#helpDropdown').classList.remove('show');
+    $('#helpBtn').setAttribute('aria-expanded', 'false');
+  }
+
+  const close = e.target.closest('[data-close]');
+  if (close) { closeModal(close.closest('.modal-overlay')); return; }
+
+  const cmd = e.target.closest('[data-cmd]');
+  if (cmd) { runCmd(cmd.dataset.cmd); return; }
+
+  const view = e.target.closest('[data-view]');
+  if (view) { showView(view.dataset.view); return; }
+
+  const panel = e.target.closest('[data-panel]');
+  if (panel) { showSide(panel.dataset.panel); return; }
+
+  const goto = e.target.closest('[data-goto]');
+  if (goto) { state.cat = goto.dataset.goto; showView('downloads'); renderAll(); return; }
+
+  const chip = e.target.closest('#catBar [data-cat]');
+  if (chip) { state.cat = chip.dataset.cat; renderChips(); renderLib(); return; }
+
+  const seg = e.target.closest('#themeSeg [data-t]');
+  if (seg) {
+    state.settings.theme = seg.dataset.t;
+    applyTheme(state.settings.theme);
+    return;
+  }
+
+  const tab = e.target.closest('.settings-nav-item');
+  if (tab) {
+    $$('.settings-nav-item').forEach(x => x.setAttribute('aria-selected', String(x === tab)));
+    $$('.settings-section').forEach(x => x.classList.toggle('active', x.id === 'sec-' + tab.dataset.s));
+    return;
+  }
+
+  const sw = e.target.closest('.toggle[data-key]');
+  if (sw) { toggleSwitch(sw); return; }
+
+  if (e.target.closest('#daemonBtn')) { toggleDaemon(); return; }
+  if (e.target.closest('#addSubmit')) { submitAdd(); return; }
+  if (e.target.closest('#catSubmit')) { createCat(); return; }
+
+  const row = e.target.closest('[data-scope]');
+  if (row) {
+    setSel(row.dataset.scope, row.dataset.id);
+    if (e.target.closest('[data-act="toggle"]')) toggleItem(row.dataset.scope, row.dataset.id);
+    return;
+  }
+
+  const ctxBtn = e.target.closest('#ctx [data-act]');
+  if (ctxBtn && !ctxBtn.disabled) { const act = ctxBtn.dataset.act; hideCtx(); runCtx(act); }
+});
+
+/* ---------- right-click menu for editable category chips (Edit / Delete) ---------- */
+let chipMenuFor = null;
+function hideChipMenu() {
+  const m = document.getElementById('chipMenu');
+  if (m) m.remove();
+  chipMenuFor = null;
+}
+function showChipMenu(x, y, catId) {
+  hideChipMenu();
+  const m = document.createElement('div');
+  m.id = 'chipMenu';
+  m.className = 'context-menu show';
+  m.setAttribute('role', 'menu');
+  m.innerHTML = '<button class="context-item" role="menuitem" data-chipact="edit">Edit</button>' +
+                '<button class="context-item danger" role="menuitem" data-chipact="delete">Delete</button>';
+  document.body.appendChild(m);
+  chipMenuFor = catId;
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(4, Math.min(x, innerWidth - w - 4)) + 'px';
+  m.style.top = Math.max(4, Math.min(y, innerHeight - h - 4)) + 'px';
+}
+// The menu offers Edit (opens the Edit modal) and Delete (asks for confirmation).
+/* ---------- Edit category modal (styled like "+ New") ---------- */
+function openEditCat(id) {
+  const c = state.categories.find(x => x.id === id);
+  if (!c) return;
+  closeEditCat(true);
+  lastFocus = document.activeElement;
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay';
+  ov.id = 'editCatModal';
+  ov.innerHTML =
+    '<div class="modal" role="dialog" aria-modal="true" aria-labelledby="editCatTitle" style="width:min(400px,100%)">' +
+      '<div class="modal-header"><h2 id="editCatTitle">Edit Category</h2><button class="icon-btn" data-ecclose aria-label="Close"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button></div>' +
+      '<div class="modal-body">' +
+        '<label class="field-label" for="editCatName">Name</label>' +
+        '<input class="field" id="editCatName" value="' + esc(c.name) + '">' +
+        '<label class="field-label" for="editCatExts">File extensions</label>' +
+        '<input class="field" id="editCatExts" value="' + esc(c.exts.join(', ')) + '">' +
+        '<div class="err" id="editCatErr" role="alert"></div>' +
+      '</div>' +
+      '<div class="modal-footer"><button class="btn" data-ecclose>Cancel</button><button class="btn primary" id="editCatSave">Save</button></div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('mousedown', e => { if (e.target === ov) closeEditCat(); });
+  ov.querySelectorAll('[data-ecclose]').forEach(b => b.addEventListener('click', () => closeEditCat()));
+  ov.querySelector('#editCatSave').addEventListener('click', () => saveEditCat(id));
+  ov.querySelectorAll('#editCatName, #editCatExts').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') saveEditCat(id); }));
+  ov.classList.add('show');
+  ov.querySelector('#editCatName').focus();
+}
+function closeEditCat(silent) {
+  const ov = document.getElementById('editCatModal');
+  if (!ov) return;
+  ov.remove();
+  if (!silent && lastFocus && lastFocus.focus) lastFocus.focus();
+}
+function saveEditCat(id) {
+  const c = state.categories.find(x => x.id === id);
+  if (!c) return closeEditCat();
+  const name = document.getElementById('editCatName').value.trim();
+  const exts = document.getElementById('editCatExts').value.split(/[\s,]+/).map(s => s.replace(/^\./, '').toLowerCase()).filter(Boolean);
+  const err = document.getElementById('editCatErr');
+  if (!name) { err.textContent = 'Give the category a name.'; return; }
+  if (!exts.length) { err.textContent = 'Add at least one extension, e.g. epub, mobi.'; return; }
+  const dup = dupExtMessage(exts, id);
+  if (dup) { err.textContent = dup; return; }
+  c.name = name;
+  c.exts = [...new Set(exts)];
+  closeEditCat();
+  renderAll();
+  notify('Category updated: ' + name);
+}
+/* ---------- Delete category (with confirmation; files fall back to Uncategorized) ---------- */
+function deleteCat(id) {
+  const c = state.categories.find(x => x.id === id);
+  if (!c) return;
+  openDialog({
+    title: 'Delete category?',
+    body: '<p>Delete the <b>' + esc(c.name) + '</b> category?</p>' +
+          '<p class="setting-desc" style="margin-top:8px">Its files will move to Uncategorized. No files are deleted from disk.</p>',
+    buttons: [{ label: 'Cancel' }, { label: 'Delete', cls: 'danger', fn: () => {
+      state.categories = state.categories.filter(x => x.id !== id);
+      if (state.cat === id) state.cat = 'all';
+      renderAll();
+      notify('Category deleted: ' + c.name);
+    } }]
+  });
+}
+function runChipAct(act, id) {
+  if (act === 'edit') openEditCat(id);
+  if (act === 'delete') deleteCat(id);
+}
+document.addEventListener('contextmenu', e => {
+  const chip = e.target.closest('#catBar [data-cat]');
+  if (chip) {
+    e.preventDefault();
+    hideCtx();
+    const id = chip.dataset.cat;
+    if (id !== 'all' && id !== 'other') showChipMenu(e.clientX, e.clientY, id);
+    else hideChipMenu();
+    return;
+  }
+  const row = e.target.closest('[data-scope]');
+  if (!row) return;
+  e.preventDefault();
+  openCtxAt(e.clientX, e.clientY, row.dataset.scope, row.dataset.id);
+});
+
+function toggleSwitch(sw) {
+  const key = sw.dataset.key;
+  state.settings[key] = !state.settings[key];
+  sw.setAttribute('aria-checked', String(!!state.settings[key]));
+  if (key === 'compact') document.body.classList.toggle('compact', state.settings.compact);
+}
+function toggleDaemon() {
+  state.daemon = !state.daemon;
+  renderDaemon();
+  renderAll();
+  notify(state.daemon ? 'Daemon connected' : 'Daemon disconnected: downloads paused until reconnected');
+}
+
+$('#helpBtn').addEventListener('click', e => {
+  e.stopPropagation();
+  const dd = $('#helpDropdown');
+  const open = dd.classList.toggle('show');
+  $('#helpBtn').setAttribute('aria-expanded', String(open));
+});
+$('#filterActive').addEventListener('input', renderTasks);
+$('#filterSeed').addEventListener('input', renderSeeds);
+$('#dlFilter').addEventListener('input', renderLib);
+
+$('#speedSlider').addEventListener('input', e => {
+  const v = parseInt(e.target.value, 10);
+  state.limit = v >= 100 ? null : Math.round(sliderToKbps(v));
+  $('#speedText').value = fmtSpeed(state.limit);
+});
+$('#speedText').addEventListener('change', e => {
+  const p = parseSpeed(e.target.value);
+  if (!p) { notify('Use 10 KB/s to 1 GB/s, e.g. 500 KB/s or 2 MB/s, or Unlimited'); e.target.value = fmtSpeed(state.limit); return; }
+  setLimit(p.kbps);
+});
+$('#speedText').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+$('#maxConc').addEventListener('change', e => {
+  const v = Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 5));
+  e.target.value = v; state.settings.maxConcurrent = v; renderAll();
+});
+$('#ratioIn').addEventListener('change', e => {
+  const v = Math.max(0.1, parseFloat(e.target.value) || 2);
+  e.target.value = v.toFixed(1); state.settings.ratio = v; renderAll();
+});
+
+$('#addUrl').addEventListener('keydown', e => { if (e.key === 'Enter') submitAdd(); });
+$('#catExts').addEventListener('keydown', e => { if (e.key === 'Enter') createCat(); });
+
+$$('.modal-overlay').forEach(o => o.addEventListener('mousedown', e => { if (e.target === o) closeModal(o); }));
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (document.getElementById('editCatModal')) { closeEditCat(); return; }
+    hideCtx();
+    hideChipMenu();
+    $('#helpDropdown').classList.remove('show');
+    const open = $$('.modal-overlay.show');
+    if (open.length) closeModal(open[open.length - 1]);
+    return;
+  }
+  const mod = e.ctrlKey || e.metaKey;
+  const tag = e.target.tagName;
+  const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  const k = e.key.toLowerCase();
+
+  if (mod) {
+    if (k === 'n' || (k === 'o' && !e.shiftKey)) { e.preventDefault(); openAdd(); }
+    else if (k === 'm' && e.shiftKey) { e.preventDefault(); openAdd(); }
+    else if (k === ',') { e.preventDefault(); CMDS.settings(); }
+    else if (k === 'f') { e.preventDefault(); focusFilter(); }
+    else if (k === 'p') { e.preventDefault(); pauseAll(); }
+    else if (k === 'r') { e.preventDefault(); resumeAll(); }
+    else if (k === '1') { e.preventDefault(); showView('tasks'); }
+    else if (k === '2') { e.preventDefault(); showView('downloads'); }
+    else if (k === 'b') { e.preventDefault(); CMDS['toggle-panel'](); }
+    else if (e.shiftKey && e.key === 'Enter') { e.preventDefault(); openFolder(); }
+    return;
+  }
+  if (typing) return;
+  if (e.key === ' ' && !e.target.closest('button')) {
+    e.preventDefault();
+    if (state.sel) toggleItem(state.sel.scope, state.sel.id);
+  } else if (e.key === 'Delete' && state.sel && !e.target.closest('button')) {
+    removeSelected();
+  }
+});
+
+/* ---------- start ---------- */
+applyTheme(state.settings.theme);
+matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme(state.settings.theme));
+renderDaemon();
+setLimit(null);
+renderAll();
+tick();
+setInterval(tick, TICK_MS);
+</script>
+</body>
+</html>

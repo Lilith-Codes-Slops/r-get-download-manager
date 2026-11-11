@@ -1,3 +1,4 @@
+use super::post_download_settings::PostDownloadSettings;
 use serde::{Deserialize, Serialize};
 
 /// Commands sent from clients (CLI, GUI, nmhost) to the core daemon.
@@ -18,9 +19,18 @@ pub enum ClientRequest {
     Resume {
         task_id: String,
     },
+    /// Stop an active transfer while retaining its task history.
+    Cancel {
+        task_id: String,
+    },
     RefreshUrl {
         task_id: String,
         new_url: String,
+    },
+    /// Change the active split task's worker ceiling.
+    SetConnections {
+        task_id: String,
+        count: u8,
     },
     SetLimit {
         task_id: Option<String>,
@@ -31,6 +41,16 @@ pub enum ClientRequest {
         delete_file: bool,
     },
     ListQueue,
+    /// Structured queue with transfer telemetry for GUI clients.
+    GetDetailedQueue,
+    /// Open a separate connection for a stream of complete split snapshots.
+    SubscribeSegments,
+    /// Dedicated stream for optional adaptive policy telemetry.
+    SubscribeSegmentPolicies,
+    /// Ordered task progress updates, with a reset on each connection.
+    SubscribeProgress,
+    /// Separate, opt-in stream of torrent stall and recovery transitions.
+    SubscribeTorrentEvents,
     GetSnapshot {
         task_id: Option<String>,
     },
@@ -42,6 +62,17 @@ pub enum ClientRequest {
         task_id: String,
         video_id: Option<String>,
         audio_id: Option<String>,
+    },
+    VerifyChecksum {
+        task_id: String,
+        algorithm: String,
+        expected: String,
+    },
+    /// Read the daemon-wide post-download action settings.
+    GetPostDownloadSettings,
+    /// Update the daemon-wide post-download action settings.
+    SetPostDownloadSettings {
+        settings: PostDownloadSettings,
     },
     Shutdown,
 }

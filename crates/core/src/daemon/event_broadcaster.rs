@@ -1,5 +1,4 @@
 use downloader_ipc::DaemonEvent;
-use std::sync::Arc;
 use tokio::sync::broadcast;
 
 pub struct EventBroadcaster {
@@ -8,7 +7,11 @@ pub struct EventBroadcaster {
 
 impl EventBroadcaster {
     pub fn new() -> Self {
-        let (tx, _) = broadcast::channel(128);
+        Self::with_capacity(128)
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        let (tx, _) = broadcast::channel(capacity);
         Self { tx }
     }
 
@@ -18,5 +21,11 @@ impl EventBroadcaster {
 
     pub fn send(&self, event: DaemonEvent) {
         let _ = self.tx.send(event);
+    }
+}
+
+impl Default for EventBroadcaster {
+    fn default() -> Self {
+        Self::new()
     }
 }

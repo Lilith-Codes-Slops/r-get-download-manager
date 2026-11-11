@@ -30,5 +30,5 @@ clap = { version = "*", features = ["derive"] }
 thiserror = "*"
 tracing = "*"
 tracing-subscriber = "*"
-librqbit = "*"
+librqbit = "=9.1.0"
 async-trait = "*"

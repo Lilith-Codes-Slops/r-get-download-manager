@@ -8,7 +8,12 @@ impl ArchiveExtractor {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         match ext {
             "zip" | "tar" | "gz" | "zst" | "7z" => {
-                let _ = Command::new("tar").arg("-xf").arg(path).arg("-C").arg(dest).status();
+                let _ = Command::new("tar")
+                    .arg("-xf")
+                    .arg(path)
+                    .arg("-C")
+                    .arg(dest)
+                    .status();
                 Ok(())
             }
             _ => Ok(()),

@@ -20,6 +20,15 @@ impl MirrorPoolManager {
     }
 
     pub fn all(&self) -> Vec<(&str, &str)> {
-        self.mirrors.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()
+        self.mirrors
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect()
+    }
+}
+
+impl Default for MirrorPoolManager {
+    fn default() -> Self {
+        Self::new()
     }
 }

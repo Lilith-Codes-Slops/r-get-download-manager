@@ -2,10 +2,11 @@ use super::super::args_parser::LimitArgs;
 use downloader_ipc::ClientRequest;
 
 pub async fn run(args: LimitArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let _req = ClientRequest::SetLimit {
+    let req = ClientRequest::SetLimit {
         task_id: args.task_id,
         kbps: args.kbps,
     };
-    println!("limit set");
+    let event = super::super::ipc_client::roundtrip(&req)?;
+    println!("{event:?}");
     Ok(())
 }

@@ -21,7 +21,11 @@ impl DohDnsResolver {
     }
 
     pub async fn lookup_ip(&self, host: &str) -> Result<Vec<std::net::IpAddr>, DohError> {
-        let lookup = self.resolver.lookup_ip(host).await.map_err(|e| DohError::Resolver(e.to_string()))?;
+        let lookup = self
+            .resolver
+            .lookup_ip(host)
+            .await
+            .map_err(|e| DohError::Resolver(e.to_string()))?;
         Ok(lookup.iter().collect())
     }
 }

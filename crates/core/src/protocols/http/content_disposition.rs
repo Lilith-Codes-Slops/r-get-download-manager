@@ -11,13 +11,16 @@ impl ContentDisposition {
                 }
             }
         }
-        url.split('/').last().unwrap_or("download").to_string()
+        url.split('/').next_back().unwrap_or("download").to_string()
     }
 
     fn parse_filename(cd: &str) -> Option<String> {
         cd.split(';')
             .map(|p| p.trim())
-            .find_map(|p| p.strip_prefix("filename=").or_else(|| p.strip_prefix("filename*=")))
+            .find_map(|p| {
+                p.strip_prefix("filename=")
+                    .or_else(|| p.strip_prefix("filename*="))
+            })
             .map(|s| s.trim_matches('"').to_string())
     }
 }

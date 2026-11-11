@@ -39,3 +39,9 @@ impl TransferPerformanceModel {
         })
     }
 }
+
+impl Default for TransferPerformanceModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}

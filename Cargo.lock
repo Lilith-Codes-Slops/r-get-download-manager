@@ -1416,6 +1416,7 @@ dependencies = [
 name = "downloader-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "blake3",
  "bytes",
@@ -1425,6 +1426,8 @@ dependencies = [
  "hickory-resolver",
  "libc",
  "librqbit",
+ "librqbit-bencode",
+ "librqbit-sha1-wrapper",
  "nix 0.31.3",
  "reqwest 0.12.28",
  "rusqlite",
