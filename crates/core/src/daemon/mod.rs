@@ -27,6 +27,8 @@ mod download_directory;
 mod gui_settings;
 #[cfg(target_os = "linux")]
 mod http_partial_owner;
+#[cfg(target_os = "linux")]
+mod http_publication_intent;
 mod persistence;
 #[cfg(target_os = "linux")]
 mod post_download;

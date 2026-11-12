@@ -100,6 +100,9 @@ impl Persistence {
         tokio::task::spawn_blocking(move || -> StoreResult<()> {
             let mut conn = open(&path)?;
             let tx = conn.transaction()?;
+            if super::http_publication_intent::exists(&tx, &task.url)? {
+                return Err("publication outcome uncertain—inspection required; checkpoint retained".into());
+            }
             tx.execute(
                 "INSERT OR REPLACE INTO rget_queue_v1 (url, info) VALUES (?1, ?2)",
                 params![task.url, serde_json::to_string(&task)?],
@@ -192,7 +195,30 @@ pub(super) fn open(path: &Path) -> StoreResult<Connection> {
 
 fn save(path: &Path, state: &SavedState) -> StoreResult<()> {
     let mut conn = open(path)?;
+    #[cfg(target_os = "linux")]
+    super::http_publication_intent::schema(&conn)?;
     let tx = conn.transaction()?;
+    #[cfg(target_os = "linux")]
+    {
+        let pending = {
+            let mut statement = tx.prepare(
+                "SELECT task_id,partial_name,destination FROM rget_http_publication_intents_v1",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+            })?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        for (id, partial, destination) in pending {
+            let task = state.tasks.get(&id).ok_or("cannot discard an unresolved HTTP publication task")?;
+            if task.url != id
+                || task.partial_name.as_deref() != Some(partial.as_str())
+                || task.confirmed_filename.as_deref() != Some(destination.as_str())
+            {
+                return Err("cannot replace an unresolved HTTP publication attempt".into());
+            }
+        }
+    }
     tx.execute("DELETE FROM rget_queue_v1", [])?;
     tx.execute("DELETE FROM rget_rates_v1", [])?;
     for (id, info) in &state.tasks {
@@ -226,9 +252,16 @@ fn save(path: &Path, state: &SavedState) -> StoreResult<()> {
         // Failed or canceled confirmed tasks retain their owned checkpoint for
         // safe retry, explicit removal or a confirmed restart-from-beginning.
         let retain_partial = info.confirmed_filename.is_some() && info.partial_name.is_some();
-        if info.state == "completed"
+        #[cfg(target_os = "linux")]
+        let unresolved_publication: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM rget_http_publication_intents_v1 WHERE task_id=?1)",
+            [id], |row| row.get(0),
+        )?;
+        #[cfg(not(target_os = "linux"))]
+        let unresolved_publication = false;
+        if !unresolved_publication && (info.state == "completed"
             || (info.state == "canceled" && !retain_partial)
-            || (info.state.starts_with("failed:") && !retain_partial)
+            || (info.state.starts_with("failed:") && !retain_partial))
         {
             tx.execute("DELETE FROM rget_checkpoints_v1 WHERE url = ?1", [id])?;
             tx.execute("DELETE FROM rget_split_checkpoints_v2 WHERE url = ?1", [id])?;
@@ -241,6 +274,10 @@ fn save(path: &Path, state: &SavedState) -> StoreResult<()> {
 fn save_recovery(path: &Path, task: &DownloadInfo, record: &RecoveryRecord) -> StoreResult<()> {
     let mut conn = open(path)?;
     let tx = conn.transaction()?;
+    #[cfg(target_os = "linux")]
+    if super::http_publication_intent::exists(&tx, &task.url)? {
+        return Err("publication outcome uncertain—inspection required; checkpoint retained".into());
+    }
     tx.execute(
         "INSERT OR REPLACE INTO rget_queue_v1 (url, info) VALUES (?1, ?2)",
         params![task.url, serde_json::to_string(task)?],
@@ -260,7 +297,10 @@ fn save_recovery(path: &Path, task: &DownloadInfo, record: &RecoveryRecord) -> S
 fn load(path: &Path) -> StoreResult<SavedState> {
     let conn = open(path)?;
     #[cfg(target_os = "linux")]
-    super::publication_confirmation::schema(&conn)?;
+    {
+        super::publication_confirmation::schema(&conn)?;
+        super::http_publication_intent::schema(&conn)?;
+    }
     let mut result = SavedState::default();
     let mut statement = conn.prepare("SELECT url, info FROM rget_queue_v1")?;
     let rows = statement.query_map([], |row| {
@@ -279,9 +319,18 @@ fn load(path: &Path) -> StoreResult<SavedState> {
         let pending_publication = super::publication_confirmation::exists(&conn, &url)?;
         #[cfg(not(target_os = "linux"))]
         let pending_publication = false;
+        // An unresolved HTTP publication intent is not proof of completion,
+        // even if an older snapshot says completed or canceled. Preserve the
+        // evidence and never pass this task to automatic recovery.
+        #[cfg(target_os = "linux")]
+        let uncertain_http = super::http_publication_intent::exists(&conn, &url)?;
+        #[cfg(not(target_os = "linux"))]
+        let uncertain_http = false;
         // Without a durable byte map and validator, never pretend an unfinished
         // file can resume. The user can retry safely from the beginning.
-        if info.state == "canceling" {
+        if uncertain_http {
+            info.state = "failed: publication outcome uncertain—inspection required; data retained".into();
+        } else if info.state == "canceling" {
             // Never restart a transfer that the user had asked to cancel.
             info.state = "canceled".into();
         } else if pending_publication && !matches!(info.state.as_str(), "completed" | "canceled") {
@@ -460,6 +509,59 @@ mod tests {
             Some(".rget-1-1.part")
         );
         assert!(!loaded.prior_states.contains_key(id));
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unresolved_http_intent_blocks_recovery_and_destructive_snapshots() {
+        let (path, mut state) = fixture();
+        let id = "https://example.test/live";
+        let partial = ".rget-0123456789abcdef0123456789abcdef.part";
+        let task = state.tasks.get_mut(id).unwrap();
+        task.confirmed_filename = Some("test.bin".into());
+        task.partial_name = Some(partial.into());
+        save(&path, &state).unwrap();
+        let conn = open(&path).unwrap();
+        // Deliberately malformed attempt and inode data: even a record that
+        // cannot be parsed must prevent automatic reconciliation.
+        conn.execute(
+            "INSERT INTO rget_http_publication_intents_v1 VALUES (?1,'bad','/tmp','bad','1',?2,'1','2','test.bin')",
+            params![id, partial],
+        ).unwrap();
+        conn.execute("INSERT INTO rget_checkpoints_v1(url,info) VALUES(?1,'evidence')", [id]).unwrap();
+        drop(conn);
+
+        for status in ["completed", "canceled", "downloading"] {
+            state.tasks.get_mut(id).unwrap().state = status.into();
+            save(&path, &state).unwrap();
+            let loaded = load(&path).unwrap();
+            assert!(loaded.tasks[id].state.contains("publication outcome uncertain—inspection required"));
+            assert!(!loaded.prior_states.contains_key(id));
+            let conn = open(&path).unwrap();
+            let evidence: String = conn.query_row(
+                "SELECT info FROM rget_checkpoints_v1 WHERE url=?1", [id], |row| row.get(0),
+            ).unwrap();
+            assert_eq!(evidence, "evidence");
+        }
+        let record = RecoveryRecord {
+            version: 1,
+            sequence: 1,
+            task_url: id.into(),
+            resolved_url: id.into(),
+            filename: "test.bin".into(),
+            partial_name: partial.into(),
+            etag: "\"v1\"".into(),
+            total: 100,
+            downloaded: 12,
+            prefix_blake3: "hash".into(),
+        };
+        assert!(save_recovery(&path, &state.tasks[id], &record).is_err());
+        state.tasks.get_mut(id).unwrap().partial_name = Some(".rget-replacement.part".into());
+        assert!(save(&path, &state).is_err());
+        state.tasks.remove(id);
+        assert!(save(&path, &state).is_err());
+        assert!(load(&path).unwrap().tasks.contains_key(id));
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 

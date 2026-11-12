@@ -10,6 +10,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 fn ensure_schema(conn: &Connection) -> Result<()> {
     super::download_directory::ensure_schema(conn)?;
     super::http_partial_owner::schema(conn)?;
+    super::http_publication_intent::schema(conn)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS rget_task_directory_v1 (
             task_id TEXT PRIMARY KEY NOT NULL,
@@ -385,6 +386,13 @@ fn bind_and_store_at(
     let mut conn = persistence::open(database)?;
     ensure_schema(&conn)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let unresolved: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM rget_http_publication_intents_v1 WHERE task_id=?1)",
+        [id], |row| row.get(0),
+    )?;
+    if unresolved {
+        return Err("publication outcome uncertain—inspection required; task cannot be rebound".into());
+    }
     let existing: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM rget_queue_v1 WHERE url = ?1)",
         [id],
@@ -555,6 +563,29 @@ mod tests {
             [root],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn unresolved_http_intent_blocks_rebinding_even_without_queue_entry() {
+        let (db, lab) = fixture();
+        let root = lab.join("download");
+        std::fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let conn = persistence::open(&db).unwrap();
+        conn.execute(
+            "INSERT INTO rget_http_publication_intents_v1 VALUES ('a','bad','/tmp','bad','1','.rget-bad.part','1','2','file.bin')",
+            [],
+        ).unwrap();
+        drop(conn);
+        let task = r#"{"url":"a","confirmed_filename":"file.bin"}"#;
+        let legacy = Path::new("/legacy/Downloads");
+        assert!(bind_and_store_at(&db, "a", task, false, legacy, Some(&root)).is_err());
+        assert!(bind_and_store_at(&db, "a", task, true, legacy, Some(&root)).is_err());
+        let conn = persistence::open(&db).unwrap();
+        let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM rget_queue_v1 WHERE url='a')", [], |row| row.get(0)).unwrap();
+        assert!(!exists);
+        drop(conn);
+        std::fs::remove_dir_all(lab).unwrap();
     }
 
     #[test]

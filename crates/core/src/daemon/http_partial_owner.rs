@@ -38,6 +38,9 @@ fn reserve(database: &Path, task: &downloader_ipc::DownloadInfo, name: &str) -> 
     let mut conn = persistence::open(database)?;
     schema(&conn)?;
     let tx = conn.transaction()?;
+    if super::http_publication_intent::exists(&tx, &task.url)? {
+        return Err("publication outcome uncertain—inspection required; partial retained".into());
+    }
     // No replacement: a stale attempt cannot claim an existing reservation.
     tx.execute(
         "INSERT INTO rget_http_partial_owner_v1(task_id,name) VALUES(?1,?2)",

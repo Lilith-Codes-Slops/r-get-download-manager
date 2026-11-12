@@ -79,6 +79,24 @@ pub(super) async fn remove(
         } else if matches!(task.state.as_str(), "canceling" | "finalizing") {
             drop(guard);
         } else {
+            #[cfg(target_os = "linux")]
+            if task.torrent.is_none() {
+                // Both removal modes must retain the task and journal while
+                // publication is unresolved, so a later task cannot inherit
+                // or discard an old attempt's evidence.
+                let database = store.database_path();
+                let task_id = id.clone();
+                let pending = tokio::task::spawn_blocking(move || {
+                    let conn = super::persistence::open(&database)?;
+                    super::http_publication_intent::exists(&conn, &task_id)
+                }).await;
+                match pending {
+                    Ok(Ok(false)) => {}
+                    Ok(Ok(true)) => return failed(id, "publication outcome uncertain—inspection required; task and data retained"),
+                    Ok(Err(error)) => return failed(id, &format!("could not inspect HTTP publication journal: {error}")),
+                    Err(error) => return failed(id, &format!("could not inspect HTTP publication journal: {error}")),
+                }
+            }
             if delete_file {
                 // Until removal is bound to the durable inode reservation and
                 // lifecycle barrier, a name alone cannot authorize deletion.
