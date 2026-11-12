@@ -185,26 +185,26 @@ pub(super) async fn create(
 
 /// Create an inode without a name under the pinned directory.
 fn create_unnamed(root: &std::fs::File) -> Result<std::fs::File> {
-    use std::os::fd::{AsRawFd, FromRawFd};
-    // SAFETY: root is a live directory descriptor and the C string is static.
-    let fd = unsafe {
-        libc::openat(
-            root.as_raw_fd(),
-            b".\0".as_ptr().cast(),
-            libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC,
-            0o600,
-        )
+    use nix::{
+        fcntl::{openat, OFlag},
+        sys::stat::Mode,
     };
-    if fd < 0 {
-        return Err(std::io::Error::last_os_error().into());
-    }
-    // SAFETY: openat returned a new owned descriptor.
-    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+    let fd = openat(
+        root,
+        ".",
+        OFlag::O_TMPFILE | OFlag::O_RDWR | OFlag::O_CLOEXEC,
+        Mode::from_bits_truncate(0o600),
+    )?;
+    Ok(std::fs::File::from(fd))
 }
 
 /// Link only the inode held open by `file`; never adopt an existing name.
 fn link_unnamed(root: &std::fs::File, file: &std::fs::File, name: &str) -> Result<()> {
-    use std::{ffi::CString, os::fd::AsRawFd};
+    use nix::{
+        fcntl::{AtFlags, AT_FDCWD},
+        unistd::linkat,
+    };
+    use std::os::fd::AsRawFd;
     if !name.starts_with(".rget-")
         || !name.ends_with(".part")
         || name.contains('/')
@@ -212,22 +212,9 @@ fn link_unnamed(root: &std::fs::File, file: &std::fs::File, name: &str) -> Resul
     {
         return Err("unsafe reserved partial name".into());
     }
-    let name = CString::new(name)?;
     // This procfs link identifies the open inode, not the replaceable root.
-    let source = CString::new(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
-    // SAFETY: both C strings and descriptors remain live through linkat.
-    let result = unsafe {
-        libc::linkat(
-            libc::AT_FDCWD,
-            source.as_ptr(),
-            root.as_raw_fd(),
-            name.as_ptr(),
-            libc::AT_SYMLINK_FOLLOW,
-        )
-    };
-    if result != 0 {
-        return Err(std::io::Error::last_os_error().into());
-    }
+    let source = format!("/proc/self/fd/{}", file.as_raw_fd());
+    linkat(AT_FDCWD, source.as_str(), root, name, AtFlags::AT_SYMLINK_FOLLOW)?;
     Ok(())
 }
 
@@ -235,8 +222,8 @@ fn link_unnamed(root: &std::fs::File, file: &std::fs::File, name: &str) -> Resul
 mod tests {
     use super::*;
 
-    // Invoked by the parent test in a separate test process. _exit bypasses
-    // Rust destructors and closes all process descriptors as a crash would.
+    // Invoked by the parent test in a separate test process. process::exit
+    // bypasses Rust destructors and closes process descriptors on exit.
     #[test]
     fn reservation_crash_child() {
         let Ok(root) = std::env::var("RGET_HTTP_CRASH_ROOT") else { return };
@@ -258,8 +245,7 @@ mod tests {
             link_unnamed(&dir, &file, name).unwrap();
             dir.sync_all().unwrap();
         }
-        // SAFETY: the parent checks on-disk state after this process exits.
-        unsafe { libc::_exit(0) }
+        std::process::exit(0);
     }
 
     #[test]
