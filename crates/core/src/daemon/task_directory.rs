@@ -105,6 +105,79 @@ pub(super) fn open_verified(
     Ok((root, opened))
 }
 
+/// Pinned root for a confirmed HTTP operation. The procfs path refers to the
+/// retained descriptor, never to the replaceable download-directory pathname.
+pub(super) struct HttpRoot {
+    root: PathBuf,
+    directory: std::fs::File,
+}
+
+impl HttpRoot {
+    pub(super) fn open(database: &Path, id: &str) -> Result<Self> {
+        let legacy = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?)
+            .join("Downloads");
+        let (root, directory) = open_verified(database, id, &legacy)?;
+        Ok(Self { root, directory })
+    }
+
+    pub(super) fn check(&self) -> Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let original = self.directory.metadata()?;
+        let current = open_root(&self.root)?.metadata()?;
+        if (original.dev(), original.ino()) != (current.dev(), current.ino()) {
+            return Err("task download root identity changed".into());
+        }
+        Ok(())
+    }
+
+    pub(super) fn child(&self, path: &Path) -> Result<PathBuf> {
+        use std::os::fd::AsRawFd;
+        if path.parent() != Some(self.root.as_path()) {
+            return Err("HTTP path is outside the bound root".into());
+        }
+        let name = path.file_name().ok_or("invalid HTTP filename")?;
+        self.check()?;
+        Ok(PathBuf::from(format!("/proc/self/fd/{}", self.directory.as_raw_fd())).join(name))
+    }
+}
+
+/// Publish a confirmed HTTP partial only through the pinned task root.
+pub(super) async fn publish_http(
+    database: &Path,
+    id: &str,
+    partial: &Path,
+    destination: &Path,
+) -> Result<PathBuf> {
+    let root = HttpRoot::open(database, id)?;
+    publish_http_on_root(root, database, id, partial, destination).await
+}
+
+async fn publish_http_on_root(
+    root: HttpRoot,
+    database: &Path,
+    id: &str,
+    partial: &Path,
+    destination: &Path,
+) -> Result<PathBuf> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let anchored_partial = root.child(partial)?;
+    let anchored_destination = root.child(destination)?;
+    let file = std::fs::OpenOptions::new().read(true)
+        .custom_flags(libc::O_NOFOLLOW).open(&anchored_partial)?;
+    {
+        let conn = persistence::open(database)?;
+        let owners = super::http_partial_owner::load(&conn)?;
+        let name = partial.file_name().and_then(|v| v.to_str()).ok_or("invalid partial filename")?;
+        super::http_partial_owner::verify(owners.get(id), name, &file)?;
+    }
+    root.check()?;
+    super::collision::publish_for_task(&anchored_partial, &anchored_destination, true).await?;
+    // If the path moved during publication, retain all evidence and do not
+    // report success. The link was made only in the pinned original directory.
+    root.check()?;
+    Ok(destination.to_path_buf())
+}
+
 fn confirmed_task(conn: &Connection, id: &str) -> Result<bool> {
     let json: Option<String> = conn
         .query_row("SELECT info FROM rget_queue_v1 WHERE url=?1", [id], |row| {
@@ -492,6 +565,59 @@ mod tests {
         std::fs::remove_dir(&root).unwrap();
         std::os::unix::fs::symlink(&old, &root).unwrap();
         assert!(resolve(&db, "a", legacy).is_err());
+        std::fs::remove_dir_all(lab).unwrap();
+    }
+
+    #[tokio::test]
+    async fn http_publication_rejects_replacement_after_root_open() {
+        let (db, lab) = fixture();
+        let root = lab.join("download");
+        std::fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let task = r#"{"url":"a","confirmed_filename":"file.bin"}"#;
+        bind_and_store_at(&db, "a", task, false, Path::new("/legacy/Downloads"), Some(&root)).unwrap();
+        let anchor = HttpRoot::open(&db, "a").unwrap();
+        let old = lab.join("old-directory");
+        std::fs::rename(&root, &old).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join(".rget-test.part"), b"replacement").unwrap();
+        assert!(publish_http_on_root(anchor, &db, "a", &root.join(".rget-test.part"), &root.join("file.bin")).await.is_err());
+        assert!(!root.join("file.bin").exists());
+        assert!(!old.join("file.bin").exists());
+        assert_eq!(std::fs::read(root.join(".rget-test.part")).unwrap(), b"replacement");
+        std::fs::remove_dir_all(lab).unwrap();
+    }
+
+    #[test]
+    fn http_root_replacement_between_check_and_use_fails_closed() {
+        let (db, lab) = fixture();
+        let root = lab.join("download");
+        std::fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let legacy = Path::new("/legacy/Downloads");
+        let task = r#"{"url":"a","confirmed_filename":"file.bin"}"#;
+        bind_and_store_at(&db, "a", task, false, legacy, Some(&root)).unwrap();
+        std::fs::write(root.join(".rget-test.part"), b"original").unwrap();
+        let anchor = HttpRoot::open(&db, "a").unwrap();
+        let partial = anchor.child(&root.join(".rget-test.part")).unwrap();
+        let sidecar = anchor.child(&root.join(".rget-test.part.meta")).unwrap();
+        let dest = anchor.child(&root.join("file.bin")).unwrap();
+        let old = lab.join("old-directory");
+        std::fs::rename(&root, &old).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join(".rget-test.part"), b"replacement").unwrap();
+        assert!(anchor.check().is_err());
+        assert!(anchor.child(&root.join("file.bin")).is_err());
+        // Even if replacement wins immediately after the last check, paths
+        // handed to filesystem operations still identify the original root.
+        assert_eq!(std::fs::read(&partial).unwrap(), b"original");
+        std::fs::write(&sidecar, b"checkpoint").unwrap();
+        std::fs::hard_link(&partial, &dest).unwrap();
+        assert_eq!(std::fs::read(old.join("file.bin")).unwrap(), b"original");
+        assert!(!root.join("file.bin").exists());
+        assert!(!root.join(".rget-test.part.meta").exists());
+        assert_eq!(std::fs::read(root.join(".rget-test.part")).unwrap(), b"replacement");
+        drop(anchor);
         std::fs::remove_dir_all(lab).unwrap();
     }
 

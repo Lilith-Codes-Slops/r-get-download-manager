@@ -72,6 +72,15 @@ pub(super) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<PreparedReco
         }
         #[cfg(target_os = "linux")]
         let root = task_root.as_deref().unwrap_or(root);
+        // Confirmed recovery must go through the descriptor-anchored retry
+        // preparation, never this legacy path-based startup reconciler.
+        if saved.tasks.get(&id).is_some_and(|task| task.confirmed_filename.is_some()) {
+            if let Some(task) = saved.tasks.get_mut(&id) {
+                task.state = "failed: confirmed recovery requires verified retry; partial retained".into();
+                task.resume_supported = false;
+            }
+            continue;
+        }
         if restore_published_file(saved, root, &id) {
             continue;
         }

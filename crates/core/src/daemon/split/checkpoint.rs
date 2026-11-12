@@ -57,7 +57,21 @@ impl SplitCheckpoint {
             .map_err(|e| e.to_string())?;
         #[cfg(feature = "checkpoint-test-hooks")]
         super::test_hooks::stop_at("data_synced", &self.record).await?;
-        let parent = self.sidecar.parent().ok_or("split sidecar has no parent")?;
+        let confirmed = tasks.lock().await.get(&self.record.task_url)
+            .ok_or("split checkpoint no longer belongs to the task")?
+            .confirmed_filename.is_some();
+        let anchor = if confirmed {
+            Some(crate::daemon::task_directory::HttpRoot::open(
+                &store.database_path(), &self.record.task_url,
+            ).map_err(|e| e.to_string())?)
+        } else {
+            None
+        };
+        let sidecar = match &anchor {
+            Some(root) => root.child(&self.sidecar).map_err(|e| e.to_string())?,
+            None => self.sidecar.clone(),
+        };
+        let parent = sidecar.parent().ok_or("split sidecar has no parent")?;
         let partial = parent.join(&self.record.partial_name);
         super::recovery::validate_record(&self.record, &partial)?;
         // Never bind metadata to a different file or a substituted symlink.
@@ -73,7 +87,7 @@ impl SplitCheckpoint {
         }
         let mut expected = partial.as_os_str().to_os_string();
         expected.push(".meta");
-        if self.sidecar.as_os_str() != expected.as_os_str() {
+        if sidecar.as_os_str() != expected.as_os_str() {
             return Err("unexpected split sidecar path".into());
         }
         let owned = tasks
@@ -96,14 +110,21 @@ impl SplitCheckpoint {
         {
             return Err("split checkpoint exceeds the sidecar size limit".into());
         }
-        let path = self.sidecar.clone();
+        let path = sidecar;
         let record = self.record.clone();
-        tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            if let Some(root) = &anchor {
+                root.check().map_err(|e| e.to_string())?;
+            }
             crate::daemon::checkpoint::write_atomic_with(&path, &record, || {
                 #[cfg(feature = "checkpoint-test-hooks")]
                 super::test_hooks::stop_at_rename(&record)?;
                 Ok(())
-            })
+            }).map_err(|e| e.to_string())?;
+            if let Some(root) = &anchor {
+                root.check().map_err(|e| e.to_string())?;
+            }
+            Ok(())
         })
         .await
         .map_err(|e| e.to_string())?

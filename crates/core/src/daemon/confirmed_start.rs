@@ -316,7 +316,12 @@ fn spawn_http(
                         Ok(path) => {
                             task.state = "completed".into();
                             task.final_path = Some(path.to_string_lossy().into_owned());
-                            task.partial_name = None;
+                            // Confirmed HTTP cleanup is deferred until it can be
+                            // performed relative to the verified root. Keep the
+                            // durable task-to-partial association meanwhile.
+                            if task.confirmed_filename.is_none() {
+                                task.partial_name = None;
+                            }
                         }
                         Err(error) => {
                             task.state = format!("failed: {error}");

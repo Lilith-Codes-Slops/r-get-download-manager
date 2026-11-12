@@ -119,6 +119,35 @@ impl Checkpoint {
         let path = self.sidecar.clone();
         let record = self.record.clone();
         let sidecar_record = record.clone();
+        #[cfg(target_os = "linux")]
+        {
+            let anchored = if let Some((store, tasks)) = &self.persistence {
+                let confirmed = tasks.lock().await.get(&record.task_url)
+                    .map_or(true, |task| task.confirmed_filename.is_some());
+                if confirmed {
+                    let root = super::task_directory::HttpRoot::open(
+                        &store.database_path(), &record.task_url,
+                    )?;
+                    let path = root.child(&path)?;
+                    Some((root, path))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            tokio::task::spawn_blocking(move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                if let Some((root, path)) = anchored {
+                    root.check()?;
+                    write_atomic(&path, &sidecar_record)?;
+                    root.check()?;
+                } else {
+                    write_atomic(&path, &sidecar_record)?;
+                }
+                Ok(())
+            }).await??;
+        }
+        #[cfg(not(target_os = "linux"))]
         tokio::task::spawn_blocking(move || write_atomic(&path, &sidecar_record)).await??;
         if let Some((store, tasks)) = &self.persistence {
             store.save_recovery(tasks, &record).await?;

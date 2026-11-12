@@ -257,7 +257,7 @@ pub(super) async fn download_file(
         None => None,
     };
     if let Some(checkpoint) = checkpoint.as_mut() {
-        checkpoint.attach_persistence(store, tasks.clone());
+        checkpoint.attach_persistence(store.clone(), tasks.clone());
         if let Err(e) = checkpoint.save(&file, true).await {
             drop(file);
             if confirmed_name.is_none() {
@@ -365,8 +365,14 @@ pub(super) async fn download_file(
     };
     // The link may exist even if directory syncing fails; preserve the partial
     // and checkpoint on every publication error instead of deleting evidence.
-    let dest =
-        super::collision::publish_for_task(&temporary, &dest, confirmed_name.is_some()).await?;
+    #[cfg(target_os = "linux")]
+    let dest = if confirmed_name.is_some() {
+        super::task_directory::publish_http(&store.database_path(), url, &temporary, &dest).await?
+    } else {
+        super::collision::publish_for_task(&temporary, &dest, false).await?
+    };
+    #[cfg(not(target_os = "linux"))]
+    let dest = super::collision::publish_for_task(&temporary, &dest, confirmed_name.is_some()).await?;
     if let Some(task) = guard.get_mut(url) {
         task.filename = dest.file_name().and_then(|n| n.to_str()).map(str::to_owned);
         task.destination_path = Some(dest.to_string_lossy().into_owned());
@@ -374,9 +380,13 @@ pub(super) async fn download_file(
     drop(guard);
     // A cleanup failure leaves only a redundant .part file, not a corrupted
     // final file. Never delete the successfully published destination.
-    let _ = tokio::fs::remove_file(&temporary).await;
-    if let Some(checkpoint) = &checkpoint {
-        let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+    // Confirmed cleanup must not use a replaceable path. Retain both files
+    // until descriptor-relative ownership-checked cleanup is available.
+    if confirmed_name.is_none() {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        if let Some(checkpoint) = &checkpoint {
+            let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+        }
     }
     eprintln!("\nsaved {} bytes to {}", downloaded, dest.display());
     Ok(dest)

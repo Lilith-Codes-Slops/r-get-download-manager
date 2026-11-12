@@ -36,7 +36,7 @@ pub(super) async fn run(
     };
     let offset = item.record.downloaded;
     let mut checkpoint = Checkpoint::restore(&item.partial, item.record, item.hash);
-    checkpoint.attach_persistence(store, tasks.clone());
+    checkpoint.attach_persistence(store.clone(), tasks.clone());
     let mut file = tokio::fs::File::from_std(item.file);
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(30))
@@ -151,8 +151,14 @@ pub(super) async fn run(
             "checkpoint filename differs from the confirmed filename; partial retained".into(),
         );
     }
-    let final_path =
-        super::collision::publish_for_task(&item.partial, &final_path, confirmed.is_some()).await?;
+    #[cfg(target_os = "linux")]
+    let final_path = if confirmed.is_some() {
+        super::task_directory::publish_http(&store.database_path(), &url, &item.partial, &final_path).await?
+    } else {
+        super::collision::publish_for_task(&item.partial, &final_path, false).await?
+    };
+    #[cfg(not(target_os = "linux"))]
+    let final_path = super::collision::publish_for_task(&item.partial, &final_path, confirmed.is_some()).await?;
     if let Some(task) = guard.get_mut(&url) {
         task.filename = final_path
             .file_name()
@@ -161,8 +167,10 @@ pub(super) async fn run(
         task.destination_path = Some(final_path.to_string_lossy().into_owned());
     }
     drop(guard);
-    let _ = tokio::fs::remove_file(&item.partial).await;
-    let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+    if !preserve_partial {
+        let _ = tokio::fs::remove_file(&item.partial).await;
+        let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+    }
     Ok(final_path)
 }
 
@@ -203,7 +211,9 @@ pub(super) async fn spawn(
                     Ok(path) => {
                         task.state = "completed".into();
                         task.final_path = Some(path.to_string_lossy().into_owned());
-                        task.partial_name = None;
+                        if task.confirmed_filename.is_none() {
+                            task.partial_name = None;
+                        }
                     }
                     Err(e) => {
                         task.state = format!("failed: {e}");

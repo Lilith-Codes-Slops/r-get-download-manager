@@ -111,7 +111,7 @@ pub(in crate::daemon) async fn run(
         checkpoint,
         client,
         limiter,
-        store,
+        store.clone(),
         tasks.clone(),
         Some(control.clone()),
     )
@@ -161,15 +161,20 @@ pub(in crate::daemon) async fn run(
             "checkpoint filename differs from the confirmed filename; partial retained".into(),
         );
     }
-    let dest =
-        crate::daemon::collision::publish_for_task(&partial, &dest, confirmed.is_some()).await?;
+    let dest = if confirmed.is_some() {
+        crate::daemon::task_directory::publish_http(&store.database_path(), &id, &partial, &dest).await?
+    } else {
+        crate::daemon::collision::publish_for_task(&partial, &dest, false).await?
+    };
     if let Some(task) = guard.get_mut(&id) {
         task.filename = dest.file_name().and_then(|n| n.to_str()).map(str::to_owned);
         task.destination_path = Some(dest.to_string_lossy().into_owned());
     }
     drop(guard);
-    let _ = tokio::fs::remove_file(&partial).await;
-    let _ = tokio::fs::remove_file(&sidecar).await;
+    if !preserve_partial {
+        let _ = tokio::fs::remove_file(&partial).await;
+        let _ = tokio::fs::remove_file(&sidecar).await;
+    }
     Ok(dest)
 }
 
@@ -232,7 +237,9 @@ pub(in crate::daemon) async fn spawn(
                     Ok(path) => {
                         task.state = "completed".into();
                         task.final_path = Some(path.to_string_lossy().into_owned());
-                        task.partial_name = None;
+                        if task.confirmed_filename.is_none() {
+                            task.partial_name = None;
+                        }
                     }
                     Err(error) => task.state = format!("failed: {error}"),
                 }

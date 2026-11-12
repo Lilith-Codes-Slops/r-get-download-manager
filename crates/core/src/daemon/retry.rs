@@ -75,8 +75,25 @@ pub(super) async fn run(
         let mut saved = store.load().await?;
         let task_root = root.clone();
         let old = old.clone();
-        decision =
-            tokio::task::spawn_blocking(move || decide(&mut saved, &task_root, &old)).await?;
+        let database = store.database_path();
+        decision = tokio::task::spawn_blocking(move || -> Result<Decision> {
+            if old.confirmed_filename.is_some() {
+                let Some(name) = old.partial_name.as_deref() else {
+                    return Ok(Decision::Fresh);
+                };
+                let anchor = super::task_directory::HttpRoot::open(&database, &old.url)?;
+                let anchored_partial = anchor.child(&task_root.join(name))?;
+                let anchored_root = anchored_partial.parent().ok_or("partial has no root")?;
+                let mut selected = decide(&mut saved, anchored_root, &old);
+                anchor.check()?;
+                if let Decision::Single(item) = &mut selected {
+                    item.partial = task_root.join(&item.record.partial_name);
+                }
+                Ok(selected)
+            } else {
+                Ok(decide(&mut saved, &task_root, &old))
+            }
+        }).await??;
     }
     if let Some(old) = prior
         .as_ref()

@@ -110,6 +110,16 @@ pub(in crate::daemon) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<P
             continue;
         }
         let root = task_root.as_deref().unwrap_or(root);
+        // Confirmed split recovery is prepared only by the pinned-root retry
+        // path, never by this legacy path-based startup reconciler.
+        if saved.tasks.get(&id).is_some_and(|task| task.confirmed_filename.is_some()) {
+            if let Some(task) = saved.tasks.get_mut(&id) {
+                task.state = "failed: confirmed recovery requires verified retry; partial retained".into();
+                task.resume_supported = false;
+            }
+            saved.prior_states.remove(&id);
+            continue;
+        }
         let Some(name) = saved
             .tasks
             .get(&id)

@@ -107,8 +107,8 @@ pub(super) fn verify(
     Ok(())
 }
 
-/// Reserve in SQLite before creating the file, then record its inode before
-/// returning it to a worker. Ambiguous reserved files are never adopted.
+/// Reserve the task, create an unnamed inode, commit its identity, then link it.
+/// No named file exists until its ownership is durable.
 pub(super) async fn create(
     dest: &Path,
     id: &str,
@@ -164,11 +164,16 @@ pub(super) async fn create(
         if output.parent() != Some(bound_root.as_path()) {
             return Err("partial destination is outside the bound root".into());
         }
-        let file = create_at(&opened_root, &name)?;
+        // An unnamed inode disappears if the process crashes before linking.
+        // Never fall back to named creation on filesystems without O_TMPFILE.
+        let file = create_unnamed(&opened_root)?;
+        file.sync_all()?;
         let metadata = file.metadata()?;
-        // Failure leaves an empty, durably reserved file. It is not owned for
-        // resume or deletion until inode confirmation commits.
         confirm(&database, &id, &name, metadata.dev(), metadata.ino())?;
+        // If the process crashes before this link, no named partial remains.
+        // If it crashes after, the previously committed inode identifies it.
+        link_unnamed(&opened_root, &file, &name)?;
+        opened_root.sync_all()?;
         // If the pathname moved while allocating, retain the associated file
         // but never hand it to a writer under the replacement path.
         super::task_directory::open_verified(&database, &id, &legacy)?;
@@ -178,13 +183,28 @@ pub(super) async fn create(
     Ok((path, tokio::fs::File::from_std(opened)))
 }
 
-/// Create exclusively under the already verified directory handle. A rename or
-/// replacement of its path cannot redirect this operation into another root.
-fn create_at(root: &std::fs::File, name: &str) -> Result<std::fs::File> {
-    use nix::{
-        fcntl::{openat, OFlag},
-        sys::stat::Mode,
+/// Create an inode without a name under the pinned directory.
+fn create_unnamed(root: &std::fs::File) -> Result<std::fs::File> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    // SAFETY: root is a live directory descriptor and the C string is static.
+    let fd = unsafe {
+        libc::openat(
+            root.as_raw_fd(),
+            b".\0".as_ptr().cast(),
+            libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC,
+            0o600,
+        )
     };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    // SAFETY: openat returned a new owned descriptor.
+    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+}
+
+/// Link only the inode held open by `file`; never adopt an existing name.
+fn link_unnamed(root: &std::fs::File, file: &std::fs::File, name: &str) -> Result<()> {
+    use std::{ffi::CString, os::fd::AsRawFd};
     if !name.starts_with(".rget-")
         || !name.ends_with(".part")
         || name.contains('/')
@@ -192,18 +212,92 @@ fn create_at(root: &std::fs::File, name: &str) -> Result<std::fs::File> {
     {
         return Err("unsafe reserved partial name".into());
     }
-    let fd = openat(
-        root,
-        name,
-        OFlag::O_RDWR | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
-        Mode::from_bits_truncate(0o600),
-    )?;
-    Ok(std::fs::File::from(fd))
+    let name = CString::new(name)?;
+    // This procfs link identifies the open inode, not the replaceable root.
+    let source = CString::new(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
+    // SAFETY: both C strings and descriptors remain live through linkat.
+    let result = unsafe {
+        libc::linkat(
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            root.as_raw_fd(),
+            name.as_ptr(),
+            libc::AT_SYMLINK_FOLLOW,
+        )
+    };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Invoked by the parent test in a separate test process. _exit bypasses
+    // Rust destructors and closes all process descriptors as a crash would.
+    #[test]
+    fn reservation_crash_child() {
+        let Ok(root) = std::env::var("RGET_HTTP_CRASH_ROOT") else { return };
+        let stage = std::env::var("RGET_HTTP_CRASH_STAGE").unwrap();
+        let root = PathBuf::from(root);
+        let db = root.join("queue.sqlite3");
+        let id = "https://example.test/crash";
+        let name = ".rget-crash.part";
+        let task: downloader_ipc::DownloadInfo = serde_json::from_str(&format!(r#"{{"url":"{id}","state":"downloading","filename":"file.bin","downloaded":0,"total":12,"speed_bps":0,"final_path":null,"confirmed_filename":"file.bin","partial_name":"{name}"}}"#)).unwrap();
+        reserve(&db, &task, name).unwrap();
+        let dir = std::fs::File::open(&root).unwrap();
+        let file = create_unnamed(&dir).unwrap();
+        file.sync_all().unwrap();
+        if stage != "before-confirm" {
+            let meta = file.metadata().unwrap();
+            confirm(&db, id, name, meta.dev(), meta.ino()).unwrap();
+        }
+        if stage == "after-link" {
+            link_unnamed(&dir, &file, name).unwrap();
+            dir.sync_all().unwrap();
+        }
+        // SAFETY: the parent checks on-disk state after this process exits.
+        unsafe { libc::_exit(0) }
+    }
+
+    #[test]
+    fn reservation_crash_never_leaves_unassociated_named_file() {
+        for stage in ["before-confirm", "after-confirm", "after-link"] {
+            let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+            let root = std::env::temp_dir().join(format!("rget-http-crash-{}-{stamp}-{stage}", std::process::id()));
+            std::fs::create_dir(&root).unwrap();
+            let db = root.join("queue.sqlite3");
+            let conn = persistence::open(&db).unwrap();
+            conn.execute("INSERT INTO rget_queue_v1(url,info) VALUES(?1,?2)",
+                ["https://example.test/crash", "{}"] ).unwrap();
+            drop(conn);
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "daemon::http_partial_owner::tests::reservation_crash_child"])
+                .env("RGET_HTTP_CRASH_ROOT", &root)
+                .env("RGET_HTTP_CRASH_STAGE", stage)
+                .status().unwrap();
+            assert!(status.success(), "crash child failed at {stage}");
+            let path = root.join(".rget-crash.part");
+            let conn = persistence::open(&db).unwrap();
+            let stored: String = conn.query_row(
+                "SELECT info FROM rget_queue_v1 WHERE url=?1",
+                ["https://example.test/crash"], |row| row.get(0),
+            ).unwrap();
+            let task: downloader_ipc::DownloadInfo = serde_json::from_str(&stored).unwrap();
+            assert_eq!(task.partial_name.as_deref(), Some(".rget-crash.part"));
+            let owners = load(&conn).unwrap();
+            if stage == "after-link" {
+                let file = std::fs::File::open(&path).unwrap();
+                assert!(verify(owners.get("https://example.test/crash"), ".rget-crash.part", &file).is_ok());
+            } else {
+                assert!(!path.exists(), "unexpected named partial after {stage}");
+            }
+            drop(conn);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
 
     #[test]
     fn descriptor_relative_create_never_targets_replacement_directory() {
@@ -220,10 +314,11 @@ mod tests {
         let descriptor = std::fs::File::open(&root).unwrap();
         std::fs::rename(&root, &old).unwrap();
         std::fs::create_dir(&root).unwrap();
-        let file = create_at(&descriptor, ".rget-bound.part").unwrap();
+        let file = create_unnamed(&descriptor).unwrap();
+        link_unnamed(&descriptor, &file, ".rget-bound.part").unwrap();
         assert!(old.join(".rget-bound.part").exists());
         assert!(!root.join(".rget-bound.part").exists());
-        assert!(create_at(&descriptor, ".rget-bound.part").is_err());
+        assert!(link_unnamed(&descriptor, &file, ".rget-bound.part").is_err());
         drop(file);
         std::fs::remove_dir_all(lab).unwrap();
     }
@@ -251,14 +346,11 @@ mod tests {
         .unwrap();
         drop(conn);
         reserve(&db, &task, name).unwrap();
-        // Simulate termination after create but before inode confirmation.
+        // Simulate termination after unnamed creation but before confirmation.
         let path = root.join(name);
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .unwrap();
+        let descriptor = std::fs::File::open(&root).unwrap();
+        let file = create_unnamed(&descriptor).unwrap();
+        assert!(!path.exists());
         let conn = persistence::open(&db).unwrap();
         let stored: String = conn
             .query_row("SELECT info FROM rget_queue_v1 WHERE url=?1", [id], |row| {
@@ -270,11 +362,22 @@ mod tests {
         let owners = load(&conn).unwrap();
         assert!(verify(owners.get(id), name, &file).is_err());
         drop(conn);
+        // Dropping the only descriptor simulates process termination: no
+        // directory entry exists which could be mistaken for a partial.
+        drop(file);
+        assert!(!path.exists());
+        let file = create_unnamed(&descriptor).unwrap();
         let meta = file.metadata().unwrap();
         confirm(&db, id, name, meta.dev(), meta.ino()).unwrap();
+        // A crash after confirmation but before linking is also unambiguous.
+        assert!(!path.exists());
+        link_unnamed(&descriptor, &file, name).unwrap();
+        descriptor.sync_all().unwrap();
         let conn = persistence::open(&db).unwrap();
         let owners = load(&conn).unwrap();
-        assert!(verify(owners.get(id), name, &file).is_ok());
+        let reopened = std::fs::File::open(&path).unwrap();
+        assert!(verify(owners.get(id), name, &reopened).is_ok());
+        drop(reopened);
         std::fs::rename(&path, root.join("old.part")).unwrap();
         let replacement = std::fs::File::create(&path).unwrap();
         assert!(verify(owners.get(id), name, &replacement).is_err());
