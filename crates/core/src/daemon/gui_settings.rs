@@ -190,9 +190,16 @@ mod tests {
         let path = test_path();
         assert!(load(&path).unwrap().is_empty());
         let conn = persistence::open(&path).unwrap();
+        // Root resolution inspects the durable task identity. Use a valid
+        // queue record while still checking reset preserves its exact bytes.
+        let queue_record = json!({
+            "url": "test", "state": "completed", "filename": null,
+            "downloaded": 0, "total": null, "speed_bps": 0, "final_path": null
+        })
+        .to_string();
         conn.execute(
-            "INSERT INTO rget_queue_v1 (url, info) VALUES ('test', 'history')",
-            [],
+            "INSERT INTO rget_queue_v1 (url, info) VALUES ('test', ?1)",
+            [&queue_record],
         )
         .unwrap();
         super::super::download_directory::ensure_schema(&conn).unwrap();
@@ -223,7 +230,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(history, "history");
+        assert_eq!(history, queue_record);
         let (default_path, override_path): (String, Option<String>) = conn
             .query_row(
                 "SELECT default_path, override_path FROM rget_download_directory_v1 WHERE id = 1",
