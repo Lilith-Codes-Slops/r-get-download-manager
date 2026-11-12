@@ -290,10 +290,19 @@ fn load(path: &Path) -> StoreResult<SavedState> {
             && !matches!(info.state.as_str(), "completed" | "canceled")
             && !info.state.starts_with("failed:")
         {
-            // Until recovery uses pinned root handles through every write and
-            // publication, do not start a confirmed worker on daemon restart.
-            // Preserve its progress and partial association for reconciliation.
-            info.state = "failed: cannot resume automatically: confirmed recovery is not yet safe; partial retained".into();
+            // A crash can occur after a publication link but before the task
+            // state is saved. Preserve its association and never claim either
+            // that a fresh transfer is safe or that publication did not occur.
+            #[cfg(target_os = "linux")]
+            let confirmed_http = info.torrent.is_none()
+                && !super::torrent_transfer_dispatch::is_torrent(&url);
+            #[cfg(not(target_os = "linux"))]
+            let confirmed_http = false;
+            info.state = if confirmed_http {
+                "failed: cannot resume automatically: publication may have occurred before interruption; partial retained"
+            } else {
+                "failed: cannot resume automatically: confirmed recovery is not yet safe; partial retained"
+            }.into();
         } else if !matches!(info.state.as_str(), "completed" | "canceled")
             && !info.state.starts_with("failed:")
         {

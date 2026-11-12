@@ -159,6 +159,17 @@ async fn publish_http_on_root(
     partial: &Path,
     destination: &Path,
 ) -> Result<PathBuf> {
+    publish_http_on_root_with_hook(root, database, id, partial, destination, || {}).await
+}
+
+async fn publish_http_on_root_with_hook<F: FnOnce()>(
+    root: HttpRoot,
+    database: &Path,
+    id: &str,
+    partial: &Path,
+    destination: &Path,
+    after_link: F,
+) -> Result<PathBuf> {
     use std::os::unix::fs::OpenOptionsExt;
     let anchored_partial = root.child(partial)?;
     let anchored_destination = root.child(destination)?;
@@ -172,9 +183,14 @@ async fn publish_http_on_root(
     }
     root.check()?;
     super::collision::publish_for_task(&anchored_partial, &anchored_destination, true).await?;
-    // If the path moved during publication, retain all evidence and do not
-    // report success. The link was made only in the pinned original directory.
-    root.check()?;
+    after_link();
+    // If the path moved during publication, the link may already exist in
+    // the original directory. Never report this as a completed transfer.
+    if let Err(error) = root.check() {
+        return Err(format!(
+            "publication outcome uncertain: the final link may exist in the original directory; partial retained: {error}"
+        ).into());
+    }
     Ok(destination.to_path_buf())
 }
 
@@ -585,6 +601,42 @@ mod tests {
         assert!(!root.join("file.bin").exists());
         assert!(!old.join("file.bin").exists());
         assert_eq!(std::fs::read(root.join(".rget-test.part")).unwrap(), b"replacement");
+        std::fs::remove_dir_all(lab).unwrap();
+    }
+
+    #[tokio::test]
+    async fn http_root_moved_after_publication_is_reported_uncertain() {
+        use std::os::unix::fs::MetadataExt;
+        let (db, lab) = fixture();
+        let root = lab.join("download");
+        std::fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let task = r#"{"url":"a","confirmed_filename":"file.bin"}"#;
+        bind_and_store_at(&db, "a", task, false, Path::new("/legacy/Downloads"), Some(&root)).unwrap();
+        let partial = root.join(".rget-test.part");
+        let destination = root.join("file.bin");
+        std::fs::write(&partial, b"original").unwrap();
+        let meta = std::fs::metadata(&partial).unwrap();
+        let conn = persistence::open(&db).unwrap();
+        conn.execute(
+            "INSERT INTO rget_http_partial_owner_v1(task_id,name,device,inode) VALUES(?1,?2,?3,?4)",
+            rusqlite::params!["a", ".rget-test.part", meta.dev().to_string(), meta.ino().to_string()],
+        ).unwrap();
+        drop(conn);
+        let anchor = HttpRoot::open(&db, "a").unwrap();
+        let old = lab.join("old-directory");
+        let moved_root = root.clone();
+        let moved_old = old.clone();
+        let result = publish_http_on_root_with_hook(anchor, &db, "a", &partial, &destination, move || {
+            std::fs::rename(&moved_root, &moved_old).unwrap();
+            std::fs::create_dir(&moved_root).unwrap();
+        }).await;
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("publication outcome uncertain"), "{error}");
+        assert!(error.contains("final link may exist"), "{error}");
+        assert!(!destination.exists());
+        assert_eq!(std::fs::read(old.join("file.bin")).unwrap(), b"original");
+        assert_eq!(std::fs::read(old.join(".rget-test.part")).unwrap(), b"original");
         std::fs::remove_dir_all(lab).unwrap();
     }
 

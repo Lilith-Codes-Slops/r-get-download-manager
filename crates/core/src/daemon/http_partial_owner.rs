@@ -248,8 +248,8 @@ mod tests {
         std::process::exit(0);
     }
 
-    #[test]
-    fn reservation_crash_never_leaves_unassociated_named_file() {
+    #[tokio::test]
+    async fn reservation_crash_never_leaves_unassociated_named_file() {
         for stage in ["before-confirm", "after-confirm", "after-link"] {
             let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
             let root = std::env::temp_dir().join(format!("rget-http-crash-{}-{stamp}-{stage}", std::process::id()));
@@ -281,6 +281,22 @@ mod tests {
                 assert!(!path.exists(), "unexpected named partial after {stage}");
             }
             drop(conn);
+            if stage == "after-link" {
+                // Simulate daemon startup before any checkpoint was written.
+                // The task retains its association and cannot silently start
+                // a fresh download or claim that the partial is resumable.
+                let loaded = Persistence::new(db.clone()).load().await.unwrap();
+                let id = "https://example.test/crash";
+                let task = loaded.tasks.get(id).unwrap();
+                assert!(task.state.contains("cannot resume automatically"));
+                assert!(task.state.contains("publication may have occurred"));
+                assert!(!task.resume_supported);
+                assert_eq!(task.partial_name.as_deref(), Some(".rget-crash.part"));
+                assert!(!loaded.prior_states.contains_key(id));
+                assert!(!loaded.checkpoints.contains_key(id));
+                assert!(!loaded.split_checkpoints.contains_key(id));
+                assert!(path.exists());
+            }
             std::fs::remove_dir_all(root).unwrap();
         }
     }
