@@ -61,6 +61,7 @@ async fn run_resume_test(mode: u8) {
             final_path: None,
             destination_path: None,
             suggested_filename: None,
+            confirmed_filename: None,
             torrent: None,
             resume_supported: true,
             partial_name: None,
@@ -156,4 +157,43 @@ async fn rejects_server_ignoring_range() {
 #[tokio::test]
 async fn rejects_incorrect_content_range() {
     run_resume_test(3).await;
+}
+
+#[tokio::test]
+async fn last_modified_resume_requires_a_strong_date_and_exact_match() {
+    async fn response(headers: &str, status: &str) -> reqwest::Response {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/file", listener.local_addr().unwrap());
+        let wire = format!("HTTP/1.1 {status}\r\n{headers}Connection: close\r\n\r\n");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            read_request(&mut socket).await;
+            socket.write_all(wire.as_bytes()).await.unwrap();
+        });
+        reqwest::Client::new().get(url).send().await.unwrap()
+    }
+    let modified = "Sun, 06 Nov 1994 08:49:37 GMT";
+    let initial = response(&format!("Content-Length: 12\r\nAccept-Ranges: bytes\r\nLast-Modified: {modified}\r\nDate: Sun, 06 Nov 1994 08:51:37 GMT\r\n"), "200 OK").await;
+    let mut info = range::detect(&initial).expect("valid Last-Modified");
+    assert_eq!(info.etag, modified);
+    let partial = response(
+        &format!(
+            "Content-Length: 8\r\nContent-Range: bytes 4-11/12\r\nLast-Modified: {modified}\r\n"
+        ),
+        "206 Partial Content",
+    )
+    .await;
+    info.url = partial.url().clone();
+    assert!(range::validate(&partial, &info, 4).is_ok());
+    let changed = response("Content-Length: 8\r\nContent-Range: bytes 4-11/12\r\nLast-Modified: Sun, 06 Nov 1994 08:49:38 GMT\r\n", "206 Partial Content").await;
+    info.url = changed.url().clone();
+    assert!(range::validate(&changed, &info, 4).is_err());
+    let recent = response(&format!("Content-Length: 12\r\nAccept-Ranges: bytes\r\nLast-Modified: {modified}\r\nDate: Sun, 06 Nov 1994 08:50:00 GMT\r\n"), "200 OK").await;
+    assert!(range::detect(&recent).is_none());
+    let weak = response(
+        "Content-Length: 12\r\nAccept-Ranges: bytes\r\nETag: W/\"v1\"\r\n",
+        "200 OK",
+    )
+    .await;
+    assert!(range::detect(&weak).is_none());
 }

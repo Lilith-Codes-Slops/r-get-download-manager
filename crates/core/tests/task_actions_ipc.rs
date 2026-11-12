@@ -29,6 +29,7 @@ impl Fixture {
                 .env("HOME", &self.root)
                 .env("XDG_RUNTIME_DIR", self.root.join("run"))
                 .env("XDG_STATE_HOME", self.root.join("state"))
+                .env("XDG_CONFIG_HOME", self.root.join(".config"))
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -392,4 +393,54 @@ fn late_collision_on_first_suffix_advances_to_second_suffix() {
     );
     assert!(!f.root.join("Downloads/late (1) (1).bin").exists());
     server.join().unwrap();
+}
+
+#[test]
+fn changing_folder_keeps_existing_task_root_for_removal_and_new_tasks_use_new_root() {
+    let mut f = Fixture::new();
+    // Avoid inheriting an unrelated host XDG Downloads setting.
+    std::fs::create_dir_all(f.root.join(".config")).unwrap();
+    std::fs::write(
+        f.root.join(".config/user-dirs.dirs"),
+        "XDG_DOWNLOAD_DIR=\"$HOME/Downloads\"\n",
+    )
+    .unwrap();
+    let next = f.root.join("new folder");
+    std::fs::create_dir(&next).unwrap();
+    f.start();
+    let (old_url, release, server) = serve(true, "held.bin");
+    f.add(&old_url);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let partial = loop {
+        if let Some(task) = f.task(&old_url) {
+            if task.downloaded > 0 {
+                if let Some(name) = task.partial_name {
+                    break name;
+                }
+            }
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(matches!(
+        f.request(ClientRequest::SetDownloadDirectory {
+            path: next.to_str().unwrap().into()
+        }),
+        DaemonEvent::DownloadDirectory { .. }
+    ));
+    std::fs::write(next.join(&partial), b"unrelated").unwrap();
+    let (new_url, _, new_server) = serve(false, "new.bin");
+    f.add(&new_url);
+    let new_task = f.wait(&new_url, "completed");
+    assert_eq!(
+        new_task.final_path.as_deref(),
+        next.join("new.bin").to_str()
+    );
+    assert_eq!(std::fs::read(next.join("new.bin")).unwrap(), b"abc");
+    f.delete(&old_url);
+    assert!(!f.root.join("Downloads").join(&partial).exists());
+    assert_eq!(std::fs::read(next.join(&partial)).unwrap(), b"unrelated");
+    let _ = release.send(());
+    server.join().unwrap();
+    new_server.join().unwrap();
 }

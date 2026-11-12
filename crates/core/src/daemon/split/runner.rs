@@ -47,6 +47,11 @@ pub(super) async fn run_checkpointed(
     };
     let workers = prepared.record.requested_connections as usize;
     let url = prepared.record.task_url.clone();
+    let preserve_partial = tasks
+        .lock()
+        .await
+        .get(&url)
+        .map_or(true, |task| task.confirmed_filename.is_some());
     let partial_name = prepared.record.partial_name.clone();
     let map = prepared.map;
     let file = prepared.file;
@@ -236,7 +241,17 @@ pub(super) async fn run_checkpointed(
             .as_ref()
             .is_some_and(|rx| *rx.borrow() == TransferControl::Canceled)
         {
+            if preserve_partial {
+                if let Err(error) = checkpoint.save(&map, &file, &store, &tasks).await {
+                    eprintln!("could not save retained split checkpoint: {error}");
+                }
+            }
             return Err("download canceled".into());
+        }
+        if preserve_partial && outcome.is_err() {
+            if let Err(error) = checkpoint.save(&map, &file, &store, &tasks).await {
+                eprintln!("could not save retained split checkpoint: {error}");
+            }
         }
         match outcome {
             Ok(()) => {

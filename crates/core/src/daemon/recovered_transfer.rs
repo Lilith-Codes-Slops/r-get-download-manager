@@ -18,6 +18,12 @@ pub(super) async fn run(
     mut control: watch::Receiver<TransferControl>,
 ) -> Result<PathBuf> {
     let url = item.record.task_url.clone();
+    // If the task disappeared, retain rather than guessing ownership.
+    let preserve_partial = tasks
+        .lock()
+        .await
+        .get(&url)
+        .map_or(true, |task| task.confirmed_filename.is_some());
     let final_path = item
         .partial
         .parent()
@@ -41,8 +47,10 @@ pub(super) async fn run(
         loop {
             if !wait_running(&tasks, &url, &mut control).await {
                 drop(file);
-                let _ = tokio::fs::remove_file(&item.partial).await;
-                let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+                if !preserve_partial {
+                    let _ = tokio::fs::remove_file(&item.partial).await;
+                    let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+                }
                 return Err("download canceled".into());
             }
             let request = client
@@ -55,7 +63,9 @@ pub(super) async fn run(
                 changed = control.changed() => { if changed.is_err() { return Err("download canceled".into()); } None },
             };
             let Some(response) = response else { continue };
-            super::range::validate_probe(&response, &info)?;
+            super::range::validate_probe(&response, &info).map_err(|error| {
+                format!("cannot resume automatically: {error}; partial retained")
+            })?;
             break;
         }
     }
@@ -74,9 +84,14 @@ pub(super) async fn run(
     )
     .await;
     if let Err(error) = result {
+        if preserve_partial {
+            if let Err(checkpoint_error) = checkpoint.save(&file, true).await {
+                eprintln!("could not save retained transfer checkpoint: {checkpoint_error}");
+            }
+        }
         drop(file);
         let canceled = *control.borrow() == TransferControl::Canceled;
-        if canceled {
+        if canceled && !preserve_partial {
             let _ = tokio::fs::remove_file(&item.partial).await;
             let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
         }
@@ -85,7 +100,7 @@ pub(super) async fn run(
     if let Err(error) = checkpoint.save(&file, true).await {
         drop(file);
         let canceled = *control.borrow() == TransferControl::Canceled;
-        if canceled {
+        if canceled && !preserve_partial {
             let _ = tokio::fs::remove_file(&item.partial).await;
             let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
         }
@@ -94,7 +109,7 @@ pub(super) async fn run(
     if let Err(error) = file.flush().await {
         drop(file);
         let canceled = *control.borrow() == TransferControl::Canceled;
-        if canceled {
+        if canceled && !preserve_partial {
             let _ = tokio::fs::remove_file(&item.partial).await;
             let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
         }
@@ -103,16 +118,20 @@ pub(super) async fn run(
     drop(file);
     let mut guard = loop {
         if !wait_running(&tasks, &url, &mut control).await {
-            let _ = tokio::fs::remove_file(&item.partial).await;
-            let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+            if !preserve_partial {
+                let _ = tokio::fs::remove_file(&item.partial).await;
+                let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+            }
             return Err("download canceled".into());
         }
         let mut guard = tasks.lock().await;
         let state = *control.borrow();
         if state == TransferControl::Canceled || !guard.contains_key(&url) {
             drop(guard);
-            let _ = tokio::fs::remove_file(&item.partial).await;
-            let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+            if !preserve_partial {
+                let _ = tokio::fs::remove_file(&item.partial).await;
+                let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+            }
             return Err("download canceled".into());
         }
         if state == TransferControl::Paused {
@@ -124,12 +143,22 @@ pub(super) async fn run(
         }
         break guard;
     };
-    let final_path = super::collision::publish(&item.partial, &final_path).await?;
+    let confirmed = guard
+        .get(&url)
+        .and_then(|task| task.confirmed_filename.as_deref());
+    if confirmed.is_some_and(|name| final_path.file_name().and_then(|s| s.to_str()) != Some(name)) {
+        return Err(
+            "checkpoint filename differs from the confirmed filename; partial retained".into(),
+        );
+    }
+    let final_path =
+        super::collision::publish_for_task(&item.partial, &final_path, confirmed.is_some()).await?;
     if let Some(task) = guard.get_mut(&url) {
         task.filename = final_path
             .file_name()
             .and_then(|n| n.to_str())
             .map(str::to_owned);
+        task.destination_path = Some(final_path.to_string_lossy().into_owned());
     }
     drop(guard);
     let _ = tokio::fs::remove_file(&item.partial).await;

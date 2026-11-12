@@ -73,6 +73,71 @@ pub(super) async fn available_from(path: &Path, renamed: bool) -> io::Result<Pat
     ))
 }
 
+/// Result of attempting publication under a name explicitly approved by the user.
+#[allow(dead_code)]
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ConfirmedPublication {
+    Published(PathBuf),
+    NeedsConfirmation(PathBuf),
+}
+
+/// Publish only under the approved name. A collision proposes a suffix but does
+/// not write to it: callers must obtain a new confirmation and retry. The
+/// no-clobber link also covers a collision occurring after confirmation.
+/// Callers must validate that both paths belong to the same bound task root and
+/// must persist pending confirmation before exposing this flow to clients.
+#[allow(dead_code)]
+pub(super) async fn publish_confirmed(
+    partial: &Path,
+    approved: &Path,
+) -> io::Result<ConfirmedPublication> {
+    match tokio::fs::hard_link(partial, approved).await {
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            return Ok(ConfirmedPublication::NeedsConfirmation(
+                available_from(approved, true).await?,
+            ));
+        }
+        Err(error) => return Err(error),
+        Ok(()) => {}
+    }
+    // A sync error occurs after publication, so it must never be interpreted as
+    // a collision or trigger another link under a different name.
+    #[cfg(unix)]
+    {
+        let parent = approved
+            .parent()
+            .ok_or_else(|| io::Error::other("destination has no directory"))?
+            .to_owned();
+        tokio::task::spawn_blocking(move || std::fs::File::open(parent)?.sync_all())
+            .await
+            .map_err(io::Error::other)??;
+    }
+    Ok(ConfirmedPublication::Published(approved.to_owned()))
+}
+
+/// Interim fail-closed publication for confirmed starts. Until the durable
+/// second-confirmation flow is integrated, a collision is an error and the
+/// caller must retain the partial; a suggested suffix is never published.
+pub(super) async fn publish_for_task(
+    partial: &Path,
+    proposed: &Path,
+    confirmed: bool,
+) -> io::Result<PathBuf> {
+    if !confirmed {
+        return publish(partial, proposed).await;
+    }
+    match publish_confirmed(partial, proposed).await? {
+        ConfirmedPublication::Published(path) => Ok(path),
+        ConfirmedPublication::NeedsConfirmation(candidate) => Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "destination already exists; confirmation required for {}",
+                candidate.display()
+            ),
+        )),
+    }
+}
+
 /// Hard-link the partial under the first name won atomically. Once linked, a
 /// directory-sync failure is returned without trying another name.
 pub(super) async fn publish(partial: &Path, proposed: &Path) -> io::Result<PathBuf> {
@@ -105,6 +170,81 @@ pub(super) async fn publish(partial: &Path, proposed: &Path) -> io::Result<PathB
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn confirmed_publication_never_uses_a_suffix_without_new_approval() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "rget-confirmed-publish-{}-{nonce}",
+            std::process::id()
+        ));
+        tokio::fs::create_dir(&dir).await.unwrap();
+        let original = dir.join("file.txt");
+        let first = dir.join("file (1).txt");
+        let second = dir.join("file (2).txt");
+        let partial = dir.join("partial");
+        tokio::fs::write(&original, b"existing").await.unwrap();
+        tokio::fs::write(&partial, b"download").await.unwrap();
+
+        assert_eq!(
+            publish_confirmed(&partial, &original).await.unwrap(),
+            ConfirmedPublication::NeedsConfirmation(first.clone())
+        );
+        assert!(!first.exists());
+        assert_eq!(tokio::fs::read(&original).await.unwrap(), b"existing");
+        // Someone claims the suggested name before the user approves it.
+        tokio::fs::write(&first, b"race").await.unwrap();
+        assert_eq!(
+            publish_confirmed(&partial, &first).await.unwrap(),
+            ConfirmedPublication::NeedsConfirmation(second.clone())
+        );
+        assert!(!second.exists());
+        assert_eq!(tokio::fs::read(&first).await.unwrap(), b"race");
+        assert_eq!(
+            publish_confirmed(&partial, &second).await.unwrap(),
+            ConfirmedPublication::Published(second.clone())
+        );
+        assert_eq!(tokio::fs::read(&second).await.unwrap(), b"download");
+        assert_eq!(tokio::fs::read(&partial).await.unwrap(), b"download");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn two_confirmed_publications_cannot_claim_the_same_name() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "rget-confirmed-race-{}-{nonce}",
+            std::process::id()
+        ));
+        tokio::fs::create_dir(&dir).await.unwrap();
+        let destination = dir.join("file.txt");
+        let suffix = dir.join("file (1).txt");
+        let first = dir.join("partial-a");
+        let second = dir.join("partial-b");
+        tokio::fs::write(&first, b"first").await.unwrap();
+        tokio::fs::write(&second, b"second").await.unwrap();
+        let (a, b) = tokio::join!(
+            publish_confirmed(&first, &destination),
+            publish_confirmed(&second, &destination)
+        );
+        let (a, b) = (a.unwrap(), b.unwrap());
+        assert!(
+            (a == ConfirmedPublication::Published(destination.clone())
+                && b == ConfirmedPublication::NeedsConfirmation(suffix.clone()))
+                || (b == ConfirmedPublication::Published(destination.clone())
+                    && a == ConfirmedPublication::NeedsConfirmation(suffix.clone()))
+        );
+        assert!(!suffix.exists());
+        assert_eq!(tokio::fs::read(&first).await.unwrap(), b"first");
+        assert_eq!(tokio::fs::read(&second).await.unwrap(), b"second");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
     #[tokio::test]
     async fn multiple_collisions_and_late_race_never_overwrite() {
         let nonce = std::time::SystemTime::now()

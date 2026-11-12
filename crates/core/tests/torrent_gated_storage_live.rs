@@ -134,3 +134,108 @@ async fn gated_default_storage_downloads_then_quiesces_before_verification() {
     drop(seed);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn single_file_gated_storage_stops_before_cleanup() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("rget-single-gated-{}-{nonce}", std::process::id()));
+    let seed_root = root.join("seed");
+    let output = root.join("output");
+    fs::create_dir_all(&seed_root).unwrap();
+    fs::create_dir_all(&output).unwrap();
+    fs::write(seed_root.join("abc.bin"), b"abc").unwrap();
+    let mut bytes = b"d4:infod6:lengthi3e4:name7:abc.bin12:piece lengthi16384e6:pieces20:".to_vec();
+    bytes.extend_from_slice(&[
+        0xa9, 0x99, 0x3e, 0x36, 0x47, 0x06, 0x81, 0x6a, 0xba, 0x3e, 0x25, 0x71, 0x78, 0x50, 0xc2,
+        0x6c, 0x9c, 0xd0, 0xd8, 0x9d,
+    ]);
+    bytes.extend_from_slice(b"ee");
+    let seed = Session::new_with_opts(
+        seed_root.clone(),
+        SessionOptions {
+            dht: None,
+            disable_trackers: true,
+            disable_local_service_discovery: true,
+            listen: Some(ListenerOptions {
+                mode: ListenerMode::TcpOnly,
+                listen_addr: ([127, 0, 0, 1], 0).into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let peer = seed.listen_addr().unwrap();
+    let seed_handle = seed
+        .add_torrent(
+            AddTorrent::from_bytes(bytes.clone()),
+            Some(AddTorrentOptions {
+                overwrite: true,
+                output_folder: Some(seed_root.to_str().unwrap().into()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap()
+        .into_handle()
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        seed_handle.wait_until_initialized(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(seed_handle.stats().finished);
+    let gate = StorageGate::new();
+    let downloader = Session::new_with_opts(
+        output.clone(),
+        SessionOptions {
+            dht: None,
+            disable_trackers: true,
+            disable_local_service_discovery: true,
+            disable_upload: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let handle = downloader
+        .add_torrent(
+            AddTorrent::from_bytes(bytes),
+            Some(AddTorrentOptions {
+                output_folder: Some(output.to_str().unwrap().into()),
+                initial_peers: Some(vec![peer]),
+                storage_factory: Some(GatedFilesystemFactory { gate: gate.clone() }.boxed()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap()
+        .into_handle()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(30), handle.wait_until_completed())
+        .await
+        .unwrap()
+        .unwrap();
+    downloader.stop().await;
+    let closer = gate.clone();
+    tokio::task::spawn_blocking(move || closer.close_and_wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(gate.enter().is_err());
+    assert_eq!(fs::read(output.join("abc.bin")).unwrap(), b"abc");
+    fs::remove_file(output.join("abc.bin")).unwrap();
+    seed.stop().await;
+    drop(handle);
+    drop(downloader);
+    drop(seed_handle);
+    drop(seed);
+    fs::remove_dir_all(root).unwrap();
+}

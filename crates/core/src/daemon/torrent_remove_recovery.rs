@@ -26,7 +26,8 @@ pub(super) fn recover(database: &Path, root: &Path) -> Result<Report> {
             if task.url != id {
                 return Err("task identity mismatch".into());
             }
-            torrent_remove_completed::execute(database, root, &task, true)
+            let task_root = super::task_directory::resolve(database, &id, root)?;
+            torrent_remove_completed::execute(database, &task_root, &task, true)
         })();
         match result {
             Ok(()) => report.removed += 1,

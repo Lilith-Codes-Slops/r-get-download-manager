@@ -51,6 +51,7 @@ impl Fixture {
                 final_path: None,
                 destination_path: None,
                 suggested_filename: None,
+                confirmed_filename: None,
                 torrent: None,
                 resume_supported: false,
                 partial_name: Some(".rget-1-1.part".into()),
@@ -83,6 +84,39 @@ fn restores_paused_state_and_truncates_only_uncheckpointed_tail() {
     assert!(result[0].paused);
     assert_eq!(std::fs::read(&f.partial).unwrap(), b"abcd");
     assert_eq!(f.state.tasks["https://example.test/file"].state, "paused");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn recovery_uses_task_root_not_the_fallback_root() {
+    let mut f = Fixture::new();
+    let other = f.dir.join("other");
+    std::fs::create_dir(&other).unwrap();
+    std::fs::copy(&f.partial, other.join(".rget-1-1.part")).unwrap();
+    std::fs::copy(&f.sidecar, other.join(".rget-1-1.part.meta")).unwrap();
+    f.state
+        .task_roots
+        .insert("https://example.test/file".into(), f.dir.clone());
+    let result = reconcile(&mut f.state, &other);
+    assert_eq!(result.len(), 1);
+    assert_eq!(std::fs::read(&f.partial).unwrap(), b"abcd");
+    assert_eq!(
+        std::fs::read(other.join(".rget-1-1.part")).unwrap(),
+        b"abcdtail"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn confirmed_recovery_without_bound_root_does_not_use_fallback() {
+    let mut f = Fixture::new();
+    let id = "https://example.test/file";
+    f.state.tasks.get_mut(id).unwrap().confirmed_filename = Some("file.bin".into());
+    assert!(reconcile(&mut f.state, &f.dir).is_empty());
+    assert!(f.state.tasks[id]
+        .state
+        .contains("task download root is missing"));
+    assert_eq!(std::fs::read(&f.partial).unwrap(), b"abcdtail");
 }
 
 #[test]
@@ -169,6 +203,27 @@ fn accepts_an_already_published_file_only_after_full_hash_match() {
         f.state.tasks["https://example.test/file"].state,
         "completed"
     );
+}
+
+#[test]
+fn confirmed_recovery_never_adopts_an_existing_matching_destination() {
+    let mut f = Fixture::new();
+    let id = "https://example.test/file";
+    f.state.tasks.get_mut(id).unwrap().confirmed_filename = Some("file.bin".into());
+    #[cfg(target_os = "linux")]
+    f.state.task_roots.insert(id.into(), f.dir.clone());
+    let complete = f.state.checkpoints.get_mut(id).unwrap();
+    complete.downloaded = 12;
+    complete.prefix_blake3 = blake3::hash(b"abcdefghijkl").to_hex().to_string();
+    std::fs::write(f.dir.join("file.bin"), b"abcdefghijkl").unwrap();
+    // The existing matching file is not evidence of publication ownership.
+    let _ = reconcile(&mut f.state, &f.dir);
+    assert_ne!(f.state.tasks[id].state, "completed");
+    assert_eq!(
+        std::fs::read(f.dir.join("file.bin")).unwrap(),
+        b"abcdefghijkl"
+    );
+    assert_eq!(std::fs::read(&f.partial).unwrap(), b"abcdtail");
 }
 
 #[test]

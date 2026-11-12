@@ -16,6 +16,10 @@ pub(super) struct SavedState {
     pub global_kbps: u64,
     pub task_kbps: HashMap<String, u64>,
     pub prior_states: HashMap<String, String>,
+    #[cfg(target_os = "linux")]
+    pub task_roots: HashMap<String, PathBuf>,
+    #[cfg(target_os = "linux")]
+    pub http_partial_owners: HashMap<String, super::http_partial_owner::Owner>,
     pub checkpoints: HashMap<String, RecoveryRecord>,
     #[cfg(target_os = "linux")]
     pub split_checkpoints: HashMap<String, super::split::checkpoint::SplitRecord>,
@@ -219,9 +223,12 @@ fn save(path: &Path, state: &SavedState) -> StoreResult<()> {
         [],
     )?;
     for (id, info) in &state.tasks {
+        // Failed or canceled confirmed tasks retain their owned checkpoint for
+        // safe retry, explicit removal or a confirmed restart-from-beginning.
+        let retain_partial = info.confirmed_filename.is_some() && info.partial_name.is_some();
         if info.state == "completed"
-            || info.state == "canceled"
-            || info.state.starts_with("failed:")
+            || (info.state == "canceled" && !retain_partial)
+            || (info.state.starts_with("failed:") && !retain_partial)
         {
             tx.execute("DELETE FROM rget_checkpoints_v1 WHERE url = ?1", [id])?;
             tx.execute("DELETE FROM rget_split_checkpoints_v2 WHERE url = ?1", [id])?;
@@ -252,6 +259,8 @@ fn save_recovery(path: &Path, task: &DownloadInfo, record: &RecoveryRecord) -> S
 
 fn load(path: &Path) -> StoreResult<SavedState> {
     let conn = open(path)?;
+    #[cfg(target_os = "linux")]
+    super::publication_confirmation::schema(&conn)?;
     let mut result = SavedState::default();
     let mut statement = conn.prepare("SELECT url, info FROM rget_queue_v1")?;
     let rows = statement.query_map([], |row| {
@@ -263,11 +272,28 @@ fn load(path: &Path) -> StoreResult<SavedState> {
         if info.url != url {
             return Err("stored task URL does not match its key".into());
         }
+        // A pending or previously approved collision must never be resumed or
+        // published automatically during recovery. Preserve its task data for
+        // reconciliation; a record is not proof that a staged file is owned.
+        #[cfg(target_os = "linux")]
+        let pending_publication = super::publication_confirmation::exists(&conn, &url)?;
+        #[cfg(not(target_os = "linux"))]
+        let pending_publication = false;
         // Without a durable byte map and validator, never pretend an unfinished
         // file can resume. The user can retry safely from the beginning.
         if info.state == "canceling" {
             // Never restart a transfer that the user had asked to cancel.
             info.state = "canceled".into();
+        } else if pending_publication && !matches!(info.state.as_str(), "completed" | "canceled") {
+            info.state = "awaiting publication confirmation".into();
+        } else if info.confirmed_filename.is_some()
+            && !matches!(info.state.as_str(), "completed" | "canceled")
+            && !info.state.starts_with("failed:")
+        {
+            // Until recovery uses pinned root handles through every write and
+            // publication, do not start a confirmed worker on daemon restart.
+            // Preserve its progress and partial association for reconciliation.
+            info.state = "failed: cannot resume automatically: confirmed recovery is not yet safe; partial retained".into();
         } else if !matches!(info.state.as_str(), "completed" | "canceled")
             && !info.state.starts_with("failed:")
         {
@@ -313,6 +339,8 @@ fn load(path: &Path) -> StoreResult<SavedState> {
     }
     #[cfg(target_os = "linux")]
     {
+        result.task_roots = super::task_directory::load_queue_roots(&conn)?;
+        result.http_partial_owners = super::http_partial_owner::load(&conn)?;
         result.split_checkpoints = super::split::startup::load_records(&conn)?;
     }
     let mut statement = conn.prepare("SELECT id, kbps FROM rget_rates_v1")?;
@@ -367,6 +395,7 @@ mod tests {
                     final_path: None,
                     destination_path: None,
                     suggested_filename: None,
+                    confirmed_filename: None,
                     torrent: None,
                     resume_supported: true,
                     partial_name: None,
@@ -400,6 +429,52 @@ mod tests {
         assert!(active.state.starts_with("failed: interrupted"));
         assert_eq!(active.downloaded, 0);
         assert!(!active.resume_supported);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pending_publication_never_auto_recovers_on_restart() {
+        let (path, mut state) = fixture();
+        let id = "https://example.test/live";
+        let task = state.tasks.get_mut(id).unwrap();
+        task.state = "finalizing".into();
+        task.partial_name = Some(".rget-1-1.part".into());
+        save(&path, &state).unwrap();
+        super::super::publication_confirmation::insert(&path, id, ".rget-1-1.part", "test (1).bin")
+            .unwrap();
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.tasks[id].state, "awaiting publication confirmation");
+        assert_eq!(loaded.tasks[id].downloaded, 12);
+        assert_eq!(
+            loaded.tasks[id].partial_name.as_deref(),
+            Some(".rget-1-1.part")
+        );
+        assert!(!loaded.prior_states.contains_key(id));
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn confirmed_interrupted_task_is_not_automatically_recovered() {
+        let (path, mut state) = fixture();
+        let id = "https://example.test/live";
+        let task = state.tasks.get_mut(id).unwrap();
+        task.confirmed_filename = Some("test.bin".into());
+        task.partial_name = Some(".rget-test.part".into());
+        let downloaded = task.downloaded;
+        let total = task.total;
+        save(&path, &state).unwrap();
+        let loaded = load(&path).unwrap();
+        assert!(!loaded.prior_states.contains_key(id));
+        assert!(loaded.tasks[id]
+            .state
+            .contains("cannot resume automatically"));
+        assert_eq!(
+            loaded.tasks[id].partial_name.as_deref(),
+            Some(".rget-test.part")
+        );
+        assert_eq!(loaded.tasks[id].downloaded, downloaded);
+        assert_eq!(loaded.tasks[id].total, total);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
@@ -444,6 +519,82 @@ mod tests {
             loaded.tasks[id].partial_name.as_deref(),
             Some(".rget-1-1.part")
         );
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn confirmed_failed_task_keeps_its_checkpoint_until_removed() {
+        let (path, mut state) = fixture();
+        let id = "https://example.test/live";
+        let task = state.tasks.get_mut(id).unwrap();
+        task.confirmed_filename = Some("approved.bin".into());
+        task.partial_name = Some(".rget-1-1.part".into());
+        let record = RecoveryRecord {
+            version: 1,
+            sequence: 7,
+            task_url: id.into(),
+            resolved_url: id.into(),
+            filename: "approved.bin".into(),
+            partial_name: ".rget-1-1.part".into(),
+            etag: "\"v1\"".into(),
+            total: 100,
+            downloaded: 12,
+            prefix_blake3: "hash".into(),
+        };
+        save_recovery(&path, task, &record).unwrap();
+        // Check retention independently for the split checkpoint table too.
+        let conn = open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO rget_split_checkpoints_v2 (url, info) VALUES (?1, ?2)",
+            params![id, "{}"],
+        )
+        .unwrap();
+        drop(conn);
+        task.state = "failed: network error".into();
+        save(&path, &state).unwrap();
+        assert_eq!(
+            load(&path).unwrap().checkpoints.get(id).unwrap().sequence,
+            7
+        );
+        let conn = open(&path).unwrap();
+        let split_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM rget_split_checkpoints_v2 WHERE url=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(split_count, 1);
+        drop(conn);
+        state.tasks.get_mut(id).unwrap().state = "canceled".into();
+        save(&path, &state).unwrap();
+        assert_eq!(
+            load(&path).unwrap().checkpoints.get(id).unwrap().sequence,
+            7
+        );
+        let conn = open(&path).unwrap();
+        let split_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM rget_split_checkpoints_v2 WHERE url=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(split_count, 1);
+        drop(conn);
+        state.tasks.remove(id);
+        save(&path, &state).unwrap();
+        assert!(!load(&path).unwrap().checkpoints.contains_key(id));
+        let conn = open(&path).unwrap();
+        let split_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM rget_split_checkpoints_v2 WHERE url=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(split_count, 0);
+        drop(conn);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 

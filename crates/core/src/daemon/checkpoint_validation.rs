@@ -28,7 +28,7 @@ pub(super) fn validate(
     if record.version != 1
         || record.sequence == 0
         || record.downloaded > record.total
-        || !super::range::strong_etag(&record.etag)
+        || !super::range::valid_validator(&record.etag)
     {
         return Err("invalid recovery metadata".into());
     }

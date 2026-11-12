@@ -5,10 +5,11 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-/// Minimal single-stream HTTP download into ~/Downloads with live progress.
+/// Minimal single-stream HTTP download into the task's root with live progress.
 pub(super) async fn download_file(
     url: &str,
     connections: u8,
+    root: &std::path::Path,
     tasks: Arc<Mutex<BTreeMap<String, DownloadInfo>>>,
     limiter: Arc<super::bandwidth::BandwidthLimiter>,
     store: Arc<super::persistence::Persistence>,
@@ -34,7 +35,12 @@ pub(super) async fn download_file(
 
     let total = resp.content_length();
     let mut resume = super::range::detect(&resp);
-    let filename = resp
+    let confirmed_name = tasks
+        .lock()
+        .await
+        .get(url)
+        .and_then(|task| task.confirmed_filename.clone());
+    let metadata_name = resp
         .headers()
         .get(reqwest::header::CONTENT_DISPOSITION)
         .and_then(|v| v.to_str().ok())
@@ -54,10 +60,17 @@ pub(super) async fn download_file(
                 .and_then(|mut s| s.next_back())
                 .map(|s| s.to_string())
         })
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "download.bin".into());
+        .filter(|s| !s.is_empty());
 
-    let filename = safe_filename(&filename)?;
+    // Metadata describes the source; it must not override the user's name.
+    // Preserve the legacy fallback for unconfirmed tasks only.
+    let metadata_name = if confirmed_name.is_some() {
+        metadata_name.filter(|name| safe_filename(name).is_ok())
+    } else {
+        let name = metadata_name.unwrap_or_else(|| "download.bin".into());
+        safe_filename(&name)?;
+        Some(name)
+    };
     // A split is attempted only when safe resume metadata and at least two
     // minimum-size ranges are available. The original response remains unused
     // so an unsupported probe can fall back to the normal single stream.
@@ -78,7 +91,7 @@ pub(super) async fn download_file(
                 fallback_note = Some(if resume.is_some() {
                     "Using one stream: the file is smaller than the minimum size for split downloads."
                 } else {
-                    "Using one stream: verified byte-range support, a strong ETag, or a known length is unavailable."
+                    "Using one stream: verified byte-range support, a usable validator, or a known length is unavailable."
                 });
                 false
             }
@@ -102,7 +115,7 @@ pub(super) async fn download_file(
             return Err("download canceled".into());
         }
         if let Some(task) = guard.get_mut(url) {
-            task.suggested_filename = Some(filename.to_owned());
+            task.suggested_filename = metadata_name.clone();
             task.total = total;
             task.resume_supported = resume.is_some();
             task.active_connections = Some(if split { 0 } else { 1 });
@@ -118,51 +131,101 @@ pub(super) async fn download_file(
             }
         }
     }
-    let dest = dirs_home()
-        .ok_or("HOME is not set; cannot determine the Downloads directory")?
-        .join("Downloads")
-        .join(filename);
+    let selected_name = safe_filename(
+        confirmed_name
+            .as_deref()
+            .or(metadata_name.as_deref())
+            .ok_or("download filename unavailable")?,
+    )?;
+    let dest = root.join(selected_name);
 
     if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent).await?;
+        if confirmed_name.is_some() {
+            if !tokio::fs::metadata(parent).await?.is_dir() {
+                return Err("bound download root is not a directory".into());
+            }
+        } else {
+            tokio::fs::create_dir_all(parent).await?;
+        }
     }
 
-    // The check is advisory; publication also handles races atomically.
-    let dest = super::collision::available_from(&dest, force_rename).await?;
+    // Confirmed starts must retain the exact approved name even when it is
+    // already taken; publication checks it atomically after the data is ready.
+    let dest = if confirmed_name.is_some() {
+        dest
+    } else {
+        super::collision::available_from(&dest, force_rename).await?
+    };
     let filename = dest
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or("invalid destination filename")?;
     if let Some(task) = tasks.lock().await.get_mut(url) {
         task.filename = Some(filename.to_owned());
+        task.destination_path = Some(dest.to_string_lossy().into_owned());
     }
 
-    // Stream into a uniquely-created side file. Publishing with hard_link is
-    // atomic and fails if the final name already exists, unlike rename on Unix.
-    let (temporary, mut file) = create_temporary_file(&dest).await?;
-    {
-        let mut guard = tasks.lock().await;
-        let canceled = *control.borrow() == super::control::TransferControl::Canceled;
-        if canceled || !guard.contains_key(url) {
-            drop(guard);
+    // Confirmed files reserve their task association and inode durably before
+    // any payload write. Legacy tasks retain their existing allocation path.
+    #[cfg(target_os = "linux")]
+    let (temporary, mut file) = if confirmed_name.is_some() {
+        super::http_partial_owner::create(&dest, url, &tasks, &store, &control).await?
+    } else {
+        let (temporary, file) = create_temporary_file(&dest).await?;
+        {
+            let mut guard = tasks.lock().await;
+            if *control.borrow() == super::control::TransferControl::Canceled
+                || !guard.contains_key(url)
+            {
+                drop(guard);
+                drop(file);
+                tokio::fs::remove_file(&temporary).await?;
+                return Err("download canceled".into());
+            }
+            if let Some(task) = guard.get_mut(url) {
+                task.partial_name = temporary
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(str::to_owned);
+            }
+        }
+        if let Err(error) = store.save(&tasks, &limiter).await {
             drop(file);
             let _ = tokio::fs::remove_file(&temporary).await;
-            return Err("download canceled".into());
+            return Err(error);
         }
-        if let Some(task) = guard.get_mut(url) {
-            task.partial_name = temporary
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(str::to_owned);
+        (temporary, file)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let (temporary, mut file) = {
+        if confirmed_name.is_some() {
+            return Err("confirmed HTTP partial ownership is unavailable on this platform".into());
         }
-    }
-    // Persist ownership of the partial name before the first sidecar rename, so
-    // a sidecar newer than SQLite can still be associated after a crash.
-    if let Err(e) = store.save(&tasks, &limiter).await {
-        drop(file);
-        let _ = tokio::fs::remove_file(&temporary).await;
-        return Err(e);
-    }
+        let (temporary, file) = create_temporary_file(&dest).await?;
+        {
+            let mut guard = tasks.lock().await;
+            if *control.borrow() == super::control::TransferControl::Canceled
+                || !guard.contains_key(url)
+            {
+                drop(guard);
+                drop(file);
+                tokio::fs::remove_file(&temporary).await?;
+                return Err("download canceled".into());
+            }
+            if let Some(task) = guard.get_mut(url) {
+                task.partial_name = temporary
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(str::to_owned);
+            }
+        }
+        if let Err(error) = store.save(&tasks, &limiter).await {
+            drop(file);
+            let _ = tokio::fs::remove_file(&temporary).await;
+            return Err(error);
+        }
+        (temporary, file)
+    };
     #[cfg(target_os = "linux")]
     if split {
         let info = resume.as_ref().ok_or("split metadata unavailable")?;
@@ -185,7 +248,9 @@ pub(super) async fn download_file(
             Ok(checkpoint) => Some(checkpoint),
             Err(e) => {
                 drop(file);
-                let _ = tokio::fs::remove_file(&temporary).await;
+                if confirmed_name.is_none() {
+                    let _ = tokio::fs::remove_file(&temporary).await;
+                }
                 return Err(e.into());
             }
         },
@@ -195,8 +260,10 @@ pub(super) async fn download_file(
         checkpoint.attach_persistence(store, tasks.clone());
         if let Err(e) = checkpoint.save(&file, true).await {
             drop(file);
-            let _ = tokio::fs::remove_file(&temporary).await;
-            let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+            if confirmed_name.is_none() {
+                let _ = tokio::fs::remove_file(&temporary).await;
+                let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+            }
             return Err(e);
         }
     }
@@ -218,7 +285,7 @@ pub(super) async fn download_file(
         Ok(n) => n,
         Err(e) => {
             let canceled = *control.borrow() == super::control::TransferControl::Canceled;
-            if !canceled {
+            if !canceled || confirmed_name.is_some() {
                 if let Some(checkpoint) = checkpoint.as_mut() {
                     if let Err(error) = checkpoint.save(&file, true).await {
                         eprintln!("could not save failed transfer checkpoint: {error}");
@@ -226,8 +293,9 @@ pub(super) async fn download_file(
                 }
             }
             drop(file);
-            if *control.borrow() == super::control::TransferControl::Canceled
-                || checkpoint.is_none()
+            if confirmed_name.is_none()
+                && (*control.borrow() == super::control::TransferControl::Canceled
+                    || checkpoint.is_none())
             {
                 let _ = tokio::fs::remove_file(&temporary).await;
                 if let Some(checkpoint) = &checkpoint {
@@ -240,16 +308,20 @@ pub(super) async fn download_file(
     if let Some(checkpoint) = checkpoint.as_mut() {
         if let Err(e) = checkpoint.save(&file, true).await {
             drop(file);
-            let _ = tokio::fs::remove_file(&temporary).await;
-            let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+            if confirmed_name.is_none() {
+                let _ = tokio::fs::remove_file(&temporary).await;
+                let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+            }
             return Err(e);
         }
     }
     if let Err(e) = file.flush().await {
         drop(file);
-        let _ = tokio::fs::remove_file(&temporary).await;
-        if let Some(checkpoint) = &checkpoint {
-            let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+        if confirmed_name.is_none() {
+            let _ = tokio::fs::remove_file(&temporary).await;
+            if let Some(checkpoint) = &checkpoint {
+                let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+            }
         }
         return Err(e.into());
     }
@@ -262,9 +334,11 @@ pub(super) async fn download_file(
     // not publish even if a new task with the same URL has since been queued.
     let mut guard = loop {
         if !super::control::wait_running(&tasks, url, &mut control).await {
-            let _ = tokio::fs::remove_file(&temporary).await;
-            if let Some(checkpoint) = &checkpoint {
-                let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+            if confirmed_name.is_none() {
+                let _ = tokio::fs::remove_file(&temporary).await;
+                if let Some(checkpoint) = &checkpoint {
+                    let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+                }
             }
             return Err("download canceled".into());
         }
@@ -272,9 +346,11 @@ pub(super) async fn download_file(
         let state = *control.borrow();
         if state == super::control::TransferControl::Canceled || !guard.contains_key(url) {
             drop(guard);
-            let _ = tokio::fs::remove_file(&temporary).await;
-            if let Some(checkpoint) = &checkpoint {
-                let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+            if confirmed_name.is_none() {
+                let _ = tokio::fs::remove_file(&temporary).await;
+                if let Some(checkpoint) = &checkpoint {
+                    let _ = tokio::fs::remove_file(&checkpoint.sidecar).await;
+                }
             }
             return Err("download canceled".into());
         }
@@ -289,9 +365,11 @@ pub(super) async fn download_file(
     };
     // The link may exist even if directory syncing fails; preserve the partial
     // and checkpoint on every publication error instead of deleting evidence.
-    let dest = super::collision::publish(&temporary, &dest).await?;
+    let dest =
+        super::collision::publish_for_task(&temporary, &dest, confirmed_name.is_some()).await?;
     if let Some(task) = guard.get_mut(url) {
         task.filename = dest.file_name().and_then(|n| n.to_str()).map(str::to_owned);
+        task.destination_path = Some(dest.to_string_lossy().into_owned());
     }
     drop(guard);
     // A cleanup failure leaves only a redundant .part file, not a corrupted
@@ -349,13 +427,13 @@ async fn create_temporary_file(
     ))
 }
 
-fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
-}
 fn safe_filename(name: &str) -> Result<&str, std::io::Error> {
     use std::path::Component;
     let mut components = std::path::Path::new(name).components();
-    if name.contains('\\')
+    if name.trim().is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
         || !matches!(components.next(), Some(Component::Normal(_)))
         || components.next().is_some()
         || name == "."

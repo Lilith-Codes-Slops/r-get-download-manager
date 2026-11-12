@@ -83,6 +83,28 @@ async fn crash_after_rename_recovers_only_after_piece_verification() {
 }
 
 #[tokio::test]
+async fn publication_recovery_uses_bound_root_not_legacy_root() {
+    let (root, store, _) = published().await;
+    let path = store.database_path();
+    let downloads = root.join("Downloads");
+    let legacy = root.join("different");
+    fs::create_dir(&legacy).unwrap();
+    super::task_directory::resolve(&path, "task", &legacy).unwrap();
+    let conn = super::persistence::open(&path).unwrap();
+    conn.execute(
+        "INSERT INTO rget_task_directory_v1 (task_id, root) VALUES (?1, ?2)",
+        rusqlite::params!["task", downloads.to_str().unwrap()],
+    )
+    .unwrap();
+    drop(conn);
+    let report = recovery::recover(&path, &legacy).unwrap();
+    assert_eq!(report.completed, 1);
+    assert!(downloads.join("bundle/dir/file").is_file());
+    assert!(!legacy.join("bundle").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn tampering_or_missing_piece_metadata_never_completes_or_deletes() {
     for missing in [false, true] {
         let (root, store, _) = published().await;

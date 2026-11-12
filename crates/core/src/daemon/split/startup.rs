@@ -52,6 +52,10 @@ fn already_published(saved: &mut SavedState, root: &Path, id: &str, partial: &Pa
     let Some(task) = saved.tasks.get(id) else {
         return false;
     };
+    // A content match does not prove this confirmed task published the file.
+    if task.confirmed_filename.is_some() {
+        return false;
+    }
     if task.partial_name.as_deref() != Some(record.partial_name.as_str())
         || recovery::validate_record(record, partial).is_err()
         || record
@@ -91,6 +95,21 @@ fn already_published(saved: &mut SavedState, root: &Path, id: &str, partial: &Pa
 pub(in crate::daemon) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<PreparedSplit> {
     let mut result = Vec::new();
     for (id, prior) in saved.prior_states.clone() {
+        let task_root = saved.task_roots.get(&id).cloned();
+        if task_root.is_none()
+            && saved
+                .tasks
+                .get(&id)
+                .is_some_and(|task| task.confirmed_filename.is_some())
+        {
+            if let Some(task) = saved.tasks.get_mut(&id) {
+                task.state = "failed: cannot resume automatically: task download root is missing; partial retained".into();
+                task.resume_supported = false;
+            }
+            saved.prior_states.remove(&id);
+            continue;
+        }
+        let root = task_root.as_deref().unwrap_or(root);
         let Some(name) = saved
             .tasks
             .get(&id)
@@ -130,6 +149,35 @@ pub(in crate::daemon) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<P
                 .filter(|record| record.partial_name == name),
         );
         match prepared {
+            Ok(item)
+                if saved
+                    .tasks
+                    .get(&id)
+                    .is_some_and(|task| task.confirmed_filename.is_some())
+                    && crate::daemon::http_partial_owner::verify(
+                        saved.http_partial_owners.get(&id),
+                        &name,
+                        &item.file,
+                    )
+                    .is_err() =>
+            {
+                if let Some(task) = saved.tasks.get_mut(&id) {
+                    task.state = "failed: cannot resume automatically: partial ownership not established; partial retained".into();
+                    task.resume_supported = false;
+                }
+            }
+            Ok(item)
+                if saved
+                    .tasks
+                    .get(&id)
+                    .and_then(|task| task.confirmed_filename.as_deref())
+                    .is_some_and(|name| name != item.record.filename.as_str()) =>
+            {
+                if let Some(task) = saved.tasks.get_mut(&id) {
+                    task.state = "failed: cannot resume automatically: checkpoint filename differs from confirmed name; partial retained".into();
+                    task.resume_supported = false;
+                }
+            }
             Ok(item) => {
                 if let Some(task) = saved.tasks.get_mut(&id) {
                     task.state = if matches!(prior.as_str(), "paused" | "pausing") {
@@ -141,6 +189,11 @@ pub(in crate::daemon) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<P
                     task.downloaded = item.record.segments.iter().map(|s| s.downloaded).sum();
                     task.total = Some(item.record.total);
                     task.filename = Some(item.record.filename.clone());
+                    task.destination_path = Some(
+                        root.join(&item.record.filename)
+                            .to_string_lossy()
+                            .into_owned(),
+                    );
                     task.speed_bps = 0;
                     task.resume_supported = true;
                     task.requested_connections = Some(

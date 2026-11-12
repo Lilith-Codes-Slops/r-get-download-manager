@@ -20,6 +20,16 @@ pub(super) fn strong_etag(value: &str) -> bool {
             .all(|&b| b == 0x21 || (0x23..=0x7e).contains(&b) || b >= 0x80)
 }
 
+// The checkpoint's historical `etag` field stores the exact If-Range value.
+// IMF-fixdate is unambiguous and cannot be confused with an entity tag. Older
+// checkpoints remain compatible and older versions fail closed on date values.
+pub(super) fn valid_validator(value: &str) -> bool {
+    strong_etag(value)
+        || httpdate::parse_http_date(value)
+            .ok()
+            .is_some_and(|date| httpdate::fmt_http_date(date) == value)
+}
+
 fn one_header(
     headers: &header::HeaderMap,
     name: header::HeaderName,
@@ -56,13 +66,18 @@ fn valid_encoding(response: &Response) -> Result<(), String> {
 }
 
 fn validate_identity(response: &Response, resume: &ResumeInfo) -> Result<(), String> {
-    if !strong_etag(&resume.etag) {
-        return Err("range requires a strong ETag".into());
+    if !valid_validator(&resume.etag) {
+        return Err("range requires a valid validator".into());
     }
     if response.url() != &resume.url {
         return Err("range redirected to a different resource".into());
     }
-    if one_header(response.headers(), header::ETAG)? != Some(resume.etag.as_str()) {
+    let validator_header = if strong_etag(&resume.etag) {
+        header::ETAG
+    } else {
+        header::LAST_MODIFIED
+    };
+    if one_header(response.headers(), validator_header)? != Some(resume.etag.as_str()) {
         return Err("range validator changed or was omitted".into());
     }
     valid_encoding(response)
@@ -77,12 +92,30 @@ pub(super) fn detect(response: &Response) -> Option<ResumeInfo> {
     {
         return None;
     }
-    let etag = one_header(headers, header::ETAG).ok()??;
-    if !strong_etag(etag) || valid_encoding(response).is_err() {
+    if valid_encoding(response).is_err() {
         return None;
     }
+    // Last-Modified is a strong validator only when the server's Date is at
+    // least 60 seconds later (RFC 9110 section 8.8.2.2). Refuse ambiguous or
+    // malformed dates rather than appending to a possibly changed resource.
+    let etag = one_header(headers, header::ETAG).ok()?;
+    let validator = if let Some(etag) = etag.filter(|value| strong_etag(value)) {
+        etag
+    } else {
+        let modified = one_header(headers, header::LAST_MODIFIED).ok()??;
+        let date = one_header(headers, header::DATE).ok()??;
+        if !valid_validator(modified) || strong_etag(modified) {
+            return None;
+        }
+        let modified_time = httpdate::parse_http_date(modified).ok()?;
+        let date_time = httpdate::parse_http_date(date).ok()?;
+        if date_time.duration_since(modified_time).ok()?.as_secs() < 60 {
+            return None;
+        }
+        modified
+    };
     Some(ResumeInfo {
-        etag: etag.into(),
+        etag: validator.into(),
         total: response.content_length()?,
         url: response.url().clone(),
     })

@@ -40,6 +40,15 @@ impl ServerLoop {
                     return;
                 }
             };
+            // Initialize the selection and migrate legacy roots before recovery.
+            if let Err(error) = store.load_download_directory().await {
+                eprintln!("failed to initialize download directory: {error}");
+                return;
+            }
+            if let Err(error) = store.migrate_task_directories().await {
+                eprintln!("failed to migrate task download directories: {error}");
+                return;
+            }
             #[cfg(feature = "torrent")]
             super::torrent_settings::log_config(&store).await;
             #[cfg(feature = "torrent")]
@@ -86,6 +95,7 @@ impl ServerLoop {
                         return;
                     }
                 };
+            let task_roots = saved.task_roots.clone();
             let tasks = Arc::new(Mutex::new(saved.tasks));
             let limiter = Arc::new(super::bandwidth::BandwidthLimiter::new());
             if let Err(e) = limiter.set(None, saved.global_kbps).await {
@@ -164,9 +174,10 @@ impl ServerLoop {
             }
             if let Some(root) = &root {
                 for item in split_recovered {
+                    let task_root = task_roots.get(&item.record.task_url).unwrap_or(root);
                     super::split::live::spawn(
                         item,
-                        root,
+                        task_root,
                         tasks.clone(),
                         controls.clone(),
                         limiter.clone(),
@@ -250,6 +261,16 @@ impl ServerLoop {
                                             if !matches!(&req, ClientRequest::GetDetailedQueue) { eprintln!("received: {req:?}"); }
                                             let should_save = matches!(&req, ClientRequest::AddTask { .. } | ClientRequest::Pause { .. } | ClientRequest::Resume { .. } | ClientRequest::Cancel { .. } | ClientRequest::RemoveTask { .. } | ClientRequest::SetLimit { .. } | ClientRequest::SetConnections { .. });
                                             let reply = match req {
+                                                // Do not start confirmed tasks until their exact publication and
+                                                // retry guarantees are integrated across all transfer paths.
+                                                ClientRequest::AddConfirmedTask { url, filename, .. } => {
+                                                    let error = if filename.trim().is_empty() {
+                                                        "confirmed filename is unavailable; obtain metadata and choose a filename before starting"
+                                                    } else {
+                                                        "confirmed downloads are not available until publication confirmation is integrated"
+                                                    };
+                                                    DaemonEvent::TaskFailed { task_id: url, error: error.into() }
+                                                }
                                                 ClientRequest::AddTask { url, mirrors, connections, extract, category, not_before } => {
                                                     if !(1..=32).contains(&connections) || !mirrors.is_empty() || extract || category.is_some() || not_before.is_some() {
                                                         DaemonEvent::TaskFailed { task_id: url, error: "connections must be 1–32; mirrors, extraction, categories and scheduling are not yet supported".into() }
@@ -258,49 +279,64 @@ impl ServerLoop {
                                                     } else if !matches!(reqwest::Url::parse(&url), Ok(ref u) if matches!(u.scheme(), "http" | "https")) {
                                                         DaemonEvent::TaskFailed { task_id: url, error: "only valid HTTP and HTTPS URLs are supported".into() }
                                                     } else {
+                                                        let admission = store.gate.lock().await;
                                                         let mut guard = tasks.lock().await;
-                                                        if guard.get(&url).is_some_and(|state| !state.state.starts_with("failed:") && state.state != "canceled" && state.state != "completed") {
+                                                        if guard.get(&url).is_some_and(|state| state.confirmed_filename.is_some()) {
+                                                            DaemonEvent::TaskFailed { task_id: url, error: "confirmed task already exists; use its retry control or remove it first".into() }
+                                                        } else if guard.get(&url).is_some_and(|state| !state.state.starts_with("failed:") && state.state != "canceled" && state.state != "completed") {
                                                             let state = guard.get(&url).map(|t| t.state.clone()).unwrap_or_default();
                                                             drop(guard);
+                                                            drop(admission);
                                                             if state == "paused" { super::control::set_paused(&tasks, &controls, url, false).await }
                                                             else { DaemonEvent::TaskStateChanged { task_id: url, state, destination_path: None } }
                                                         } else {
                                                             let prior = guard.get(&url).cloned();
-                                                            guard.insert(url.clone(), DownloadInfo { url: url.clone(), state: "downloading".into(), filename: None, downloaded: 0, total: None, speed_bps: 0, final_path: None, destination_path: None, suggested_filename: prior.as_ref().filter(|t| t.state != "completed" && t.state != "canceled").and_then(|t| t.suggested_filename.clone()), torrent: None, resume_supported: false, partial_name: prior.as_ref().filter(|t| t.state != "completed" && t.state != "canceled").and_then(|t| t.partial_name.clone()), requested_connections: Some(connections), active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false });
-                                                            let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(super::control::TransferControl::Running);
-                                                            controls.lock().await.insert(url.clone(), cancel_tx);
-                                                            drop(guard);
-                                                            let task_id = url.clone();
-                                                            let task_states = tasks.clone();
-                                                            let task_limiter = limiter.clone();
-                                                            let limiter_for_task_save = limiter.clone();
-                                                            let task_store = store.clone();
-                                                            let transfer_store = store.clone();
-                                                            tokio::spawn(async move {
-                                                                let result = super::retry::run(&task_id, connections, prior, task_states.clone(), task_limiter, transfer_store, cancel_rx.clone()).await;
-                                                                let mut guard = task_states.lock().await;
-                                                                if let Some(task) = guard.get_mut(&task_id) {
-                                                                    task.speed_bps = 0; task.active_connections = Some(0); task.live_connections_supported = false;
-                                                                    if *cancel_rx.borrow() == super::control::TransferControl::Canceled {
-                                                                        task.state = "canceled".into();
-                                                                        task.resume_supported = false;
-                                                                    } else {
-                                                                        match result {
-                                                                            Ok(path) => { task.state = "completed".into(); task.final_path = Some(path.to_string_lossy().into_owned()); task.partial_name = None; }
-                                                                            Err(e) => { task.state = format!("failed: {e}"); task.resume_supported = false; }
+                                                            let new_task = DownloadInfo { url: url.clone(), state: "downloading".into(), filename: None, confirmed_filename: None, downloaded: 0, total: None, speed_bps: 0, final_path: None, destination_path: None, suggested_filename: prior.as_ref().filter(|t| t.state != "completed" && t.state != "canceled").and_then(|t| t.suggested_filename.clone()), torrent: None, resume_supported: false, partial_name: prior.as_ref().filter(|t| t.state != "completed" && t.state != "canceled").and_then(|t| t.partial_name.clone()), requested_connections: Some(connections), active_connections: None, segment_count: None, connection_note: None, live_connections_supported: false };
+                                                            let retry = prior.as_ref().is_some_and(|task| task.state != "completed");
+                                                            if let Err(error) = store.bind_task_directory_locked(&new_task, retry).await {
+                                                                DaemonEvent::TaskFailed { task_id: url, error: format!("could not bind task directory: {error}") }
+                                                            } else {
+                                                                guard.insert(url.clone(), new_task);
+                                                                let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(super::control::TransferControl::Running);
+                                                                controls.lock().await.insert(url.clone(), cancel_tx);
+                                                                drop(guard);
+                                                                drop(admission);
+                                                                let task_id = url.clone();
+                                                                let task_states = tasks.clone();
+                                                                let task_limiter = limiter.clone();
+                                                                let limiter_for_task_save = limiter.clone();
+                                                                let task_store = store.clone();
+                                                                let transfer_store = store.clone();
+                                                                tokio::spawn(async move {
+                                                                    let result = super::retry::run(&task_id, connections, prior, task_states.clone(), task_limiter, transfer_store, cancel_rx.clone()).await;
+                                                                    let mut guard = task_states.lock().await;
+                                                                    if let Some(task) = guard.get_mut(&task_id) {
+                                                                        task.speed_bps = 0; task.active_connections = Some(0); task.live_connections_supported = false;
+                                                                        if *cancel_rx.borrow() == super::control::TransferControl::Canceled {
+                                                                            task.state = "canceled".into();
+                                                                            task.resume_supported = false;
+                                                                        } else {
+                                                                            match result {
+                                                                                Ok(path) => { task.state = "completed".into(); task.final_path = Some(path.to_string_lossy().into_owned()); task.partial_name = None; }
+                                                                                Err(e) => { task.state = format!("failed: {e}"); task.resume_supported = false; }
+                                                                            }
                                                                         }
                                                                     }
-                                                                }
-                                                                drop(guard);
-                                                                super::progress_events::notify();
-                                                                if let Err(e) = task_store.save(&task_states, &limiter_for_task_save).await { eprintln!("queue checkpoint failed: {e}"); }
-                                                            });
-                                                            DaemonEvent::TaskStateChanged { task_id: url, state: "downloading".into(), destination_path: None }
+                                                                    drop(guard);
+                                                                    super::progress_events::notify();
+                                                                    if let Err(e) = task_store.save(&task_states, &limiter_for_task_save).await { eprintln!("queue checkpoint failed: {e}"); }
+                                                                });
+                                                                DaemonEvent::TaskStateChanged { task_id: url, state: "downloading".into(), destination_path: None }
+                                                            }
                                                         }
                                                     }
                                                 }
                                                 ClientRequest::Pause { task_id } => super::control::set_paused(&tasks, &controls, task_id, true).await,
                                                 ClientRequest::Resume { task_id } => super::control::set_paused(&tasks, &controls, task_id, false).await,
+                                                // Do not expose a worker or destructive restart until every
+                                                // partial ownership and lifecycle check is in place.
+                                                ClientRequest::Retry { task_id } => DaemonEvent::TaskFailed { task_id, error: "safe retry is not available yet; partial data was not changed".into() },
+                                                ClientRequest::RestartFromBeginning { task_id, confirmed } => DaemonEvent::TaskFailed { task_id, error: if confirmed { "restart from beginning is not available yet; partial data was not changed" } else { "restart from beginning requires explicit confirmation; partial data was not changed" }.into() },
                                                 ClientRequest::Cancel { task_id } => super::task_removal::cancel(&tasks, &controls, task_id).await,
                                                 ClientRequest::RemoveTask { task_id, delete_file } => {
                                                     super::torrent_remove_dispatch::remove(&tasks, &controls, &limiter, &store, task_id, delete_file).await
@@ -357,6 +393,49 @@ impl ServerLoop {
                                                     match guard.get(&id) {
                                                         Some(state) => DaemonEvent::TaskStateChanged { task_id: id, state: state.state.clone(), destination_path: super::destination::path(state) },
                                                         None => DaemonEvent::TaskFailed { task_id: id, error: "task not found".into() },
+                                                    }
+                                                }
+                                                ClientRequest::GetGuiSettings => {
+                                                    match store.load_gui_settings().await {
+                                                        Ok(overrides) => DaemonEvent::GuiSettings { overrides },
+                                                        Err(e) => DaemonEvent::TaskFailed { task_id: String::new(), error: format!("could not load GUI settings: {e}") },
+                                                    }
+                                                }
+                                                ClientRequest::SetGuiSetting { key, value } => {
+                                                    match store.set_gui_setting(key, value).await {
+                                                        Ok(overrides) => DaemonEvent::GuiSettings { overrides },
+                                                        Err(e) => DaemonEvent::TaskFailed { task_id: String::new(), error: format!("could not save GUI setting: {e}") },
+                                                    }
+                                                }
+                                                ClientRequest::UpdateGuiSettings { changes } => {
+                                                    match store.update_gui_settings(changes).await {
+                                                        Ok(overrides) => DaemonEvent::GuiSettings { overrides },
+                                                        Err(e) => DaemonEvent::TaskFailed { task_id: String::new(), error: format!("could not save GUI settings: {e}") },
+                                                    }
+                                                }
+                                                ClientRequest::ResetGuiSettings => {
+                                                    match store.reset_gui_settings().await {
+                                                        Ok(overrides) => DaemonEvent::GuiSettings { overrides },
+                                                        Err(e) => DaemonEvent::TaskFailed { task_id: String::new(), error: format!("could not reset GUI settings: {e}") },
+                                                    }
+                                                }
+                                                ClientRequest::GetDownloadDirectory => {
+                                                    match store.load_download_directory().await {
+                                                        Ok(path) => DaemonEvent::DownloadDirectory { path: path.to_string_lossy().into_owned() },
+                                                        Err(e) => DaemonEvent::TaskFailed { task_id: String::new(), error: format!("could not load download directory: {e}") },
+                                                    }
+                                                }
+                                                ClientRequest::SetDownloadDirectory { path } => {
+                                                    match store.set_download_directory(std::path::PathBuf::from(path)).await {
+                                                        Ok(path) => DaemonEvent::DownloadDirectory { path: path.to_string_lossy().into_owned() },
+                                                        Err(e) => DaemonEvent::TaskFailed { task_id: String::new(), error: format!("could not save download directory: {e}") },
+                                                    }
+                                                }
+                                                ClientRequest::ValidateDownloadDirectory { path } => {
+                                                    match tokio::task::spawn_blocking(move || super::download_directory::validate(std::path::Path::new(&path))).await {
+                                                        Ok(Ok(path)) => DaemonEvent::DownloadDirectory { path: path.to_string_lossy().into_owned() },
+                                                        Ok(Err(e)) => DaemonEvent::TaskFailed { task_id: String::new(), error: format!("invalid download directory: {e}") },
+                                                        Err(e) => DaemonEvent::TaskFailed { task_id: String::new(), error: format!("directory validation failed: {e}") },
                                                     }
                                                 }
                                                 ClientRequest::GetPostDownloadSettings => {

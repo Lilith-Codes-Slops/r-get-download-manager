@@ -5,16 +5,22 @@ use super::{
     persistence::Persistence,
 };
 use crate::protocols::torrent::{
-    concurrency_queue, metadata,
+    concurrency_queue,
+    gated_storage::GatedFilesystemFactory,
+    metadata,
     metrics::MetricsTracker,
     picker_capabilities,
     session::{download_only_options, with_discovery},
     source,
     stall_detector::StallEvent,
+    storage_gate::StorageGate,
     task_identity::{self, Prepared},
 };
 use downloader_ipc::{DaemonEvent, DownloadInfo, TorrentIdentity};
-use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, ManagedTorrent, Session};
+use librqbit::{
+    storage::StorageFactoryExt, AddTorrent, AddTorrentOptions, AddTorrentResponse, ManagedTorrent,
+    Session,
+};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -27,6 +33,42 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 pub(super) async fn add(
     source: String,
     connections: u8,
+    tasks: Tasks,
+    controls: Controls,
+    limiter: Arc<BandwidthLimiter>,
+    store: Arc<Persistence>,
+) -> DaemonEvent {
+    add_inner(source, connections, None, tasks, controls, limiter, store).await
+}
+
+/// Internal confirmed admission is deliberately not exposed by the IPC server
+/// until retry and collision state can be verified across all torrent paths.
+#[allow(dead_code)]
+pub(super) async fn add_confirmed(
+    source: String,
+    connections: u8,
+    confirmed: super::confirmed_start::ConfirmedStart,
+    tasks: Tasks,
+    controls: Controls,
+    limiter: Arc<BandwidthLimiter>,
+    store: Arc<Persistence>,
+) -> DaemonEvent {
+    add_inner(
+        source,
+        connections,
+        Some(confirmed),
+        tasks,
+        controls,
+        limiter,
+        store,
+    )
+    .await
+}
+
+async fn add_inner(
+    source: String,
+    connections: u8,
+    confirmed: Option<super::confirmed_start::ConfirmedStart>,
     tasks: Tasks,
     controls: Controls,
     limiter: Arc<BandwidthLimiter>,
@@ -74,6 +116,7 @@ pub(super) async fn add(
             false
         }
     };
+    let admission = store.gate.lock().await;
     let mut guard = tasks.lock().await;
     let duplicate = guard
         .values()
@@ -86,6 +129,20 @@ pub(super) async fn add(
         })
         .cloned();
     if let Some(task) = &duplicate {
+        if confirmed.is_some() {
+            return DaemonEvent::TaskFailed {
+                task_id: task.url.clone(),
+                error: "torrent already exists; remove the existing task first".into(),
+            };
+        }
+        // A legacy add must not overwrite a confirmed name or stage on retry.
+        if task.confirmed_filename.is_some() {
+            return DaemonEvent::TaskFailed {
+                task_id: task.url.clone(),
+                error: "confirmed task already exists; use its retry control or remove it first"
+                    .into(),
+            };
+        }
         let failed = task.state.starts_with("failed:") || task.state == "canceled";
         let same_source = task.torrent.as_ref().is_some_and(|t| t.source == source);
         if failed
@@ -99,6 +156,9 @@ pub(super) async fn add(
             return DaemonEvent::TaskFailed { task_id: task.url.clone(), error: "remove the failed task with keep or delete before retrying its retained partial".into() };
         }
     }
+    let retry = duplicate
+        .as_ref()
+        .is_some_and(|task| task.state.starts_with("failed:") || task.state == "canceled");
     let (id, created_at, seed) = match duplicate {
         Some(task)
             if (task.torrent.as_ref().is_some_and(|t| t.source == source)
@@ -140,6 +200,7 @@ pub(super) async fn add(
         final_path: None,
         destination_path: None,
         suggested_filename: None,
+        confirmed_filename: confirmed.as_ref().map(|request| request.filename.clone()),
         torrent: Some(TorrentIdentity {
             source,
             info_hash: Some(prepared.info_hash.clone()),
@@ -159,13 +220,33 @@ pub(super) async fn add(
         connection_note: Some("Torrent: pause, resume and speed limits are not available".into()),
         live_connections_supported: false,
     };
+    let binding = match confirmed {
+        Some(request) => {
+            store
+                .bind_task_directory_locked_at(&task, false, request.folder)
+                .await
+        }
+        None => store.bind_task_directory_locked(&task, retry).await,
+    };
+    if let Err(error) = binding {
+        return DaemonEvent::TaskFailed {
+            task_id: id,
+            error: format!("could not bind task directory: {error}"),
+        };
+    }
     guard.insert(id.clone(), task);
     let ticket = concurrency_queue::global().register(id.clone());
     let (tx, rx) = watch::channel(TransferControl::Running);
     controls.lock().await.insert(id.clone(), tx);
-    drop(guard);
     let task_id = id.clone();
+    let worker_tasks = tasks.clone();
+    let worker_store = store.clone();
+    let worker_limiter = limiter.clone();
+    // Do not let removal and re-admission overtake the worker's creation.
     tokio::spawn(async move {
+        let tasks = worker_tasks;
+        let store = worker_store;
+        let limiter = worker_limiter;
         let mut receiver = rx.clone();
         let acquired =
             super::torrent_queue::wait_for_slot(&task_id, &tasks, &ticket, &mut receiver).await;
@@ -184,7 +265,7 @@ pub(super) async fn add(
                     )
                     .await
                 } else {
-                    run(&task_id, connections, &tasks, rx.clone(), prepared).await
+                    run(&task_id, connections, &tasks, &store, rx.clone(), prepared).await
                 };
                 (result, Some(permit))
             }
@@ -223,6 +304,8 @@ pub(super) async fn add(
             eprintln!("torrent queue save failed: {error}");
         }
     });
+    drop(guard);
+    drop(admission);
     DaemonEvent::TaskStateChanged {
         task_id: id,
         state: "queued".into(),
@@ -234,11 +317,23 @@ async fn run(
     id: &str,
     connections: u8,
     tasks: &Tasks,
+    store: &Persistence,
     mut control: watch::Receiver<TransferControl>,
     prepared: Prepared,
 ) -> Result<()> {
-    let root = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join("Downloads");
-    tokio::fs::create_dir_all(&root).await?;
+    let root = store.task_directory(id).await?;
+    let confirmed = tasks
+        .lock()
+        .await
+        .get(id)
+        .map_or(true, |task| task.confirmed_filename.is_some());
+    if confirmed {
+        if !tokio::fs::metadata(&root).await?.is_dir() {
+            return Err("bound download root is not a directory".into());
+        }
+    } else {
+        tokio::fs::create_dir_all(&root).await?;
+    }
     let stage = make_stage(&root).await?;
     super::torrent_cleanup::write_marker(&stage, id).await?;
     {
@@ -271,8 +366,10 @@ async fn run(
                 })?
         }
     };
+    let gate = StorageGate::new();
     let result = download(
         &session,
+        &gate,
         &root,
         &stage,
         id,
@@ -283,6 +380,39 @@ async fn run(
     )
     .await;
     session.stop().await;
+    // stop() alone does not join all engine tasks; close the storage gate and
+    // wait for admitted I/O before publication or cleanup.
+    let closer = gate.clone();
+    match tokio::task::spawn_blocking(move || closer.close_and_wait()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            return Err(
+                super::torrent_multi_transfer::StorageQuiescenceFailed(format!(
+                    "{error}; stage retained at {}",
+                    stage.display()
+                ))
+                .into(),
+            )
+        }
+        Err(error) => {
+            return Err(
+                super::torrent_multi_transfer::StorageQuiescenceFailed(format!(
+                    "barrier task failed: {error}; stage retained at {}",
+                    stage.display()
+                ))
+                .into(),
+            )
+        }
+    }
+    #[cfg(feature = "torrent-test-hooks")]
+    {
+        let rejected = crate::protocols::torrent::gated_storage::probe_late_write(gate.clone());
+        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            super::torrent_test_hooks::late_write(rejected)?;
+            super::torrent_test_hooks::pause("after-barrier")
+        })
+        .await??;
+    }
     let staged = match result {
         Ok(staged) => staged,
         Err(error) => {
@@ -302,9 +432,21 @@ async fn run(
         task.state = "finalizing".into();
     }
     sync_staged(&staged).await?;
+    let confirmed_name = tasks
+        .lock()
+        .await
+        .get(id)
+        .and_then(|task| task.confirmed_filename.clone());
     let name = staged.file_name().ok_or("torrent filename missing")?;
-    let proposed = root.join(name);
-    let dest = super::collision::publish(&staged, &proposed).await?;
+    let proposed = match &confirmed_name {
+        Some(name) => {
+            super::confirmed_start::validate_filename(name)?;
+            root.join(name)
+        }
+        None => root.join(name),
+    };
+    let dest =
+        super::collision::publish_for_task(&staged, &proposed, confirmed_name.is_some()).await?;
     {
         let mut guard = tasks.lock().await;
         let task = guard
@@ -312,7 +454,8 @@ async fn run(
             .ok_or("torrent task removed during publication")?;
         task.filename = dest.file_name().map(|s| s.to_string_lossy().into_owned());
         task.final_path = Some(dest.to_string_lossy().into_owned());
-        task.state = "completed".into();
+        // Remain finalizing until stage cleanup is finished; removal must not
+        // observe completion while this worker is still changing the stage.
         if let Some(metrics) = task
             .torrent
             .as_ref()
@@ -321,25 +464,44 @@ async fn run(
             crate::protocols::torrent::diagnostics::log_completion(id, metrics);
         }
     }
-    if let Err(error) = tokio::fs::remove_file(&staged).await {
-        eprintln!("torrent staging cleanup: {error}");
-    }
-    if let Err(error) = tokio::fs::remove_file(stage.join(super::torrent_cleanup::MARKER)).await {
-        eprintln!("torrent marker cleanup: {error}");
-    }
-    if let Err(error) = tokio::fs::remove_dir(&stage).await {
-        eprintln!("torrent staging directory cleanup: {error}");
-    }
-    if let Some(task) = tasks.lock().await.get_mut(id) {
-        if let Some(identity) = &mut task.torrent {
-            identity.stage_name = None;
+    let cleaned = match tokio::fs::remove_file(&staged).await {
+        Ok(()) => match tokio::fs::remove_file(stage.join(super::torrent_cleanup::MARKER)).await {
+            Ok(()) => match tokio::fs::remove_dir(&stage).await {
+                Ok(()) => true,
+                Err(error) => {
+                    eprintln!("torrent staging directory cleanup: {error}");
+                    false
+                }
+            },
+            Err(error) => {
+                eprintln!("torrent marker cleanup: {error}");
+                false
+            }
+        },
+        Err(error) => {
+            eprintln!("torrent staging cleanup: {error}");
+            false
         }
+    };
+    if let Some(task) = tasks.lock().await.get_mut(id) {
+        if cleaned {
+            if let Some(identity) = &mut task.torrent {
+                identity.stage_name = None;
+            }
+        } else {
+            task.connection_note = Some(format!(
+                "published file; staging cleanup incomplete at {}",
+                stage.display()
+            ));
+        }
+        task.state = "completed".into();
     }
     Ok(())
 }
 
 async fn download(
     session: &Arc<Session>,
+    gate: &StorageGate,
     root: &Path,
     stage: &Path,
     id: &str,
@@ -371,7 +533,17 @@ async fn download(
         .name()
         .ok_or("torrent filename missing")?
         .to_string();
-    let proposed = super::collision::available(&root.join(&filename)).await?;
+    let confirmed_name = tasks
+        .lock()
+        .await
+        .get(id)
+        .and_then(|task| task.confirmed_filename.clone());
+    let proposed = if let Some(name) = &confirmed_name {
+        super::confirmed_start::validate_filename(name)?;
+        root.join(name)
+    } else {
+        super::collision::available(&root.join(&filename)).await?
+    };
     {
         let mut guard = tasks.lock().await;
         if *control.borrow() == TransferControl::Canceled {
@@ -382,6 +554,7 @@ async fn download(
         task.filename = proposed
             .file_name()
             .map(|s| s.to_string_lossy().into_owned());
+        task.destination_path = Some(proposed.to_string_lossy().into_owned());
         task.total = meta.info.info().length;
         if let Some(identity) = &mut task.torrent {
             identity.metrics = Some(metrics.snapshot.clone());
@@ -399,6 +572,7 @@ async fn download(
     let opts = AddTorrentOptions {
         initial_peers: Some(meta.seen_peers),
         peer_limit: Some(connections as usize),
+        storage_factory: Some(GatedFilesystemFactory { gate: gate.clone() }.boxed()),
         ..Default::default()
     };
     let added = tokio::select! {

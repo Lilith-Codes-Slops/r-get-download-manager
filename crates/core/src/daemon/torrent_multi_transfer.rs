@@ -17,7 +17,7 @@ use librqbit::{
     storage::StorageFactoryExt, AddTorrent, AddTorrentOptions, AddTorrentResponse, Session,
 };
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -62,13 +62,26 @@ pub(super) async fn run(
     if *control.borrow() == TransferControl::Canceled {
         return Err("torrent canceled".into());
     }
+    let root = store.task_directory(id).await?;
+    // Missing task state is not permission to clean an owned stage.
+    let preserve_partial = tasks
+        .lock()
+        .await
+        .get(id)
+        .map_or(true, |task| task.confirmed_filename.is_some());
+    // Do not recreate a missing bound root for a confirmed task.
+    if preserve_partial {
+        if !tokio::fs::metadata(&root).await?.is_dir() {
+            return Err("bound download root is not a directory".into());
+        }
+    } else {
+        tokio::fs::create_dir_all(&root).await?;
+    }
     // The metadata state and task identity must be durable before reservation.
     store.save(tasks, limiter).await?;
     let reservation = store
         .save_manifest_info_and_reserve(tasks, id, &prepared.info_hash, &manifest, &bytes)
         .await?;
-    let root = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join("Downloads");
-    tokio::fs::create_dir_all(&root).await?;
     let opened = open_root(&root).await?;
     let stage = reservation.allocate(opened).await?;
     let stage_path = root.join(".rget-staging").join(&stage.record.name);
@@ -85,15 +98,21 @@ pub(super) async fn run(
             stage,
             &stage_path,
             format!("could not persist stage: {error}"),
+            preserve_partial,
         )
         .await
         .into());
     }
     let canceled = *control.borrow() == TransferControl::Canceled;
     if canceled {
-        return Err(cleanup(stage, &stage_path, "torrent canceled".into())
-            .await
-            .into());
+        return Err(cleanup(
+            stage,
+            &stage_path,
+            "torrent canceled".into(),
+            preserve_partial,
+        )
+        .await
+        .into());
     }
     let payload_path = stage_path.join("payload");
     let session = match Session::new_with_opts(
@@ -104,11 +123,14 @@ pub(super) async fn run(
     {
         Ok(session) => session,
         Err(error) => {
-            return Err(
-                cleanup(stage, &stage_path, format!("torrent session: {error:#}"))
-                    .await
-                    .into(),
+            return Err(cleanup(
+                stage,
+                &stage_path,
+                format!("torrent session: {error:#}"),
+                preserve_partial,
             )
+            .await
+            .into())
         }
     };
     let gate = StorageGate::new();
@@ -154,22 +176,36 @@ pub(super) async fn run(
         .await??;
     }
     if let Err(error) = outcome {
-        return Err(cleanup(stage, &stage_path, error.to_string()).await.into());
+        return Err(
+            cleanup(stage, &stage_path, error.to_string(), preserve_partial)
+                .await
+                .into(),
+        );
     }
     let canceled = *control.borrow() == TransferControl::Canceled;
     if canceled {
-        return Err(cleanup(stage, &stage_path, "torrent canceled".into())
-            .await
-            .into());
+        return Err(cleanup(
+            stage,
+            &stage_path,
+            "torrent canceled".into(),
+            preserve_partial,
+        )
+        .await
+        .into());
     }
     {
         let mut guard = tasks.lock().await;
         let canceled = *control.borrow() == TransferControl::Canceled;
         if canceled {
             drop(guard);
-            return Err(cleanup(stage, &stage_path, "torrent canceled".into())
-                .await
-                .into());
+            return Err(cleanup(
+                stage,
+                &stage_path,
+                "torrent canceled".into(),
+                preserve_partial,
+            )
+            .await
+            .into());
         }
         let task = guard.get_mut(id).ok_or("torrent task removed")?;
         task.state = "finalizing".into();
@@ -180,6 +216,7 @@ pub(super) async fn run(
             stage,
             &stage_path,
             format!("could not persist finalizing state: {error}"),
+            preserve_partial,
         )
         .await
         .into());
@@ -204,8 +241,15 @@ pub(super) async fn run(
         .get(id)
         .cloned()
         .ok_or("torrent task removed")?;
+    let destination = match &task.confirmed_filename {
+        Some(name) => {
+            super::confirmed_start::validate_filename(name)?;
+            name.clone()
+        }
+        None => manifest.root_name().to_owned(),
+    };
     let published = stage
-        .publish_with_piece_verification(task, manifest.root_name().to_owned())
+        .publish_with_piece_verification(task, destination)
         .await
         .map_err(|e| {
             format!(
@@ -232,10 +276,18 @@ async fn open_root(root: &Path) -> Result<std::fs::File> {
     .await??)
 }
 
-async fn cleanup(stage: AllocatedStage, path: &Path, reason: String) -> String {
+async fn cleanup(
+    stage: AllocatedStage,
+    path: &Path,
+    reason: String,
+    preserve_partial: bool,
+) -> String {
     let path = path.to_owned();
     match tokio::task::spawn_blocking(move || {
         let db = stage.reservation.database.clone();
+        if preserve_partial {
+            return torrent_stage_store::retain(&db, &stage.record);
+        }
         torrent_stage_store::cleanup_recorded(
             &db,
             &stage.area,
@@ -246,6 +298,7 @@ async fn cleanup(stage: AllocatedStage, path: &Path, reason: String) -> String {
     })
     .await
     {
+        Ok(Ok(())) if preserve_partial => format!("{reason}; stage retained at {}", path.display()),
         Ok(Ok(())) => reason,
         Ok(Err(error)) => format!("{reason}; stage retained at {}: {error}", path.display()),
         Err(error) => format!(

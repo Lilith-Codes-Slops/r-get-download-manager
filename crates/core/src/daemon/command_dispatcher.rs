@@ -6,8 +6,15 @@ impl CommandDispatcher {
     pub async fn dispatch(&self, req: ClientRequest) -> Result<(), String> {
         match req {
             ClientRequest::AddTask { .. } => Ok(()),
+            ClientRequest::AddConfirmedTask { .. } => Err(
+                "confirmed downloads are not available until publication confirmation is integrated"
+                    .into(),
+            ),
             ClientRequest::Pause { .. } => Ok(()),
             ClientRequest::Resume { .. } => Ok(()),
+            ClientRequest::Retry { .. } | ClientRequest::RestartFromBeginning { .. } => {
+                Err("safe retry and restart are not available yet".into())
+            }
             ClientRequest::Cancel { .. } => Ok(()),
             ClientRequest::RefreshUrl { .. } => Ok(()),
             ClientRequest::SetLimit { .. } | ClientRequest::SetConnections { .. } => Ok(()),
@@ -22,7 +29,14 @@ impl CommandDispatcher {
             ClientRequest::AddMirror { .. } => Ok(()),
             ClientRequest::SelectMediaQuality { .. } => Ok(()),
             ClientRequest::VerifyChecksum { .. } => Ok(()),
-            ClientRequest::GetPostDownloadSettings
+            ClientRequest::GetGuiSettings
+            | ClientRequest::SetGuiSetting { .. }
+            | ClientRequest::UpdateGuiSettings { .. }
+            | ClientRequest::ResetGuiSettings
+            | ClientRequest::GetDownloadDirectory
+            | ClientRequest::SetDownloadDirectory { .. }
+            | ClientRequest::ValidateDownloadDirectory { .. }
+            | ClientRequest::GetPostDownloadSettings
             | ClientRequest::SetPostDownloadSettings { .. } => Ok(()),
             ClientRequest::Shutdown => Ok(()),
         }

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 pub enum TorrentSource {
     Magnet(String),
     MetainfoFile(PathBuf),
+    MetainfoUrl(String),
 }
 
 /// Classification only: the engine must still validate the magnet or metainfo.
@@ -14,7 +15,19 @@ pub fn classify(source: &str) -> Option<TorrentSource> {
     if source.starts_with("magnet:?") {
         return Some(TorrentSource::Magnet(source.to_owned()));
     }
-    if source.contains("://") || source.is_empty() {
+    if source.contains("://") {
+        let url = reqwest::Url::parse(source).ok()?;
+        if matches!(url.scheme(), "http" | "https")
+            && Path::new(url.path())
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("torrent"))
+        {
+            return Some(TorrentSource::MetainfoUrl(source.to_owned()));
+        }
+        return None;
+    }
+    if source.is_empty() {
         return None;
     }
     let path = Path::new(source);
@@ -50,7 +63,12 @@ mod tests {
 
     #[test]
     fn does_not_confuse_http_or_other_inputs_with_local_files() {
-        assert_eq!(classify("https://example.test/file.torrent"), None);
+        assert_eq!(
+            classify("https://example.test/file.torrent?token=x"),
+            Some(TorrentSource::MetainfoUrl(
+                "https://example.test/file.torrent?token=x".into()
+            ))
+        );
         assert_eq!(classify("file:///tmp/file.torrent"), None);
         assert_eq!(classify("magnet:bad"), None);
         assert_eq!(classify(""), None);

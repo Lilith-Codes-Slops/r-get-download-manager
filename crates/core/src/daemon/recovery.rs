@@ -55,6 +55,23 @@ fn choose(
 pub(super) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<PreparedRecovery> {
     let mut prepared = Vec::new();
     for (id, previous_state) in saved.prior_states.clone() {
+        #[cfg(target_os = "linux")]
+        let task_root = saved.task_roots.get(&id).cloned();
+        #[cfg(target_os = "linux")]
+        if task_root.is_none()
+            && saved
+                .tasks
+                .get(&id)
+                .is_some_and(|task| task.confirmed_filename.is_some())
+        {
+            if let Some(task) = saved.tasks.get_mut(&id) {
+                task.state = "failed: cannot resume automatically: task download root is missing; partial retained".into();
+                task.resume_supported = false;
+            }
+            continue;
+        }
+        #[cfg(target_os = "linux")]
+        let root = task_root.as_deref().unwrap_or(root);
         if restore_published_file(saved, root, &id) {
             continue;
         }
@@ -66,6 +83,11 @@ pub(super) fn reconcile(saved: &mut SavedState, root: &Path) -> Vec<PreparedReco
                     task.downloaded = item.record.downloaded;
                     task.total = Some(item.record.total);
                     task.filename = Some(item.record.filename.clone());
+                    task.destination_path = Some(
+                        root.join(&item.record.filename)
+                            .to_string_lossy()
+                            .into_owned(),
+                    );
                     task.resume_supported = true;
                     task.speed_bps = 0;
                 }
@@ -92,6 +114,11 @@ fn restore_published_file(saved: &mut SavedState, root: &Path, id: &str) -> bool
     let Some(task) = saved.tasks.get(id) else {
         return false;
     };
+    // A matching digest does not prove that a pre-existing destination was
+    // created by this confirmed task. Leave publication for reconciliation.
+    if task.confirmed_filename.is_some() {
+        return false;
+    }
     let mut components = Path::new(&record.filename).components();
     if record.version != 1
         || record.sequence == 0
@@ -188,11 +215,28 @@ pub(super) fn prepare_one(
     if record.downloaded > record.total {
         return Err("checkpoint exceeds total length".into());
     }
+    let confirmed = saved
+        .tasks
+        .get(id)
+        .and_then(|task| task.confirmed_filename.as_deref());
+    if confirmed.is_some_and(|name| name != record.filename.as_str()) {
+        return Err("cannot resume automatically: checkpoint filename differs from confirmed name; partial retained".into());
+    }
     // A destination collision is resolved atomically when the validated partial is published.
     let (mut file, hash) =
         verify_prefix(&record, &partial).map_err(|e| format!("partial validation failed: {e}"))?;
-    file.set_len(record.downloaded).map_err(|e| e.to_string())?;
-    file.sync_all().map_err(|e| e.to_string())?;
+    if confirmed.is_some() {
+        #[cfg(target_os = "linux")]
+        super::http_partial_owner::verify(saved.http_partial_owners.get(id), name, &file)?;
+        // Do not discard uncheckpointed bytes or modify the file before a
+        // remote validator has been checked. Fail closed if there is a tail.
+        if file.metadata().map_err(|e| e.to_string())?.len() != record.downloaded {
+            return Err("cannot resume automatically: partial contains uncheckpointed data; partial retained".into());
+        }
+    } else {
+        file.set_len(record.downloaded).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+    }
     file.seek(SeekFrom::Start(record.downloaded))
         .map_err(|e| e.to_string())?;
     if record != sidecar_record {

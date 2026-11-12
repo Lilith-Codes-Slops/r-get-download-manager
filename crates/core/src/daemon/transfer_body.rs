@@ -44,7 +44,9 @@ pub(super) async fn receive(
         let resp = if let Some(resp) = response.take() {
             resp
         } else {
-            let info = resume.ok_or("safe resume metadata unavailable")?;
+            let info = resume.ok_or(
+                "cannot resume automatically: safe resume metadata unavailable; partial retained",
+            )?;
             let mut request = client
                 .get(url)
                 .header(reqwest::header::ACCEPT_ENCODING, "identity");
@@ -58,7 +60,9 @@ pub(super) async fn receive(
                 changed = control.changed() => { if changed.is_err() { return Err("download canceled".into()); } None },
             };
             let Some(resp) = result else { continue };
-            validate(&resp, info, downloaded)?;
+            validate(&resp, info, downloaded).map_err(|error| {
+                format!("cannot resume automatically: {error}; partial retained")
+            })?;
             resp
         };
         if let Some(task) = tasks.lock().await.get_mut(url) {

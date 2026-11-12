@@ -78,6 +78,11 @@ impl Persistence {
         let root = root.map(|path| path.to_path_buf());
         tokio::task::spawn_blocking(move || -> Result<()> {
             let (_lifecycle, _gate) = (lifecycle, gate);
+            if let Some(root) = &root {
+                if super::task_directory::resolve(&database, &task.url, root)? != *root {
+                    return Err("task directory changed during removal; retry".into());
+                }
+            }
             forget(&database, root.as_deref(), &task)?;
             tasks.remove(&task.url);
             Ok(())

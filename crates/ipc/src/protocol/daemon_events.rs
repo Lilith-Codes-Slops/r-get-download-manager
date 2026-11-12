@@ -16,6 +16,10 @@ pub struct DownloadInfo {
     /// Original response/URL-derived name before collision handling, when recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggested_filename: Option<String>,
+    /// User-approved destination component, independent of source metadata.
+    /// Older or unconfirmed tasks do not have this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmed_filename: Option<String>,
     /// Torrent identity; absent for HTTP tasks and older queue records.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub torrent: Option<TorrentIdentity>,
@@ -214,6 +218,14 @@ pub enum DaemonEvent {
     QueueSnapshot {
         tasks: Vec<String>,
     },
+    /// User-specified GUI settings; missing keys fall back to defaults.
+    GuiSettings {
+        overrides: std::collections::BTreeMap<String, serde_json::Value>,
+    },
+    /// Directory used for newly admitted tasks.
+    DownloadDirectory {
+        path: String,
+    },
     /// Current daemon-wide post-download action settings.
     PostDownloadSettings {
         settings: PostDownloadSettings,
@@ -350,6 +362,26 @@ mod tests {
     }
 
     #[test]
+    fn gui_settings_overrides_roundtrip() {
+        let event = DaemonEvent::GuiSettings {
+            overrides: [("theme".to_owned(), serde_json::json!("dark"))]
+                .into_iter()
+                .collect(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
+    }
+
+    #[test]
+    fn download_directory_roundtrips() {
+        let event = DaemonEvent::DownloadDirectory {
+            path: "/tmp/downloads".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(serde_json::from_str::<DaemonEvent>(&json).unwrap(), event);
+    }
+
+    #[test]
     fn post_download_settings_roundtrips() {
         let settings = PostDownloadSettings {
             open_containing_folder: true,
@@ -372,6 +404,24 @@ mod tests {
     }
 
     #[test]
+    fn confirmed_name_is_distinct_from_metadata_and_defaults_for_older_records() {
+        let old = r#"{"url":"https://example.test/file","state":"queued","filename":null,"downloaded":0,"total":null,"speed_bps":0,"final_path":null}"#;
+        let mut task: DownloadInfo = serde_json::from_str(old).unwrap();
+        assert_eq!(task.confirmed_filename, None);
+        task.confirmed_filename = Some("approved.txt".into());
+        task.suggested_filename = Some("from-server.txt".into());
+        task.filename = Some("displayed.txt".into());
+        let decoded: DownloadInfo =
+            serde_json::from_str(&serde_json::to_string(&task).unwrap()).unwrap();
+        assert_eq!(decoded.confirmed_filename.as_deref(), Some("approved.txt"));
+        assert_eq!(
+            decoded.suggested_filename.as_deref(),
+            Some("from-server.txt")
+        );
+        assert_eq!(decoded.filename.as_deref(), Some("displayed.txt"));
+    }
+
+    #[test]
     fn detailed_queue_roundtrips() {
         let event = DaemonEvent::DetailedQueue {
             tasks: vec![DownloadInfo {
@@ -384,6 +434,7 @@ mod tests {
                 final_path: None,
                 destination_path: None,
                 suggested_filename: None,
+                confirmed_filename: None,
                 torrent: None,
                 resume_supported: false,
                 partial_name: None,

@@ -333,7 +333,17 @@ async fn removal_recovery_resumes_only_when_identity_is_still_proven() {
     assert!(unsafe_entry.exists());
     assert!(lab.downloads.join("bundle").exists());
     fs::remove_file(unsafe_entry).unwrap();
-    let report = super::torrent_remove_recovery::recover(&database, &lab.downloads).unwrap();
+    let other = lab.root.join("other-downloads");
+    fs::create_dir(&other).unwrap();
+    super::task_directory::resolve(&database, "task", &other).unwrap();
+    let conn = super::persistence::open(&database).unwrap();
+    conn.execute(
+        "INSERT INTO rget_task_directory_v1 (task_id, root) VALUES (?1, ?2)",
+        rusqlite::params!["task", lab.downloads.to_str().unwrap()],
+    )
+    .unwrap();
+    drop(conn);
+    let report = super::torrent_remove_recovery::recover(&database, &other).unwrap();
     assert_eq!(report.removed, 1);
     assert!(!lab.downloads.join("bundle").exists());
     assert!(!lab.store.load().await.unwrap().tasks.contains_key("task"));

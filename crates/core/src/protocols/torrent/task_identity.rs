@@ -63,16 +63,56 @@ pub async fn prepare(source: &TorrentSource) -> Result<Prepared, MetadataError> 
             if bytes.len() as u64 > MAX_METAINFO_BYTES {
                 return Err(MetadataError::Invalid("metainfo exceeds 8 MiB".into()));
             }
-            let hash = librqbit::torrent_from_bytes(&bytes)
-                .map_err(|e| MetadataError::Invalid(format!("{e}")))?
-                .info_hash
-                .as_string();
-            Ok(Prepared {
-                source: PreparedSource::Metainfo(bytes),
-                info_hash: hash,
-            })
+            prepare_bytes(bytes)
+        }
+        TorrentSource::MetainfoUrl(url) => {
+            use futures_util::StreamExt;
+            let client = reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .read_timeout(std::time::Duration::from_secs(60))
+                .redirect(reqwest::redirect::Policy::limited(10))
+                .build()
+                .map_err(|e| MetadataError::Invalid(e.to_string()))?;
+            let response = client
+                .get(url)
+                .header(reqwest::header::ACCEPT_ENCODING, "identity")
+                .send()
+                .await
+                .map_err(|e| MetadataError::Invalid(e.to_string()))?
+                .error_for_status()
+                .map_err(|e| MetadataError::Invalid(e.to_string()))?;
+            if !matches!(response.url().scheme(), "http" | "https")
+                || response
+                    .content_length()
+                    .is_some_and(|size| size > MAX_METAINFO_BYTES)
+            {
+                return Err(MetadataError::Invalid(
+                    "invalid or oversized remote metainfo".into(),
+                ));
+            }
+            let mut stream = response.bytes_stream();
+            let mut bytes = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|e| MetadataError::Invalid(e.to_string()))?;
+                if chunk.len() > (MAX_METAINFO_BYTES as usize).saturating_sub(bytes.len()) {
+                    return Err(MetadataError::Invalid("metainfo exceeds 8 MiB".into()));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            prepare_bytes(bytes)
         }
     }
+}
+
+fn prepare_bytes(bytes: Vec<u8>) -> Result<Prepared, MetadataError> {
+    let hash = librqbit::torrent_from_bytes(&bytes)
+        .map_err(|e| MetadataError::Invalid(format!("{e}")))?
+        .info_hash
+        .as_string();
+    Ok(Prepared {
+        source: PreparedSource::Metainfo(bytes),
+        info_hash: hash,
+    })
 }
 
 pub fn new_id() -> String {
@@ -98,6 +138,40 @@ pub fn created_at() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn remote_metainfo_is_captured_and_hashed_before_admission() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut bytes =
+            b"d4:infod6:lengthi3e4:name8:test.bin12:piece lengthi16384e6:pieces20:".to_vec();
+        bytes.extend_from_slice(&[0; 20]);
+        bytes.extend_from_slice(b"ee");
+        let expected_hash = prepare_bytes(bytes.clone()).unwrap().info_hash;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "http://{}/file.torrent?source=1",
+            listener.local_addr().unwrap()
+        );
+        let expected_bytes = bytes.clone();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await.unwrap();
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                bytes.len()
+            );
+            socket.write_all(headers.as_bytes()).await.unwrap();
+            socket.write_all(&bytes).await.unwrap();
+        });
+        let classified = super::super::source::classify(&url).unwrap();
+        let prepared = prepare(&classified).await.unwrap();
+        assert_eq!(prepared.info_hash, expected_hash);
+        assert!(
+            matches!(prepared.source, PreparedSource::Metainfo(ref data) if data == &expected_bytes)
+        );
+        server.await.unwrap();
+    }
+
     #[test]
     fn ids_are_distinct() {
         assert_ne!(new_id(), new_id());

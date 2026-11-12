@@ -18,7 +18,9 @@ impl EndpointPathResolver {
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            Err(IpcError::EndpointResolution("unsupported platform".into()))
+            Err(crate::IpcError::EndpointResolution(
+                "unsupported platform".into(),
+            ))
         }
     }
 

@@ -89,6 +89,12 @@ pub(in crate::daemon) async fn run(
     mut control: watch::Receiver<TransferControl>,
 ) -> Result<PathBuf> {
     let id = prepared.record.task_url.clone();
+    // A missing task is not permission to delete unverified data.
+    let preserve_partial = tasks
+        .lock()
+        .await
+        .get(&id)
+        .map_or(true, |task| task.confirmed_filename.is_some());
     let dest = partial
         .parent()
         .ok_or("partial has no parent")?
@@ -112,7 +118,7 @@ pub(in crate::daemon) async fn run(
     .await;
     if let Err(error) = result {
         let canceled = *control.borrow() == TransferControl::Canceled;
-        if canceled {
+        if canceled && !preserve_partial {
             let _ = tokio::fs::remove_file(&partial).await;
             let _ = tokio::fs::remove_file(&sidecar).await;
         }
@@ -121,16 +127,20 @@ pub(in crate::daemon) async fn run(
     // Serialize the last pause/cancel check with publication and task removal.
     let mut guard = loop {
         if !crate::daemon::control::wait_running(&tasks, &id, &mut control).await {
-            let _ = tokio::fs::remove_file(&partial).await;
-            let _ = tokio::fs::remove_file(&sidecar).await;
+            if !preserve_partial {
+                let _ = tokio::fs::remove_file(&partial).await;
+                let _ = tokio::fs::remove_file(&sidecar).await;
+            }
             return Err("download canceled".into());
         }
         let guard = tasks.lock().await;
         let state = *control.borrow();
         if state == TransferControl::Canceled || !guard.contains_key(&id) {
             drop(guard);
-            let _ = tokio::fs::remove_file(&partial).await;
-            let _ = tokio::fs::remove_file(&sidecar).await;
+            if !preserve_partial {
+                let _ = tokio::fs::remove_file(&partial).await;
+                let _ = tokio::fs::remove_file(&sidecar).await;
+            }
             return Err("download canceled".into());
         }
         if state == TransferControl::Paused {
@@ -143,9 +153,19 @@ pub(in crate::daemon) async fn run(
         task.state = "finalizing".into();
         task.downloaded = task.total.unwrap_or(task.downloaded);
     }
-    let dest = crate::daemon::collision::publish(&partial, &dest).await?;
+    let confirmed = guard
+        .get(&id)
+        .and_then(|task| task.confirmed_filename.as_deref());
+    if confirmed.is_some_and(|name| dest.file_name().and_then(|s| s.to_str()) != Some(name)) {
+        return Err(
+            "checkpoint filename differs from the confirmed filename; partial retained".into(),
+        );
+    }
+    let dest =
+        crate::daemon::collision::publish_for_task(&partial, &dest, confirmed.is_some()).await?;
     if let Some(task) = guard.get_mut(&id) {
         task.filename = dest.file_name().and_then(|n| n.to_str()).map(str::to_owned);
+        task.destination_path = Some(dest.to_string_lossy().into_owned());
     }
     drop(guard);
     let _ = tokio::fs::remove_file(&partial).await;

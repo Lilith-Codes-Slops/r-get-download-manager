@@ -63,6 +63,7 @@ fn published_split_requires_complete_per_range_hashes() {
                 final_path: None,
                 destination_path: None,
                 suggested_filename: None,
+                confirmed_filename: None,
                 torrent: None,
                 resume_supported: false,
                 partial_name: Some(".rget-1-1.part".into()),

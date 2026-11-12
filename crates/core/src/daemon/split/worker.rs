@@ -126,7 +126,7 @@ async fn receive_request(
     // identity/range mismatches retain the existing fail-closed behavior.
     if response.url() != &ctx.info.url {
         return Err(Failure::Fatal(
-            "range redirected to a different resource".into(),
+            "cannot resume automatically: range redirected to a different resource; partial retained".into(),
         ));
     }
     if matches!(
@@ -139,7 +139,8 @@ async fn receive_request(
             .note_rejection(response.status().as_u16());
         return Err(Failure::Rejected);
     }
-    crate::daemon::range::validate_bounded(&response, &ctx.info, offset, requested_end)?;
+    crate::daemon::range::validate_bounded(&response, &ctx.info, offset, requested_end)
+        .map_err(|error| format!("cannot resume automatically: {error}; partial retained"))?;
     ctx.map
         .lock()
         .await

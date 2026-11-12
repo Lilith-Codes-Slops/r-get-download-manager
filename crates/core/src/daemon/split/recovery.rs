@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 
 pub(in crate::daemon) struct PreparedSplit {
     pub(in crate::daemon) record: SplitRecord,
-    pub(super) file: Arc<std::fs::File>,
+    pub(in crate::daemon) file: Arc<std::fs::File>,
     pub(super) map: Arc<Mutex<SegmentMap>>,
 }
 
@@ -24,7 +24,7 @@ pub(super) fn validate_record(record: &SplitRecord, partial: &Path) -> Result<()
     if record.version != 2
         || record.sequence == 0
         || !(2..=32).contains(&record.requested_connections)
-        || !crate::daemon::range::strong_etag(&record.etag)
+        || !crate::daemon::range::valid_validator(&record.etag)
     {
         return Err("invalid split checkpoint header".into());
     }

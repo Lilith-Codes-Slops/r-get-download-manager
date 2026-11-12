@@ -39,7 +39,17 @@ fn decide(saved: &mut SavedState, root: &Path, prior: &DownloadInfo) -> Decision
         .get(&prior.url)
         .filter(|record| record.partial_name == name);
     if let Ok(item) = super::split::recovery::prepare(&sidecar, &partial, &prior.url, db) {
-        return Decision::Split(Box::new(item));
+        if prior.confirmed_filename.is_none()
+            || super::http_partial_owner::verify(
+                saved.http_partial_owners.get(&prior.url),
+                name,
+                &item.file,
+            )
+            .is_ok()
+        {
+            return Decision::Split(Box::new(item));
+        }
+        return Decision::Fresh;
     }
     saved.tasks.insert(prior.url.clone(), prior.clone());
     match super::recovery::prepare_one(saved, root, &prior.url, "downloading") {
@@ -58,15 +68,39 @@ pub(super) async fn run(
     control: watch::Receiver<TransferControl>,
 ) -> Result<PathBuf> {
     let mut decision = Decision::Fresh;
+    let root = store.task_directory(url).await?;
+    if let Some(old) = prior.as_ref().filter(|task| {
+        task.state != "completed" && (task.state != "canceled" || task.confirmed_filename.is_some())
+    }) {
+        let mut saved = store.load().await?;
+        let task_root = root.clone();
+        let old = old.clone();
+        decision =
+            tokio::task::spawn_blocking(move || decide(&mut saved, &task_root, &old)).await?;
+    }
     if let Some(old) = prior
         .as_ref()
-        .filter(|task| task.state != "completed" && task.state != "canceled")
+        .filter(|task| task.confirmed_filename.is_some())
     {
-        let mut saved = store.load().await?;
-        let root =
-            PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join("Downloads");
-        let old = old.clone();
-        decision = tokio::task::spawn_blocking(move || decide(&mut saved, &root, &old)).await?;
+        let expected = old.confirmed_filename.as_deref();
+        match &decision {
+            Decision::Single(item) if Some(item.record.filename.as_str()) != expected => {
+                return Err(
+                    "cannot resume automatically: checkpoint filename differs from the confirmed filename; partial retained"
+                        .into(),
+                );
+            }
+            Decision::Split(item) if Some(item.record.filename.as_str()) != expected => {
+                return Err(
+                    "cannot resume automatically: checkpoint filename differs from the confirmed filename; partial retained"
+                        .into(),
+                );
+            }
+            Decision::Fresh => {
+                return Err("cannot resume automatically: no verifiable task-owned partial; retained data was not changed; restart from beginning requires confirmation".into());
+            }
+            _ => {}
+        }
     }
     {
         let mut guard = tasks.lock().await;
@@ -77,6 +111,11 @@ pub(super) async fn run(
         match &decision {
             Decision::Single(item) => {
                 task.filename = Some(item.record.filename.clone());
+                task.destination_path = Some(
+                    root.join(&item.record.filename)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
                 task.partial_name = Some(item.record.partial_name.clone());
                 task.downloaded = item.record.downloaded;
                 task.total = Some(item.record.total);
@@ -85,6 +124,11 @@ pub(super) async fn run(
             }
             Decision::Split(item) => {
                 task.filename = Some(item.record.filename.clone());
+                task.destination_path = Some(
+                    root.join(&item.record.filename)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
                 task.partial_name = Some(item.record.partial_name.clone());
                 task.downloaded = item
                     .record
@@ -111,9 +155,7 @@ pub(super) async fn run(
             super::recovered_transfer::run(*item, tasks, limiter, store, control).await
         }
         Decision::Split(item) => {
-            let partial = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?)
-                .join("Downloads")
-                .join(&item.record.partial_name);
+            let partial = root.join(&item.record.partial_name);
             let client = reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(30))
                 .read_timeout(std::time::Duration::from_secs(60))
@@ -125,6 +167,7 @@ pub(super) async fn run(
             super::transfer::download_file(
                 url,
                 connections,
+                &root,
                 tasks,
                 limiter,
                 store,
@@ -154,6 +197,11 @@ pub(super) fn startup_fallbacks(
         let Some(previous) = old.get(id) else {
             continue;
         };
+        if previous.confirmed_filename.is_some() && previous.partial_name.is_none() {
+            task.state = "failed: cannot resume automatically: no task-owned partial is recorded; restart from beginning requires confirmation".into();
+            task.resume_supported = false;
+            continue;
+        }
         let paused = matches!(state.as_str(), "paused" | "pausing");
         task.state = if paused { "paused" } else { "downloading" }.into();
         task.partial_name = previous.partial_name.clone();

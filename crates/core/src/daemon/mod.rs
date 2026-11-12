@@ -15,8 +15,18 @@ mod checkpoint;
 mod checkpoint_validation;
 mod checksum;
 mod collision;
+#[cfg(target_os = "linux")]
+mod confirmed_start;
+#[cfg(all(test, target_os = "linux"))]
+mod confirmed_start_tests;
 mod control;
 mod destination;
+#[cfg(target_os = "linux")]
+mod download_directory;
+#[cfg(target_os = "linux")]
+mod gui_settings;
+#[cfg(target_os = "linux")]
+mod http_partial_owner;
 mod persistence;
 #[cfg(target_os = "linux")]
 mod post_download;
@@ -25,6 +35,8 @@ mod progress;
 mod progress_events;
 #[cfg(test)]
 mod publication;
+#[cfg(target_os = "linux")]
+mod publication_confirmation;
 mod range;
 #[cfg(test)]
 mod range_tests;
@@ -38,6 +50,8 @@ mod retry;
 mod segment_events;
 #[cfg(target_os = "linux")]
 mod split;
+#[cfg(target_os = "linux")]
+mod task_directory;
 mod task_removal;
 mod transfer;
 mod transfer_body;

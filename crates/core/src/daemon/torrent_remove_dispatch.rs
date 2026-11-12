@@ -15,8 +15,33 @@ pub(super) async fn remove(
     id: String,
     delete_file: bool,
 ) -> DaemonEvent {
-    let root =
-        std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Downloads"));
+    let root = match std::env::var_os("HOME") {
+        Some(home) => {
+            let legacy = std::path::PathBuf::from(home).join("Downloads");
+            let database = store.database_path();
+            let task_id = id.clone();
+            match tokio::task::spawn_blocking(move || {
+                super::task_directory::resolve(&database, &task_id, &legacy)
+            })
+            .await
+            {
+                Ok(Ok(root)) => Some(root),
+                Ok(Err(error)) => {
+                    return DaemonEvent::TaskFailed {
+                        task_id: id,
+                        error: format!("cannot resolve task directory: {error}"),
+                    }
+                }
+                Err(error) => {
+                    return DaemonEvent::TaskFailed {
+                        task_id: id,
+                        error: format!("task directory lookup failed: {error}"),
+                    }
+                }
+            }
+        }
+        None => None,
+    };
     remove_at_root(
         tasks,
         controls,
@@ -103,7 +128,7 @@ async fn remove_at_root(
     }
     #[cfg(not(feature = "torrent"))]
     let _ = (store, root);
-    super::task_removal::remove(tasks, controls, limiter, id, delete_file).await
+    super::task_removal::remove(tasks, controls, limiter, store, id, delete_file, root).await
 }
 
 #[cfg(feature = "torrent")]
